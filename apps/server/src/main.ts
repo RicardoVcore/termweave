@@ -127,6 +127,14 @@ const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
 ): Option.Option<Value> => Option.firstSomeOf(values);
 
+const normalizeAuthToken = (value: string | undefined): string | undefined => {
+  const token = value?.trim();
+  return token || undefined;
+};
+
+const authTokenOption = (value: string | undefined): Option.Option<string> =>
+  Option.fromUndefinedOr(normalizeAuthToken(value));
+
 const isValidPort = (value: number): boolean => value >= 1 && value <= 65_535;
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
@@ -175,11 +183,11 @@ const ServerConfigLive = (input: CliInput) =>
       );
       const derivedPaths = yield* deriveServerPaths(baseDir);
       const authToken = resolveOptionPrecedence(
-        input.authToken,
-        Option.fromUndefinedOr(env.authToken),
-        Option.fromUndefinedOr(env.legacyAuthToken),
+        Option.flatMap(input.authToken, authTokenOption),
+        authTokenOption(env.authToken),
+        authTokenOption(env.legacyAuthToken),
         Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-          Option.fromUndefinedOr(bootstrap.authToken),
+          authTokenOption(bootstrap.authToken),
         ),
       );
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
@@ -214,12 +222,18 @@ const ServerConfigLive = (input: CliInput) =>
         ),
         () => "127.0.0.1",
       );
-      const resolvedAuthToken = Option.getOrUndefined(authToken)?.trim() || undefined;
+      const resolvedAuthToken = Option.getOrUndefined(authToken);
       if (requiresAuthForHost(host) && resolvedAuthToken === undefined) {
         return yield* new StartupError({
           message:
             "TERMWEAVE_AUTH_TOKEN is required when Termweave binds beyond loopback (T3CODE_AUTH_TOKEN is accepted as a legacy alias).",
         });
+      }
+      if (requiresAuthForHost(host)) {
+        yield* Effect.logWarning(
+          "Termweave is bound beyond loopback; authentication does not encrypt WebSocket transport.",
+          { host },
+        );
       }
 
       const config: ServerConfigShape = {

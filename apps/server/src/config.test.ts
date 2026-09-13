@@ -3,7 +3,16 @@ import { describe, expect, it } from "vitest";
 import { isLoopbackHost, requiresAuthForHost } from "./config.ts";
 
 describe("server bind security", () => {
-  it.each(["localhost", "127.0.0.1", "127.42.0.9", "::1", "[::1]"]) (
+  it.each([
+    "localhost",
+    "127.0.0.1",
+    "127.42.0.9",
+    "::1",
+    "[::1]",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:7f00:1",
+    "::ffff:127.0.0.1",
+  ]) (
     "accepts %s as loopback",
     (host) => {
       expect(isLoopbackHost(host)).toBe(true);

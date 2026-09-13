@@ -11,13 +11,60 @@ import { isIP } from "node:net";
 
 export const DEFAULT_PORT = 3773;
 
+function parseIpv6Side(side: string): number[] | undefined {
+  if (side === "") return [];
+  const groups: number[] = [];
+  const segments = side.split(":");
+  for (const [index, segment] of segments.entries()) {
+    if (segment.includes(".")) {
+      if (index !== segments.length - 1) return undefined;
+      const [first, second, third, fourth] = segment.split(".").map(Number);
+      if (
+        first === undefined ||
+        second === undefined ||
+        third === undefined ||
+        fourth === undefined ||
+        [first, second, third, fourth].some(
+          (octet) => !Number.isInteger(octet) || octet > 255,
+        )
+      ) {
+        return undefined;
+      }
+      groups.push((first << 8) | second, (third << 8) | fourth);
+      continue;
+    }
+    if (!/^[0-9a-f]{1,4}$/iu.test(segment)) return undefined;
+    groups.push(Number.parseInt(segment, 16));
+  }
+  return groups;
+}
+
+function parseIpv6Groups(value: string): readonly number[] | undefined {
+  const parts = value.split("::");
+  if (parts.length > 2) return undefined;
+
+  const left = parseIpv6Side(parts[0] ?? "");
+  const right = parseIpv6Side(parts[1] ?? "");
+  if (left === undefined || right === undefined) return undefined;
+  if (parts.length === 1) return left.length === 8 ? left : undefined;
+  const missing = 8 - left.length - right.length;
+  return missing > 0
+    ? [...left, ...Array.from({ length: missing }, () => 0), ...right]
+    : undefined;
+}
+
 export function isLoopbackHost(host: string | undefined): boolean {
   if (host === undefined) return false;
   const normalized = host.trim().toLowerCase().replace(/^\[|\]$/gu, "");
-  if (normalized === "localhost" || normalized === "::1") return true;
+  if (normalized === "localhost") return true;
   if (isIP(normalized) === 4) return normalized.startsWith("127.");
-  if (isIP(normalized) === 6) return normalized.startsWith("::ffff:127.");
-  return false;
+  if (isIP(normalized) !== 6) return false;
+
+  const groups = parseIpv6Groups(normalized);
+  if (groups === undefined) return false;
+  if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true;
+  if (!groups.slice(0, 5).every((group) => group === 0) || groups[5] !== 0xffff) return false;
+  return groups[6] !== undefined && (groups[6] >>> 8) === 0x7f;
 }
 
 export function requiresAuthForHost(host: string | undefined): boolean {

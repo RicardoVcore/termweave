@@ -67,3 +67,20 @@ Updates: stop service, update source, run frozen install and build, then start
 service. Roll back by checking out previous commit and rebuilding. Back up
 `/var/lib/termweave` before updates; it contains SQLite state, provider data,
 attachments, and logs.
+
+## Token rotation and revocation
+
+Token protects WebSocket access. It does not encrypt transport. Use SSH
+port-forwarding, Tailscale, a private LAN, or TLS for transport protection.
+
+To rotate a systemd deployment:
+
+1. Stop the service: `sudo systemctl stop termweave-server`.
+2. Replace `TERMWEAVE_AUTH_TOKEN` in `/etc/termweave/server.env` with a new
+   random value: `openssl rand -hex 32`.
+3. Update local TUI connection settings with new token.
+4. Start service: `sudo systemctl start termweave-server`.
+
+Restart closes existing WebSocket connections. Old token stops working after
+restart. For direct runs, stop process, replace environment token, then start
+again.
