@@ -79,7 +79,6 @@ export interface CliConfigShape {
    * Apply OS-specific PATH normalization.
    */
   readonly fixPath: Effect.Effect<void>;
-
 }
 
 /**
@@ -186,9 +185,7 @@ const ServerConfigLive = (input: CliInput) =>
         Option.flatMap(input.authToken, authTokenOption),
         authTokenOption(env.authToken),
         authTokenOption(env.legacyAuthToken),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-          authTokenOption(bootstrap.authToken),
-        ),
+        Option.flatMap(bootstrapEnvelope, (bootstrap) => authTokenOption(bootstrap.authToken)),
       );
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,

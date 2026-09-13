@@ -70,8 +70,9 @@ attachments, and logs.
 
 ## Token rotation and revocation
 
-Token protects WebSocket access. It does not encrypt transport. Use SSH
-port-forwarding, Tailscale, a private LAN, or TLS for transport protection.
+Token protects WebSocket access. It does not encrypt transport. A private LAN
+limits who can reach the port but does not provide encryption. Use SSH
+port-forwarding, Tailscale, or TLS when transport confidentiality is required.
 
 To rotate a systemd deployment:
 

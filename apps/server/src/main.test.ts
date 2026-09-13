@@ -56,9 +56,7 @@ const testLayer = Layer.mergeAll(
 const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
   Command.runWith(termweaveCli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromEnv({ env: { T3CODE_HOME: testHomeDir, ...env } }),
-      ),
+      ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: testHomeDir, ...env } })),
     ),
   );
 

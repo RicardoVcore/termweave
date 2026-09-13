@@ -24,9 +24,7 @@ function parseIpv6Side(side: string): number[] | undefined {
         second === undefined ||
         third === undefined ||
         fourth === undefined ||
-        [first, second, third, fourth].some(
-          (octet) => !Number.isInteger(octet) || octet > 255,
-        )
+        [first, second, third, fourth].some((octet) => !Number.isInteger(octet) || octet > 255)
       ) {
         return undefined;
       }
@@ -48,23 +46,26 @@ function parseIpv6Groups(value: string): readonly number[] | undefined {
   if (left === undefined || right === undefined) return undefined;
   if (parts.length === 1) return left.length === 8 ? left : undefined;
   const missing = 8 - left.length - right.length;
-  return missing > 0
-    ? [...left, ...Array.from({ length: missing }, () => 0), ...right]
-    : undefined;
+  return missing > 0 ? [...left, ...Array.from({ length: missing }, () => 0), ...right] : undefined;
 }
 
 export function isLoopbackHost(host: string | undefined): boolean {
   if (host === undefined) return false;
-  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/gu, "");
+  const normalized = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/gu, "");
+  const zoneIndex = normalized.indexOf("%");
+  const address = zoneIndex >= 0 ? normalized.slice(0, zoneIndex) : normalized;
   if (normalized === "localhost") return true;
-  if (isIP(normalized) === 4) return normalized.startsWith("127.");
-  if (isIP(normalized) !== 6) return false;
+  if (isIP(address) === 4) return address.startsWith("127.");
+  if (isIP(address) !== 6) return false;
 
-  const groups = parseIpv6Groups(normalized);
+  const groups = parseIpv6Groups(address);
   if (groups === undefined) return false;
   if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) return true;
   if (!groups.slice(0, 5).every((group) => group === 0) || groups[5] !== 0xffff) return false;
-  return groups[6] !== undefined && (groups[6] >>> 8) === 0x7f;
+  return groups[6] !== undefined && groups[6] >>> 8 === 0x7f;
 }
 
 export function requiresAuthForHost(host: string | undefined): boolean {

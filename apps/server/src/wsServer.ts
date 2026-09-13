@@ -462,7 +462,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     } satisfies OrchestrationCommand;
   });
 
-    // HTTP server - serves attachments and accepts WebSocket upgrades.
+  // HTTP server - serves attachments and accepts WebSocket upgrades.
   const httpServer = http.createServer((req, res) => {
     const respond = (
       statusCode: number,

@@ -12,15 +12,14 @@ describe("server bind security", () => {
     "0:0:0:0:0:0:0:1",
     "::ffff:7f00:1",
     "::ffff:127.0.0.1",
-  ]) (
-    "accepts %s as loopback",
-    (host) => {
-      expect(isLoopbackHost(host)).toBe(true);
-      expect(requiresAuthForHost(host)).toBe(false);
-    },
-  );
+    "::1%lo",
+    "::1%1",
+  ])("accepts %s as loopback", (host) => {
+    expect(isLoopbackHost(host)).toBe(true);
+    expect(requiresAuthForHost(host)).toBe(false);
+  });
 
-  it.each([undefined, "0.0.0.0", "::", "100.64.0.10", "example.internal"]) (
+  it.each([undefined, "0.0.0.0", "::", "100.64.0.10", "example.internal"])(
     "requires auth for %s",
     (host) => {
       expect(isLoopbackHost(host)).toBe(false);
