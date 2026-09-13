@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { TuiPaths } from "./config";
-import { readPrefs, writePrefs } from "./prefs";
+import { readPrefs, writePrefs, type TuiPrefs } from "./prefs";
 
 async function makePaths(): Promise<{ root: string; paths: TuiPaths }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-prefs-"));
@@ -127,5 +127,40 @@ describe("prefs", () => {
     await expect(readPrefs(paths)).resolves.toEqual({
       mainView: "keybindings",
     });
+  });
+
+  it("sanitizes connection profiles before writing", async () => {
+    const { root, paths } = await makePaths();
+    tempRoots.push(root);
+
+    await writePrefs(paths, {
+      connectionProfiles: [
+        {
+          id: "vps",
+          label: "VPS",
+          transport: "direct",
+          host: "100.64.0.10",
+          port: 3773,
+          tokenEnvVar: "TERMWEAVE_AUTH_TOKEN",
+          password: "must-not-persist",
+          privateKey: "must-not-persist",
+        },
+      ],
+    } as unknown as TuiPrefs);
+
+    await expect(fs.readFile(paths.prefsPath, "utf8")).resolves.toContain(
+      '"tokenEnvVar": "TERMWEAVE_AUTH_TOKEN"',
+    );
+    const raw = JSON.parse(await fs.readFile(paths.prefsPath, "utf8")) as TuiPrefs;
+    expect(raw.connectionProfiles).toEqual([
+      {
+        id: "vps",
+        label: "VPS",
+        transport: "direct",
+        host: "100.64.0.10",
+        port: 3773,
+        tokenEnvVar: "TERMWEAVE_AUTH_TOKEN",
+      },
+    ]);
   });
 });

@@ -216,6 +216,7 @@ import {
   parseTuiServerConnection,
 } from "./connectionsPanel";
 import { type TuiPrefs, readPrefs, writePrefs } from "./prefs";
+import type { ConnectionProfile } from "./connectionProfiles";
 import {
   ADDITIONAL_COMING_SOON_MODEL_PROVIDER_OPTIONS,
   COMING_SOON_INSTALL_PROVIDER_OPTIONS,
@@ -4311,6 +4312,7 @@ export function App({
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [prefsReady, setPrefsReady] = useState(false);
+  const [connectionProfiles, setConnectionProfiles] = useState<readonly ConnectionProfile[]>([]);
   const [serverHttpOrigin, setServerHttpOrigin] = useState<string | null>(null);
   const [serverWsUrl, setServerWsUrl] = useState<string | null>(null);
   const tuiServerConnection = useMemo(
@@ -4805,6 +4807,9 @@ export function App({
           setFocusArea("settings");
         }
         setTuiThemeId(normalizeTuiThemeId(prefs.tuiThemeId));
+        if (prefs.connectionProfiles) {
+          setConnectionProfiles(prefs.connectionProfiles);
+        }
         if (prefs.appSettings) {
           setAppSettings(normalizeAppSettings({ ...DEFAULT_APP_SETTINGS, ...prefs.appSettings }));
           setOpenInstallProviders({
@@ -5079,6 +5084,7 @@ export function App({
       ...(Object.keys(draftThreadsByProjectId).length > 0 ? { draftThreadsByProjectId } : {}),
       ...(Object.keys(composerDraftsByThreadId).length > 0 ? { composerDraftsByThreadId } : {}),
       appSettings,
+      ...(connectionProfiles.length > 0 ? { connectionProfiles } : {}),
     } satisfies TuiPrefs;
     void writePrefs(paths, prefs);
     logger.log("prefs.saved", prefs as Record<string, unknown>);
@@ -5102,6 +5108,7 @@ export function App({
     appSettings,
     tuiThemeId,
     composerDraftsByThreadId,
+    connectionProfiles,
     expandedProjectIds,
     selectedProjectId,
     selectedThreadId,
