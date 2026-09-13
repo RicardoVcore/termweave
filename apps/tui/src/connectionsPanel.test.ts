@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildTuiAttachCommand,
-  formatEndpointCompatibility,
   formatEndpointStatus,
   formatTuiAttachCommandPreview,
   parseTuiServerConnection,
@@ -46,15 +45,10 @@ describe("connectionsPanel", () => {
       httpBaseUrl: "http://127.0.0.1:3773/",
       wsBaseUrl: "ws://127.0.0.1:3773/",
       reachability: "loopback",
-      compatibility: {
-        hostedHttpsApp: "mixed-content-blocked",
-        desktopApp: "compatible",
-      },
       source: "server",
       status: "available",
     } as const;
 
     expect(formatEndpointStatus(endpoint)).toBe("Available · Loopback");
-    expect(formatEndpointCompatibility(endpoint)).toBe("Hosted HTTPS blocked · Desktop compatible");
   });
 });

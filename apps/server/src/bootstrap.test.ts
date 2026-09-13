@@ -54,7 +54,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       yield* fs.writeFileString(
         filePath,
         `${yield* Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema))({
-          mode: "desktop",
+          mode: "tui",
         })}\n`,
       );
 
@@ -65,7 +65,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
       assertSome(payload, {
-        mode: "desktop",
+        mode: "tui",
       });
     }),
   );
@@ -78,7 +78,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       yield* fs.writeFileString(
         filePath,
         `${yield* Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema))({
-          mode: "desktop",
+          mode: "tui",
         })}\n`,
       );
 
@@ -88,7 +88,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       try {
         const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
         assertSome(payload, {
-          mode: "desktop",
+          mode: "tui",
         });
       } finally {
         openSyncInterceptor.failPath = null;

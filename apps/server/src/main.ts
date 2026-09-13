@@ -8,12 +8,10 @@
  */
 import { Config, Data, Effect, Layer, Option, Schema, Context } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import { NetService } from "@termweave/shared/Net";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
   ServerConfig,
-  type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
 import { fixPath, resolveBaseDir } from "./os-jank";
@@ -49,24 +47,18 @@ export class StartupError extends Data.TaggedError("StartupError")<{
 const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
 const BootstrapEnvelopeSchema = Schema.Struct({
-  mode: Schema.optional(Schema.String),
   port: Schema.optional(PortSchema),
   host: Schema.optional(Schema.String),
   t3Home: Schema.optional(Schema.String),
-  devUrl: Schema.optional(Schema.URLFromString),
-  noBrowser: Schema.optional(Schema.Boolean),
   authToken: Schema.optional(Schema.String),
   autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
   logWebSocketEvents: Schema.optional(Schema.Boolean),
 });
 
 interface CliInput {
-  readonly mode: Option.Option<RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
   readonly t3Home: Option.Option<string>;
-  readonly devUrl: Option.Option<URL>;
-  readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
@@ -87,9 +79,6 @@ export interface CliConfigShape {
    */
   readonly fixPath: Effect.Effect<void>;
 
-  /**
-   * Resolve static web asset directory for server mode.
-   */
 }
 
 /**
@@ -105,19 +94,9 @@ export class CliConfig extends Context.Service<CliConfig, CliConfigShape>()(
 }
 
 const CliEnvConfig = Config.all({
-  mode: Config.string("T3CODE_MODE").pipe(
-    Config.option,
-    Config.map(Option.map((value) => (value === "desktop" || value === "tui" ? value : "web"))),
-    Config.map(Option.getOrUndefined),
-  ),
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
   authToken: Config.string("T3CODE_AUTH_TOKEN").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -144,15 +123,11 @@ const resolveOptionPrecedence = <Value>(
 ): Option.Option<Value> => Option.firstSomeOf(values);
 
 const isValidPort = (value: number): boolean => value >= 1 && value <= 65_535;
-const isRuntimeMode = (value: string): value is RuntimeMode =>
-  value === "web" || value === "desktop" || value === "tui";
-
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
     Effect.gen(function* () {
       const cliConfig = yield* CliConfig;
-      const { findAvailablePort } = yield* NetService;
       const env = yield* CliEnvConfig.pipe(
         Effect.mapError(
           (cause) =>
@@ -166,16 +141,6 @@ const ServerConfigLive = (input: CliInput) =>
           ? yield* readBootstrapEnvelope(BootstrapEnvelopeSchema, bootstrapFd)
           : Option.none();
 
-      const mode: RuntimeMode = Option.getOrElse(
-        resolveOptionPrecedence(
-          input.mode,
-          Option.fromUndefinedOr(env.mode),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.filter(Option.fromUndefinedOr(bootstrap.mode), isRuntimeMode),
-          ),
-        ),
-        () => "web",
-      );
       const port = yield* Option.match(
         resolveOptionPrecedence(
           input.port,
@@ -187,24 +152,11 @@ const ServerConfigLive = (input: CliInput) =>
         {
           onSome: (value) => Effect.succeed(value),
           onNone: () => {
-            if (mode === "desktop" || mode === "tui") {
-              return Effect.succeed(DEFAULT_PORT);
-            }
-            return findAvailablePort(DEFAULT_PORT);
+            return Effect.succeed(DEFAULT_PORT);
           },
         },
       );
 
-      const devUrl = Option.getOrElse(
-        resolveOptionPrecedence(
-          input.devUrl,
-          Option.fromUndefinedOr(env.devUrl),
-          Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-            Option.fromUndefinedOr(bootstrap.devUrl),
-          ),
-        ),
-        () => undefined,
-      );
       const baseDir = yield* resolveBaseDir(
         Option.getOrUndefined(
           resolveOptionPrecedence(
@@ -216,19 +168,7 @@ const ServerConfigLive = (input: CliInput) =>
           ),
         ),
       );
-      const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
-      const noBrowser = resolveBooleanFlag(
-        input.noBrowser,
-        Option.getOrElse(
-          resolveOptionPrecedence(
-            Option.fromUndefinedOr(env.noBrowser),
-            Option.flatMap(bootstrapEnvelope, (bootstrap) =>
-              Option.fromUndefinedOr(bootstrap.noBrowser),
-            ),
-          ),
-          () => mode === "desktop" || mode === "tui",
-        ),
-      );
+      const derivedPaths = yield* deriveServerPaths(baseDir);
       const authToken = resolveOptionPrecedence(
         input.authToken,
         Option.fromUndefinedOr(env.authToken),
@@ -245,7 +185,7 @@ const ServerConfigLive = (input: CliInput) =>
               Option.fromUndefinedOr(bootstrap.autoBootstrapProjectFromCwd),
             ),
           ),
-          () => mode === "web",
+          () => false,
         ),
       );
       const logWebSocketEvents = resolveBooleanFlag(
@@ -257,7 +197,7 @@ const ServerConfigLive = (input: CliInput) =>
               Option.fromUndefinedOr(bootstrap.logWebSocketEvents),
             ),
           ),
-          () => Boolean(devUrl),
+          () => false,
         ),
       );
       const host = Option.getOrElse(
@@ -266,19 +206,15 @@ const ServerConfigLive = (input: CliInput) =>
           Option.fromUndefinedOr(env.host),
           Option.flatMap(bootstrapEnvelope, (bootstrap) => Option.fromUndefinedOr(bootstrap.host)),
         ),
-        () => (mode === "desktop" || mode === "tui" ? "127.0.0.1" : undefined),
+        () => "127.0.0.1",
       );
 
       const config: ServerConfigShape = {
-        mode,
         port,
         cwd: cliConfig.cwd,
         host,
         baseDir,
         ...derivedPaths,
-        staticDir: undefined,
-        devUrl,
-        noBrowser,
         authToken: Option.getOrUndefined(authToken),
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
@@ -366,12 +302,6 @@ const makeServerProgram = (input: CliInput) =>
  * These flags mirrors the environment variables and the config shape.
  */
 
-const modeFlag = Flag.choice("mode", ["web", "desktop", "tui"]).pipe(
-  Flag.withDescription(
-    "Runtime mode. `desktop` and `tui` keep loopback defaults unless overridden.",
-  ),
-  Flag.optional,
-);
 const portFlag = Flag.integer("port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("Port for the HTTP/WebSocket server."),
@@ -383,15 +313,6 @@ const hostFlag = Flag.string("host").pipe(
 );
 const t3HomeFlag = Flag.string("home-dir").pipe(
   Flag.withDescription("Base directory for all Termweave data (equivalent to T3CODE_HOME)."),
-  Flag.optional,
-);
-const devUrlFlag = Flag.string("dev-url").pipe(
-  Flag.withSchema(Schema.URLFromString),
-  Flag.withDescription("Dev web URL to proxy/redirect to (equivalent to VITE_DEV_SERVER_URL)."),
-  Flag.optional,
-);
-const noBrowserFlag = Flag.boolean("no-browser").pipe(
-  Flag.withDescription("Disable automatic browser opening."),
   Flag.optional,
 );
 const authTokenFlag = Flag.string("auth-token").pipe(
@@ -419,12 +340,9 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
 );
 
 export const termweaveCli = Command.make("termweave", {
-  mode: modeFlag,
   port: portFlag,
   host: hostFlag,
   t3Home: t3HomeFlag,
-  devUrl: devUrlFlag,
-  noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,

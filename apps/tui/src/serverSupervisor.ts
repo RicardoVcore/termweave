@@ -256,8 +256,6 @@ export async function startServerSupervisor(
       command,
       [
         ...args,
-        "--mode",
-        "tui",
         "--auto-bootstrap-project-from-cwd",
         "--host",
         host,
@@ -267,7 +265,6 @@ export async function startServerSupervisor(
         authToken,
         "--home-dir",
         options.homeDir,
-        "--no-browser",
       ],
       {
         cwd: process.cwd(),

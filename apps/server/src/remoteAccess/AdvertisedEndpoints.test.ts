@@ -28,10 +28,6 @@ describe("AdvertisedEndpoints", () => {
         httpBaseUrl: "http://127.0.0.1:3773/",
         wsBaseUrl: "ws://127.0.0.1:3773/",
         reachability: "loopback",
-        compatibility: {
-          hostedHttpsApp: "mixed-content-blocked",
-          desktopApp: "compatible",
-        },
         source: "server",
         status: "available",
         isDefault: true,

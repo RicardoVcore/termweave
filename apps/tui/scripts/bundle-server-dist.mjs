@@ -7,9 +7,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const tuiRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(tuiRoot, "../..");
 const serverRoot = path.resolve(repoRoot, "apps/server");
-const serverDistSource = path.resolve(serverRoot, "dist");
 const serverDistTarget = path.resolve(tuiRoot, "dist/server");
-const serverClientSource = path.resolve(serverDistSource, "client");
 const nodePtyTarget = path.resolve(serverDistTarget, "node_modules/node-pty");
 const serverBundleExternalModules = ["node-pty", "ws"];
 const nodePtyRuntimeEntries = [
@@ -101,9 +99,6 @@ await run(
   ],
   serverRoot,
 );
-if (await exists(serverClientSource)) {
-  await fs.cp(serverClientSource, path.resolve(serverDistTarget, "client"), { recursive: true });
-}
 const nodePtySource = await resolveNodePtySource();
 await fs.mkdir(path.dirname(nodePtyTarget), { recursive: true });
 await fs.rm(nodePtyTarget, { recursive: true, force: true });

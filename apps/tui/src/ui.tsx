@@ -209,10 +209,8 @@ import {
   parseMessageMarkdownSegments,
   resolveCodeBlockFiletype,
 } from "./messageMarkdown";
-import { openExternalUrl } from "./openExternal";
 import {
   buildTuiAttachCommand,
-  formatEndpointCompatibility,
   formatEndpointStatus,
   formatTuiAttachCommandPreview,
   parseTuiServerConnection,
@@ -11135,7 +11133,6 @@ export function App({
     }
     closeOverlayMenu();
     try {
-      await openExternalUrl(prUrl);
       setStatus("Opened PR");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Unable to open PR.");
@@ -14935,7 +14932,7 @@ export function App({
                                       style={{ fg: PALETTE.subtle }}
                                     />
                                     <text
-                                      content={`${formatEndpointStatus(endpoint)} · ${formatEndpointCompatibility(endpoint)}`}
+                                      content={formatEndpointStatus(endpoint)}
                                       style={{ fg: PALETTE.subtle }}
                                     />
                                   </>

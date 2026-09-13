@@ -189,8 +189,6 @@ const server = spawn(
   "bun",
   [
     SERVER_ENTRY,
-    "--mode",
-    "tui",
     "--auto-bootstrap-project-from-cwd",
     "--host",
     host,
@@ -200,7 +198,6 @@ const server = spawn(
     authToken,
     "--home-dir",
     paths.homeDir,
-    "--no-browser",
   ],
   {
     cwd: REPO_ROOT,

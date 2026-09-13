@@ -15,18 +15,14 @@ function makeTempDir(prefix: string) {
 
 function makeServerConfig(baseDir: string): ServerConfigShape {
   const derived = Effect.runSync(
-    deriveServerPaths(baseDir, undefined).pipe(Effect.provide(NodePath.layer)),
+    deriveServerPaths(baseDir).pipe(Effect.provide(NodePath.layer)),
   );
   return {
     ...derived,
-    mode: "tui",
     port: 0,
     host: undefined,
     cwd: "/workspace/termweave",
     baseDir,
-    staticDir: undefined,
-    devUrl: undefined,
-    noBrowser: true,
     authToken: undefined,
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,

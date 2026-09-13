@@ -61,15 +61,3 @@ export function formatEndpointStatus(endpoint: AdvertisedEndpoint): string {
           : "Public";
   return `${status} · ${reachability}`;
 }
-
-export function formatEndpointCompatibility(endpoint: AdvertisedEndpoint): string {
-  const hosted =
-    endpoint.compatibility.hostedHttpsApp === "compatible"
-      ? "Hosted HTTPS compatible"
-      : endpoint.compatibility.hostedHttpsApp === "mixed-content-blocked"
-        ? "Hosted HTTPS blocked"
-        : endpoint.compatibility.hostedHttpsApp === "requires-configuration"
-          ? "Hosted HTTPS needs setup"
-          : "Hosted HTTPS unknown";
-  return `${hosted} · Desktop ${endpoint.compatibility.desktopApp}`;
-}

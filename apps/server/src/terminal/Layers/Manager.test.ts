@@ -622,7 +622,6 @@ describe("TerminalManager", () => {
 
     setEnv("PORT", "5173");
     setEnv("T3CODE_PORT", "3773");
-    setEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
     setEnv("TEST_TERMINAL_KEEP", "keep-me");
 
     try {
@@ -634,7 +633,6 @@ describe("TerminalManager", () => {
 
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
-      expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
 
       manager.dispose();

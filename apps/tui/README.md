@@ -14,13 +14,12 @@ Linux notes:
 
 - Termweave follows XDG defaults on Linux:
   `XDG_CONFIG_HOME/termweave` for prefs, `XDG_STATE_HOME/termweave` for logs and image state, and `XDG_DATA_HOME/termweave` for app data.
-- Opening links uses desktop helpers such as `xdg-open` or `gio open`.
 - Clipboard image paste works with `wl-paste` on Wayland or `xclip` on X11.
 
 ## What You Get
 
 - Native-feeling terminal UI built on OpenTUI
-- Bundled server and web client for local use
+- Bundled server for local use
 - Codex-first workflow tuned for terminal usage
 
 ## Source

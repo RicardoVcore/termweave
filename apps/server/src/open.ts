@@ -1,8 +1,7 @@
 /**
- * Open - Browser/editor launch service interface.
+ * Open - Editor launch service interface.
  *
- * Owns process launch helpers for opening URLs in a browser and workspace
- * paths in a configured editor.
+ * Owns process launch helpers for workspace paths in a configured editor.
  *
  * @module Open
  */
@@ -44,19 +43,6 @@ interface CommandAvailabilityOptions {
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
-const POWERSHELL_ARGUMENTS_PREFIX = [
-  "-NoProfile",
-  "-NonInteractive",
-  "-ExecutionPolicy",
-  "Bypass",
-  "-EncodedCommand",
-] as const;
-const DETACHED_IGNORE_STDIO_OPTIONS = {
-  detached: true,
-  stdin: "ignore",
-  stdout: "ignore",
-  stderr: "ignore",
-} as const satisfies ChildProcess.CommandOptions;
 
 function parseTargetPathAndPosition(target: string): {
   path: string;
@@ -118,80 +104,6 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
     default:
       return "xdg-open";
   }
-}
-
-function encodeUtf16LeBase64(input: string): string {
-  return Buffer.from(input, "utf16le").toString("base64");
-}
-
-function escapePowerShellStringLiteral(input: string): string {
-  return `'${input.replaceAll("'", "''")}'`;
-}
-
-function resolvePowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
-  return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-}
-
-function resolveWslPowerShellPath(): string {
-  return "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
-}
-
-function shouldUseWindowsBrowserFromWsl(
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return (
-    platform === "linux" &&
-    (env.WSL_DISTRO_NAME !== undefined || env.WSL_INTEROP !== undefined) &&
-    env.SSH_CONNECTION === undefined &&
-    env.SSH_TTY === undefined &&
-    env.container === undefined
-  );
-}
-
-function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLaunch {
-  const encodedCommand = encodeUtf16LeBase64(
-    `$ProgressPreference = 'SilentlyContinue'; Start ${escapePowerShellStringLiteral(target)}`,
-  );
-  return {
-    command,
-    args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
-    options: {
-      detached: true,
-      shell: false,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    },
-  };
-}
-
-export function resolveBrowserLaunch(
-  target: string,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): ProcessLaunch {
-  if (platform === "darwin") {
-    return {
-      command: "open",
-      args: [target],
-      options: DETACHED_IGNORE_STDIO_OPTIONS,
-    };
-  }
-
-  if (platform === "win32") {
-    return resolveWindowsBrowserLaunch(target, resolvePowerShellPath(env));
-  }
-
-  if (shouldUseWindowsBrowserFromWsl(platform, env)) {
-    return resolveWindowsBrowserLaunch(target, resolveWslPowerShellPath());
-  }
-
-  return {
-    command: "xdg-open",
-    args: [target],
-    options: DETACHED_IGNORE_STDIO_OPTIONS,
-  };
 }
 
 function stripWrappingQuotes(value: string): string {
@@ -324,14 +236,9 @@ export function resolveAvailableEditors(
 }
 
 /**
- * OpenShape - Service API for browser and editor launch actions.
+ * OpenShape - Service API for editor launch actions.
  */
 export interface OpenShape {
-  /**
-   * Open a URL target in the default browser.
-   */
-  readonly openBrowser: (target: string) => Effect.Effect<void, OpenError>;
-
   /**
    * Open a workspace path in a selected editor integration.
    *
@@ -341,7 +248,7 @@ export interface OpenShape {
 }
 
 /**
- * Open - Service tag for browser/editor launch operations.
+ * Open - Service tag for editor launch operations.
  */
 export class Open extends Context.Service<Open, OpenShape>()("termweave-server/open") {}
 
@@ -389,12 +296,6 @@ const launchProcess = Effect.fnUntraced(function* (
   );
 });
 
-export const launchBrowser = Effect.fnUntraced(function* (
-  target: string,
-): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
-  yield* launchProcess(resolveBrowserLaunch(target), "Browser auto-open failed");
-});
-
 export const launchDetached = (launch: EditorLaunch) =>
   Effect.gen(function* () {
     if (!isCommandAvailable(launch.command)) {
@@ -422,10 +323,6 @@ const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   return {
-    openBrowser: (target) =>
-      launchBrowser(target).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ),
     openInEditor: (input) =>
       Effect.flatMap(resolveEditorLaunch(input), (launch) =>
         launchDetached(launch).pipe(

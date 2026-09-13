@@ -94,7 +94,6 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 const defaultOpenService: OpenShape = {
-  openBrowser: () => Effect.void,
   openInEditor: () => Effect.void,
 };
 
@@ -551,9 +550,9 @@ function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
-function deriveServerPathsSync(baseDir: string, devUrl: URL | undefined) {
+function deriveServerPathsSync(baseDir: string) {
   return Effect.runSync(
-    deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)),
+    deriveServerPaths(baseDir).pipe(Effect.provide(NodeServices.layer)),
   );
 }
 
@@ -578,10 +577,8 @@ describe("WebSocket Server", () => {
       cwd?: string;
       autoBootstrapProjectFromCwd?: boolean;
       logWebSocketEvents?: boolean;
-      devUrl?: string;
       authToken?: string;
       baseDir?: string;
-      staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
       providerInstanceRegistry?: ProviderInstanceRegistryShape;
       providerMaintenanceRunner?: ProviderMaintenanceRunnerShape;
@@ -601,8 +598,7 @@ describe("WebSocket Server", () => {
     }
 
     const baseDir = options.baseDir ?? makeTempDir("termweave-ws-base-");
-    const devUrl = options.devUrl ? new URL(options.devUrl) : undefined;
-    const derivedPaths = deriveServerPathsSync(baseDir, devUrl);
+    const derivedPaths = deriveServerPathsSync(baseDir);
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
     const providerLayer = options.providerLayer ?? makeServerProviderLayer();
@@ -628,18 +624,14 @@ describe("WebSocket Server", () => {
       options.sourceControlRepositoryService ?? defaultSourceControlRepositoryService,
     );
     const serverConfigLayer = Layer.succeed(ServerConfig, {
-      mode: "web",
       port: 0,
       host: undefined,
       cwd: options.cwd ?? "/test/project",
       baseDir,
       ...derivedPaths,
-      staticDir: options.staticDir,
-      devUrl,
-      noBrowser: true,
       authToken: options.authToken,
       autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
-      logWebSocketEvents: options.logWebSocketEvents ?? Boolean(options.devUrl),
+      logWebSocketEvents: options.logWebSocketEvents ?? false,
     } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
     const runtimeOverrides = Layer.mergeAll(
@@ -752,7 +744,7 @@ describe("WebSocket Server", () => {
 
   it("serves persisted attachments from stateDir", async () => {
     const baseDir = makeTempDir("termweave-state-attachments-");
-    const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
+    const { attachmentsDir } = deriveServerPathsSync(baseDir);
     const attachmentPath = path.join(attachmentsDir, "thread-a", "message-a", "0.png");
     fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
     fs.writeFileSync(attachmentPath, Buffer.from("hello-attachment"));
@@ -771,7 +763,7 @@ describe("WebSocket Server", () => {
 
   it("serves persisted attachments for URL-encoded paths", async () => {
     const baseDir = makeTempDir("termweave-state-attachments-encoded-");
-    const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
+    const { attachmentsDir } = deriveServerPathsSync(baseDir);
     const attachmentPath = path.join(
       attachmentsDir,
       "thread%20folder",
@@ -864,7 +856,7 @@ describe("WebSocket Server", () => {
 
   it("includes bootstrap ids in welcome when cwd project and thread already exist", async () => {
     const baseDir = makeTempDir("termweave-state-bootstrap-existing-");
-    const { dbPath } = deriveServerPathsSync(baseDir, undefined);
+    const { dbPath } = deriveServerPathsSync(baseDir);
     const persistenceLayer = makeSqlitePersistenceLive(dbPath).pipe(
       Layer.provide(NodeServices.layer),
     );
@@ -950,10 +942,7 @@ describe("WebSocket Server", () => {
 
   it("responds to server.getConfig", async () => {
     const baseDir = makeTempDir("termweave-state-get-config-");
-    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(
-      baseDir,
-      undefined,
-    );
+    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(baseDir);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
 
@@ -1655,10 +1644,7 @@ describe("WebSocket Server", () => {
 
   it("bootstraps default keybindings file when missing", async () => {
     const baseDir = makeTempDir("termweave-state-bootstrap-keybindings-");
-    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(
-      baseDir,
-      undefined,
-    );
+    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(baseDir);
     expect(fs.existsSync(keybindingsPath)).toBe(false);
 
     server = await createTestServer({ cwd: "/my/workspace", baseDir });
@@ -1695,10 +1681,7 @@ describe("WebSocket Server", () => {
 
   it("falls back to defaults and reports malformed keybindings config issues", async () => {
     const baseDir = makeTempDir("termweave-state-malformed-keybindings-");
-    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(
-      baseDir,
-      undefined,
-    );
+    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(baseDir);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "{ not-json", "utf8");
 
@@ -1737,7 +1720,7 @@ describe("WebSocket Server", () => {
 
   it("ignores invalid keybinding entries but keeps valid entries and reports issues", async () => {
     const baseDir = makeTempDir("termweave-state-partial-invalid-keybindings-");
-    const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
+    const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
       keybindingsPath,
@@ -1791,7 +1774,7 @@ describe("WebSocket Server", () => {
 
   it("pushes server.configUpdated issues when keybindings file changes", async () => {
     const baseDir = makeTempDir("termweave-state-keybindings-watch-");
-    const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir, undefined);
+    const { keybindingsConfigPath: keybindingsPath } = deriveServerPathsSync(baseDir);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
 
@@ -1833,7 +1816,6 @@ describe("WebSocket Server", () => {
   it("routes shell.openInEditor through the injected open service", async () => {
     const openCalls: Array<{ cwd: string; editor: string }> = [];
     const openService: OpenShape = {
-      openBrowser: () => Effect.void,
       openInEditor: (input) => {
         openCalls.push({ cwd: input.cwd, editor: input.editor });
         return Effect.void;
@@ -1857,10 +1839,7 @@ describe("WebSocket Server", () => {
 
   it("reads keybindings from the configured state directory", async () => {
     const baseDir = makeTempDir("termweave-state-keybindings-");
-    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(
-      baseDir,
-      undefined,
-    );
+    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(baseDir);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
       keybindingsPath,
@@ -1903,10 +1882,7 @@ describe("WebSocket Server", () => {
 
   it("upserts keybinding rules and updates cached server config", async () => {
     const baseDir = makeTempDir("termweave-state-upsert-keybinding-");
-    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(
-      baseDir,
-      undefined,
-    );
+    const { keybindingsConfigPath: keybindingsPath, logsDir } = deriveServerPathsSync(baseDir);
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(
       keybindingsPath,
@@ -2335,7 +2311,6 @@ describe("WebSocket Server", () => {
     process.on("unhandledRejection", onUnhandledRejection);
 
     const brokenOpenService: OpenShape = {
-      openBrowser: () => Effect.void,
       openInEditor: () =>
         Effect.sync(() => BigInt(1)).pipe(Effect.map((result) => result as unknown as void)),
     };

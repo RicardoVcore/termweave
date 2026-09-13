@@ -10,8 +10,6 @@ import { Effect, FileSystem, Layer, Path, Context } from "effect";
 
 export const DEFAULT_PORT = 3773;
 
-export type RuntimeMode = "web" | "desktop" | "tui";
-
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
  */
@@ -38,14 +36,10 @@ export interface ServerDerivedPaths {
  * ServerConfigShape - Process/runtime configuration required by the server.
  */
 export interface ServerConfigShape extends ServerDerivedPaths {
-  readonly mode: RuntimeMode;
   readonly port: number;
   readonly host: string | undefined;
   readonly cwd: string;
   readonly baseDir: string;
-  readonly staticDir: string | undefined;
-  readonly devUrl: URL | undefined;
-  readonly noBrowser: boolean;
   readonly authToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
@@ -53,10 +47,9 @@ export interface ServerConfigShape extends ServerDerivedPaths {
 
 export const deriveServerPaths = Effect.fn(function* (
   baseDir: ServerConfigShape["baseDir"],
-  devUrl: ServerConfigShape["devUrl"],
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
-  const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
+  const stateDir = join(baseDir, "userdata");
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
   const logsDir = join(stateDir, "logs");
@@ -92,14 +85,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
     Layer.effect(
       ServerConfig,
       Effect.gen(function* () {
-        const devUrl = undefined;
-
         const fs = yield* FileSystem.FileSystem;
         const baseDir =
           typeof baseDirOrPrefix === "string"
             ? baseDirOrPrefix
             : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
-        const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+        const derivedPaths = yield* deriveServerPaths(baseDir);
 
         yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
         yield* fs.makeDirectory(derivedPaths.logsDir, { recursive: true });
@@ -111,37 +102,12 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           cwd,
           baseDir,
           ...derivedPaths,
-          mode: "web",
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: false,
           port: 0,
           host: undefined,
           authToken: undefined,
-          staticDir: undefined,
-          devUrl,
-          noBrowser: false,
         } satisfies ServerConfigShape;
       }),
     );
 }
-
-export const resolveStaticDir = Effect.fn(function* () {
-  const { join, resolve } = yield* Path.Path;
-  const { exists } = yield* FileSystem.FileSystem;
-  const bundledClient = resolve(join(import.meta.dirname, "client"));
-  const bundledStat = yield* exists(join(bundledClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => false),
-  );
-  if (bundledStat) {
-    return bundledClient;
-  }
-
-  const monorepoClient = resolve(join(import.meta.dirname, "../../web/dist"));
-  const monorepoStat = yield* exists(join(monorepoClient, "index.html")).pipe(
-    Effect.orElseSucceed(() => false),
-  );
-  if (monorepoStat) {
-    return monorepoClient;
-  }
-  return undefined;
-});

@@ -32,7 +32,6 @@ afterEach(() => {
 });
 
 const serverConfigLayer = Layer.succeed(ServerConfig, {
-  mode: "web",
   port: 0,
   cwd: "/workspace",
   host: undefined,
@@ -53,9 +52,6 @@ const serverConfigLayer = Layer.succeed(ServerConfig, {
   anonymousIdPath: "/tmp/termweave-test/anonymous-id",
   environmentIdPath: "/tmp/termweave-test/environment-id",
   secretsDir: "/tmp/termweave-test/secrets",
-  staticDir: undefined,
-  devUrl: undefined,
-  noBrowser: true,
   authToken: undefined,
   autoBootstrapProjectFromCwd: false,
   logWebSocketEvents: false,

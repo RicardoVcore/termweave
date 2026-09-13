@@ -110,7 +110,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       );
       assert.equal(
         batchRequests.every((request) =>
-          request.body.batch.every((event) => event.properties?.clientType === "cli-web-client"),
+          request.body.batch.every((event) => event.properties?.clientType === "terminal-client"),
         ),
         true,
       );
