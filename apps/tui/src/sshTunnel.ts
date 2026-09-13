@@ -45,6 +45,14 @@ function validPort(port: number): boolean {
   return Number.isInteger(port) && port >= 1 && port <= 65_535;
 }
 
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("SSH tunnel startup cancelled.");
+  }
+}
+
 export function buildSshTunnelArgs(
   input: SshTunnelInput & { readonly localPort: number; readonly controlPath: string },
 ): string[] {
@@ -97,7 +105,7 @@ async function waitForLocalPort(input: {
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
   while (Date.now() < deadline) {
-    if (input.signal.aborted) throw new Error("SSH tunnel readiness cancelled.");
+    throwIfAborted(input.signal);
     if (input.process.exitCode !== null || input.process.signalCode !== null) {
       throw new Error("SSH tunnel exited before becoming ready.");
     }
@@ -139,7 +147,7 @@ async function waitForControlSocket(input: {
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
   while (Date.now() < deadline) {
-    if (input.signal.aborted) throw new Error("SSH tunnel forwarding confirmation cancelled.");
+    throwIfAborted(input.signal);
     if (input.process.exitCode !== null || input.process.signalCode !== null) {
       throw new Error("SSH tunnel exited before forwarding was confirmed.");
     }
@@ -183,7 +191,7 @@ export async function startSshTunnel(
   let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
   const processFailure = new Promise<never>((_, reject) => {
     const fail = (error: Error) => {
-      startupAbort.abort();
+      startupAbort.abort(error);
       reject(error);
     };
     onError = fail;
@@ -214,7 +222,7 @@ export async function startSshTunnel(
       processFailure,
     ]);
   } catch (error) {
-    startupAbort.abort();
+    startupAbort.abort(error);
     child.kill("SIGTERM");
     await fs.rm(controlDir, { recursive: true, force: true });
     throw error;
