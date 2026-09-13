@@ -47,11 +47,16 @@ export function buildSshTunnelArgs(
     "-T",
     "-o",
     "ExitOnForwardFailure=yes",
-    "-p",
-    String(input.sshPort ?? 22),
+    "-o",
+    "ForkAfterAuthentication=no",
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
     "-L",
     `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`,
   ];
+  if (input.sshPort !== undefined) args.push("-p", String(input.sshPort));
   if (input.identityPath?.trim()) args.push("-i", input.identityPath.trim());
   args.push(input.target.trim());
   return args;
@@ -99,6 +104,16 @@ async function waitForLocalPort(input: {
   throw new Error(`Timed out waiting for SSH tunnel on 127.0.0.1:${input.port}.`);
 }
 
+async function assertLocalPortAvailable(port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", () => reject(new Error(`Local SSH tunnel port ${port} is unavailable.`)));
+    server.listen(port, "127.0.0.1", () => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
+}
+
 export async function startSshTunnel(
   input: SshTunnelInput,
   dependencies: SshTunnelDependencies = {},
@@ -110,6 +125,7 @@ export async function startSshTunnel(
     throw new Error("SSH port must be between 1 and 65535.");
   }
   const localPort = input.localPort ?? (await (dependencies.reservePort ?? reserveLocalPort)());
+  if (input.localPort !== undefined) await assertLocalPortAvailable(localPort);
   const child = (dependencies.spawnImpl ?? spawn)(
     "ssh",
     buildSshTunnelArgs({ ...input, localPort }),
@@ -117,16 +133,26 @@ export async function startSshTunnel(
       stdio: "inherit",
     },
   );
+  let onError: ((error: Error) => void) | undefined;
+  const processError = new Promise<never>((_, reject) => {
+    onError = reject;
+    child.once("error", reject);
+  });
   try {
-    await (dependencies.waitUntilReady ?? waitForLocalPort)({
-      host: "127.0.0.1",
-      port: localPort,
-      timeoutMs: input.readyTimeoutMs ?? 10_000,
-      process: child,
-    });
+    await Promise.race([
+      (dependencies.waitUntilReady ?? waitForLocalPort)({
+        host: "127.0.0.1",
+        port: localPort,
+        timeoutMs: input.readyTimeoutMs ?? 60_000,
+        process: child,
+      }),
+      processError,
+    ]);
   } catch (error) {
     child.kill("SIGTERM");
     throw error;
+  } finally {
+    if (onError !== undefined) child.off("error", onError);
   }
   return {
     localPort,
