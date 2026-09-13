@@ -40,7 +40,6 @@ const testLayer = Layer.mergeAll(
   Layer.succeed(CliConfig, {
     cwd: "/tmp/t3-test-workspace",
     fixPath: Effect.void,
-    resolveStaticDir: Effect.undefined,
   } satisfies CliConfigShape),
   Layer.succeed(NetService, {
     canListenOnHost: () => Effect.succeed(true),

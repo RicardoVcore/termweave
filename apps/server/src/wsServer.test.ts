@@ -524,36 +524,6 @@ async function rewriteKeybindingsAndWaitForPush(
   throw lastError;
 }
 
-async function requestPath(
-  port: number,
-  requestPath: string,
-): Promise<{ statusCode: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = Http.request(
-      {
-        hostname: "127.0.0.1",
-        port,
-        path: requestPath,
-        method: "GET",
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-        res.on("end", () => {
-          resolve({
-            statusCode: res.statusCode ?? 0,
-            body: Buffer.concat(chunks).toString("utf8"),
-          });
-        });
-      },
-    );
-    req.once("error", reject);
-    req.end();
-  });
-}
-
 function compileKeybindings(bindings: KeybindingsConfig): ResolvedKeybindingsConfig {
   const resolved: Array<ResolvedKeybindingsConfig[number]> = [];
   for (const binding of bindings) {
@@ -825,36 +795,6 @@ describe("WebSocket Server", () => {
     expect(bytes).toEqual(Buffer.from("hello-encoded-attachment"));
   });
 
-  it("serves static index for root path", async () => {
-    const baseDir = makeTempDir("termweave-state-static-root-");
-    const staticDir = makeTempDir("termweave-static-root-");
-    fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>static-root</h1>", "utf8");
-
-    server = await createTestServer({ cwd: "/test/project", baseDir, staticDir });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-    expect(port).toBeGreaterThan(0);
-
-    const response = await fetch(`http://127.0.0.1:${port}/`);
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain("static-root");
-  });
-
-  it("rejects static path traversal attempts", async () => {
-    const baseDir = makeTempDir("termweave-state-static-traversal-");
-    const staticDir = makeTempDir("termweave-static-traversal-");
-    fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>safe</h1>", "utf8");
-
-    server = await createTestServer({ cwd: "/test/project", baseDir, staticDir });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-    expect(port).toBeGreaterThan(0);
-
-    const response = await requestPath(port, "/..%2f..%2fetc/passwd");
-    expect(response.statusCode).toBe(400);
-    expect(response.body).toBe("Invalid static file path");
-  });
-
   it("bootstraps the cwd project on startup when enabled", async () => {
     server = await createTestServer({
       cwd: "/test/bootstrap-workspace",
@@ -1006,34 +946,6 @@ describe("WebSocket Server", () => {
 
     expect(snapshot.projects).toEqual([]);
     expect(snapshot.threads).toEqual([]);
-  });
-
-  it("logs outbound websocket push events in dev mode", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {
-      // Keep test output clean while verifying websocket logs.
-    });
-
-    server = await createTestServer({
-      cwd: "/test/project",
-      devUrl: "http://localhost:5173",
-    });
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
-    expect(port).toBeGreaterThan(0);
-
-    const [ws] = await connectAndAwaitWelcome(port);
-    connections.push(ws);
-
-    expect(
-      logSpy.mock.calls.some(([message]) => {
-        if (typeof message !== "string") return false;
-        return (
-          message.includes("[ws]") &&
-          message.includes("outgoing push") &&
-          message.includes(`channel="${WS_CHANNELS.serverWelcome}"`)
-        );
-      }),
-    ).toBe(true);
   });
 
   it("responds to server.getConfig", async () => {

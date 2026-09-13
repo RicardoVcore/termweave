@@ -69,7 +69,6 @@ import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
-import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
   normalizeAttachmentRelativePath,
@@ -266,8 +265,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     port,
     cwd,
     keybindingsConfigPath,
-    staticDir,
-    devUrl,
     authToken,
     host,
     logWebSocketEvents,
@@ -464,7 +461,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     } satisfies OrchestrationCommand;
   });
 
-  // HTTP server — serves static files or redirects to Vite dev server
+  // HTTP server — serves attachments and accepts WebSocket upgrades.
   const httpServer = http.createServer((req, res) => {
     const respond = (
       statusCode: number,
@@ -478,10 +475,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void Effect.runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-        if (tryHandleProjectFaviconRequest(url, res)) {
-          return;
-        }
-
         if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
           const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
           const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
@@ -542,84 +535,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
-        // In dev mode, redirect to Vite dev server
-        if (devUrl) {
-          respond(302, { Location: devUrl.href });
-          return;
-        }
-
-        // Serve static files from the web app build
-        if (!staticDir) {
-          respond(
-            503,
-            { "Content-Type": "text/plain" },
-            "No static directory configured and no dev URL set.",
-          );
-          return;
-        }
-
-        const staticRoot = path.resolve(staticDir);
-        const staticRequestPath = url.pathname === "/" ? "/index.html" : url.pathname;
-        const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-        const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
-        const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-        const hasPathTraversalSegment = staticRelativePath.startsWith("..");
-        if (
-          staticRelativePath.length === 0 ||
-          hasRawLeadingParentSegment ||
-          hasPathTraversalSegment ||
-          staticRelativePath.includes("\0")
-        ) {
-          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
-          return;
-        }
-
-        const isWithinStaticRoot = (candidate: string) =>
-          candidate === staticRoot ||
-          candidate.startsWith(
-            staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`,
-          );
-
-        let filePath = path.resolve(staticRoot, staticRelativePath);
-        if (!isWithinStaticRoot(filePath)) {
-          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
-          return;
-        }
-
-        const ext = path.extname(filePath);
-        if (!ext) {
-          filePath = path.resolve(filePath, "index.html");
-          if (!isWithinStaticRoot(filePath)) {
-            respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
-            return;
-          }
-        }
-
-        const fileInfo = yield* fileSystem
-          .stat(filePath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
-        if (!fileInfo || fileInfo.type !== "File") {
-          const indexPath = path.resolve(staticRoot, "index.html");
-          const indexData = yield* fileSystem
-            .readFile(indexPath)
-            .pipe(Effect.catch(() => Effect.succeed(null)));
-          if (!indexData) {
-            respond(404, { "Content-Type": "text/plain" }, "Not Found");
-            return;
-          }
-          respond(200, { "Content-Type": "text/html; charset=utf-8" }, indexData);
-          return;
-        }
-
-        const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-        const data = yield* fileSystem
-          .readFile(filePath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
-        if (!data) {
-          respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
-          return;
-        }
-        respond(200, { "Content-Type": contentType }, data);
+        respond(404, { "Content-Type": "text/plain" }, "Not Found");
       }),
     ).catch(() => {
       if (!res.headersSent) {

@@ -6,19 +6,17 @@
  *
  * @module CliConfig
  */
-import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, Context } from "effect";
+import { Config, Data, Effect, Layer, Option, Schema, Context } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@termweave/shared/Net";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
-  resolveStaticDir,
   ServerConfig,
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
 import { fixPath, resolveBaseDir } from "./os-jank";
-import { Open } from "./open";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
@@ -92,7 +90,6 @@ export interface CliConfigShape {
   /**
    * Resolve static web asset directory for server mode.
    */
-  readonly resolveStaticDir: Effect.Effect<string | undefined>;
 }
 
 /**
@@ -101,21 +98,10 @@ export interface CliConfigShape {
 export class CliConfig extends Context.Service<CliConfig, CliConfigShape>()(
   "termweave-server/main/CliConfig",
 ) {
-  static readonly layer = Layer.effect(
-    CliConfig,
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      return {
-        cwd: process.cwd(),
-        fixPath: Effect.sync(fixPath),
-        resolveStaticDir: resolveStaticDir().pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
-      } satisfies CliConfigShape;
-    }),
-  );
+  static readonly layer = Layer.succeed(CliConfig, {
+    cwd: process.cwd(),
+    fixPath: Effect.sync(fixPath),
+  } satisfies CliConfigShape);
 }
 
 const CliEnvConfig = Config.all({
@@ -274,7 +260,6 @@ const ServerConfigLive = (input: CliInput) =>
           () => Boolean(devUrl),
         ),
       );
-      const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const host = Option.getOrElse(
         resolveOptionPrecedence(
           input.host,
@@ -291,7 +276,7 @@ const ServerConfigLive = (input: CliInput) =>
         host,
         baseDir,
         ...derivedPaths,
-        staticDir,
+        staticDir: undefined,
         devUrl,
         noBrowser,
         authToken: Option.getOrUndefined(authToken),
@@ -332,12 +317,6 @@ const LayerLive = (input: CliInput) =>
     Layer.provideMerge(ServerConfigLive(input)),
   );
 
-const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
-
-const formatHostForUrl = (host: string): string =>
-  host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-
 export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -367,45 +346,18 @@ const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
-    const openDeps = yield* Open;
     yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
 
-    if (!config.devUrl && !config.staticDir) {
-      yield* Effect.logWarning(
-        "web bundle missing and no VITE_DEV_SERVER_URL; web UI unavailable",
-        {
-          hint: "Run `bun run --cwd apps/web build` or set VITE_DEV_SERVER_URL for dev mode.",
-        },
-      );
-    }
-
     yield* start;
     yield* Effect.forkChild(recordStartupHeartbeat);
 
-    const localUrl = `http://localhost:${config.port}`;
-    const bindUrl =
-      config.host && !isWildcardHost(config.host)
-        ? `http://${formatHostForUrl(config.host)}:${config.port}`
-        : localUrl;
-    const { authToken, devUrl, ...safeConfig } = config;
+    const { authToken, ...safeConfig } = config;
     yield* Effect.logInfo("Termweave running", {
       ...safeConfig,
-      devUrl: devUrl?.toString(),
       authEnabled: Boolean(authToken),
     });
-
-    if (!config.noBrowser) {
-      const target = config.devUrl?.toString() ?? bindUrl;
-      yield* openDeps.openBrowser(target).pipe(
-        Effect.catch(() =>
-          Effect.logInfo("browser auto-open unavailable", {
-            hint: `Open ${target} in your browser.`,
-          }),
-        ),
-      );
-    }
 
     return yield* stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));

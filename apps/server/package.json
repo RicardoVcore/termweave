@@ -38,7 +38,6 @@
     "@effect/vitest": "catalog:",
     "@termweave/contracts": "workspace:*",
     "@termweave/shared": "workspace:*",
-    "@termweave/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/ws": "^8.5.13",
