@@ -1,0 +1,23 @@
+[Unit]
+Description=Termweave server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=termweave
+Group=termweave
+WorkingDirectory=/opt/termweave
+Environment=T3CODE_HOME=/var/lib/termweave
+EnvironmentFile=-/etc/termweave/server.env
+ExecStart=/usr/bin/node /opt/termweave/apps/server/dist/index.mjs
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/termweave
+
+[Install]
+WantedBy=multi-user.target
