@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
-import fs from "node:fs/promises";
 
 import { buildSshTunnelArgs, startSshTunnel } from "./sshTunnel";
 
@@ -46,46 +45,41 @@ describe("SSH tunnel", () => {
       signalCode: null,
       kill: noopKill,
     });
-    const controlPath = "/tmp/termweave-test-control";
-    await fs.writeFile(controlPath, "");
     let spawned: { command: string; args: string[] } | undefined;
-    try {
-      const tunnel = await startSshTunnel(
-        { target: "vps", remotePort: 3773, controlPath },
-        {
-          reservePort: async () => 41002,
-          spawnImpl: (command, args) => {
-            spawned = { command, args };
-            return child as never;
-          },
-          waitUntilReady: async () => undefined,
+    const tunnel = await startSshTunnel(
+      { target: "vps", remotePort: 3773 },
+      {
+        reservePort: async () => 41002,
+        spawnImpl: (command, args) => {
+          spawned = { command, args };
+          return child as never;
         },
-      );
+        confirmForward: async () => undefined,
+        waitUntilReady: async () => undefined,
+      },
+    );
 
-      expect(tunnel.localPort).toBe(41002);
-      expect(spawned).toEqual({
-        command: "ssh",
-        args: [
-          "-N",
-          "-T",
-          "-o",
-          "ExitOnForwardFailure=yes",
-          "-o",
-          "ForkAfterAuthentication=no",
-          "-o",
-          "ControlPersist=no",
-          "-M",
-          "-S",
-          controlPath,
-          "-L",
-          "127.0.0.1:41002:127.0.0.1:3773",
-          "vps",
-        ],
-      });
-      tunnel.stop();
-    } finally {
-      await fs.rm(controlPath, { force: true });
-    }
+    expect(tunnel.localPort).toBe(41002);
+    expect(spawned).toEqual({
+      command: "ssh",
+      args: [
+        "-N",
+        "-T",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ForkAfterAuthentication=no",
+        "-o",
+        "ControlPersist=no",
+        "-M",
+        "-S",
+        expect.any(String),
+        "-L",
+        "127.0.0.1:41002:127.0.0.1:3773",
+        "vps",
+      ],
+    });
+    tunnel.stop();
   });
 
   it("rejects when SSH cannot start", async () => {
@@ -105,6 +99,7 @@ describe("SSH tunnel", () => {
             queueMicrotask(() => child.emit("error", new Error("ssh unavailable")));
             return child as never;
           },
+          confirmForward: async () => undefined,
         },
       ),
     ).rejects.toThrow("ssh unavailable");
@@ -127,6 +122,7 @@ describe("SSH tunnel", () => {
             queueMicrotask(() => child.emit("exit", null, "SIGTERM"));
             return child as never;
           },
+          confirmForward: async () => undefined,
         },
       ),
     ).rejects.toThrow("SSH tunnel exited before becoming ready (SIGTERM).");

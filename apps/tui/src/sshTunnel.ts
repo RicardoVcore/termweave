@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -12,7 +11,6 @@ export interface SshTunnelInput {
   readonly localPort?: number;
   readonly identityPath?: string;
   readonly readyTimeoutMs?: number;
-  readonly controlPath?: string;
 }
 
 export interface SshTunnel {
@@ -28,11 +26,18 @@ export interface SshTunnelDependencies {
     options: { readonly stdio: "inherit" },
   ) => ChildProcess;
   readonly reservePort?: () => Promise<number>;
+  readonly confirmForward?: (input: {
+    path: string;
+    timeoutMs: number;
+    process: ChildProcess;
+    signal: AbortSignal;
+  }) => Promise<void>;
   readonly waitUntilReady?: (input: {
     host: string;
     port: number;
     timeoutMs: number;
     process: ChildProcess;
+    signal: AbortSignal;
   }) => Promise<void>;
 }
 
@@ -41,7 +46,7 @@ function validPort(port: number): boolean {
 }
 
 export function buildSshTunnelArgs(
-  input: SshTunnelInput & { readonly localPort: number },
+  input: SshTunnelInput & { readonly localPort: number; readonly controlPath: string },
 ): string[] {
   if (!input.target.trim()) throw new Error("SSH target is required.");
   if (!validPort(input.localPort) || !validPort(input.remotePort)) {
@@ -58,7 +63,7 @@ export function buildSshTunnelArgs(
     "ControlPersist=no",
     "-M",
     "-S",
-    input.controlPath ?? "",
+    input.controlPath,
     "-L",
     `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`,
   ];
@@ -88,21 +93,27 @@ async function waitForLocalPort(input: {
   readonly port: number;
   readonly timeoutMs: number;
   readonly process: ChildProcess;
+  readonly signal: AbortSignal;
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
   while (Date.now() < deadline) {
-    if (input.process.exitCode !== null) {
-      throw new Error(`SSH tunnel exited before becoming ready (${input.process.exitCode}).`);
+    if (input.signal.aborted) throw new Error("SSH tunnel readiness cancelled.");
+    if (input.process.exitCode !== null || input.process.signalCode !== null) {
+      throw new Error("SSH tunnel exited before becoming ready.");
     }
     const ready = await new Promise<boolean>((resolve) => {
       const socket = net.createConnection({ host: input.host, port: input.port });
       const finish = (value: boolean) => {
         socket.removeAllListeners();
+        input.signal.removeEventListener("abort", abort);
         socket.destroy();
         resolve(value);
       };
+      const abort = () => finish(false);
       socket.once("connect", () => finish(true));
       socket.once("error", () => finish(false));
+      socket.setTimeout(500, () => finish(false));
+      input.signal.addEventListener("abort", abort, { once: true });
     });
     if (ready) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -124,9 +135,11 @@ async function waitForControlSocket(input: {
   readonly path: string;
   readonly timeoutMs: number;
   readonly process: ChildProcess;
+  readonly signal: AbortSignal;
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
   while (Date.now() < deadline) {
+    if (input.signal.aborted) throw new Error("SSH tunnel forwarding confirmation cancelled.");
     if (input.process.exitCode !== null || input.process.signalCode !== null) {
       throw new Error("SSH tunnel exited before forwarding was confirmed.");
     }
@@ -152,48 +165,58 @@ export async function startSshTunnel(
   }
   const localPort = input.localPort ?? (await (dependencies.reservePort ?? reserveLocalPort)());
   if (input.localPort !== undefined) await assertLocalPortAvailable(localPort);
-  const controlPath = input.controlPath ?? path.join(os.tmpdir(), `termweave-${randomUUID()}`);
-  const child = (dependencies.spawnImpl ?? spawn)(
-    "ssh",
-    buildSshTunnelArgs({ ...input, localPort, controlPath }),
-    {
-      stdio: "inherit",
-    },
-  );
+  const controlDir = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-ssh-"));
+  const controlPath = path.join(controlDir, "control");
+  let child: ChildProcess;
+  try {
+    child = (dependencies.spawnImpl ?? spawn)(
+      "ssh",
+      buildSshTunnelArgs({ ...input, localPort, controlPath }),
+      { stdio: "inherit" },
+    );
+  } catch (error) {
+    await fs.rm(controlDir, { recursive: true, force: true });
+    throw error;
+  }
+  const startupAbort = new AbortController();
   let onError: ((error: Error) => void) | undefined;
   let onExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | undefined;
-  const processError = new Promise<never>((_, reject) => {
-    onError = reject;
-    child.once("error", reject);
-  });
-  const processExit = new Promise<never>((_, reject) => {
+  const processFailure = new Promise<never>((_, reject) => {
+    const fail = (error: Error) => {
+      startupAbort.abort();
+      reject(error);
+    };
+    onError = fail;
     onExit = (code, signal) =>
-      reject(new Error(`SSH tunnel exited before becoming ready (${code ?? signal}).`));
+      fail(new Error(`SSH tunnel exited before becoming ready (${code ?? signal}).`));
+    child.once("error", onError);
     child.once("exit", onExit);
   });
+  const timeoutMs = input.readyTimeoutMs ?? 60_000;
   try {
     await Promise.race([
-      waitForControlSocket({
+      (dependencies.confirmForward ?? waitForControlSocket)({
         path: controlPath,
-        timeoutMs: input.readyTimeoutMs ?? 60_000,
+        timeoutMs,
         process: child,
+        signal: startupAbort.signal,
       }),
-      processError,
-      processExit,
+      processFailure,
     ]);
     await Promise.race([
       (dependencies.waitUntilReady ?? waitForLocalPort)({
         host: "127.0.0.1",
         port: localPort,
-        timeoutMs: input.readyTimeoutMs ?? 60_000,
+        timeoutMs,
         process: child,
+        signal: startupAbort.signal,
       }),
-      processError,
-      processExit,
+      processFailure,
     ]);
   } catch (error) {
+    startupAbort.abort();
     child.kill("SIGTERM");
-    await fs.rm(controlPath, { force: true });
+    await fs.rm(controlDir, { recursive: true, force: true });
     throw error;
   } finally {
     if (onError !== undefined) child.off("error", onError);
@@ -204,7 +227,7 @@ export async function startSshTunnel(
     process: child,
     stop: () => {
       if (!child.killed) child.kill("SIGTERM");
-      void fs.rm(controlPath, { force: true });
+      void fs.rm(controlDir, { recursive: true, force: true });
     },
   };
 }
