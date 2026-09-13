@@ -93,12 +93,19 @@ it.layer(testLayer)("server CLI command", (it) => {
       yield* runCli([], {
         T3CODE_PORT: "4999",
         T3CODE_HOST: "100.88.10.4",
-        T3CODE_AUTH_TOKEN: "env-token",
+        TERMWEAVE_AUTH_TOKEN: "env-token",
       });
 
       assert.equal(resolvedConfig?.port, 4999);
       assert.equal(resolvedConfig?.host, "100.88.10.4");
       assert.equal(resolvedConfig?.authToken, "env-token");
+    }),
+  );
+
+  it.effect("rejects non-loopback bind without an auth token", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(runCli(["--host", "0.0.0.0"]));
+      assert.equal(result._tag, "Failure");
     }),
   );
 

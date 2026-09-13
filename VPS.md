@@ -25,7 +25,7 @@ bun run build
 Generate token and run server. Keep token outside shell history where possible:
 
 ```bash
-export T3CODE_AUTH_TOKEN="$(openssl rand -hex 32)"
+export TERMWEAVE_AUTH_TOKEN="$(openssl rand -hex 32)"
 export T3CODE_HOME="$HOME/.local/share/termweave"
 bun run --cwd apps/server start -- --host 0.0.0.0 --port 3773
 ```
@@ -49,7 +49,7 @@ Create `/etc/termweave/server.env` with mode `600`:
 ```text
 T3CODE_HOST=100.64.0.10
 T3CODE_PORT=3773
-T3CODE_AUTH_TOKEN=replace-with-random-token
+TERMWEAVE_AUTH_TOKEN=replace-with-random-token
 ```
 
 Install Node.js at `/usr/bin/node`, build as above, then enable service:

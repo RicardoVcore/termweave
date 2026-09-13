@@ -7,8 +7,22 @@
  * @module ServerConfig
  */
 import { Effect, FileSystem, Layer, Path, Context } from "effect";
+import { isIP } from "node:net";
 
 export const DEFAULT_PORT = 3773;
+
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (host === undefined) return false;
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/gu, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  if (isIP(normalized) === 4) return normalized.startsWith("127.");
+  if (isIP(normalized) === 6) return normalized.startsWith("::ffff:127.");
+  return false;
+}
+
+export function requiresAuthForHost(host: string | undefined): boolean {
+  return !isLoopbackHost(host);
+}
 
 /**
  * ServerDerivedPaths - Derived paths from the base directory.

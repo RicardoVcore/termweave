@@ -11,6 +11,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
+  requiresAuthForHost,
   ServerConfig,
   type ServerConfigShape,
 } from "./config";
@@ -97,7 +98,11 @@ const CliEnvConfig = Config.all({
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  authToken: Config.string("T3CODE_AUTH_TOKEN").pipe(
+  authToken: Config.string("TERMWEAVE_AUTH_TOKEN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  legacyAuthToken: Config.string("T3CODE_AUTH_TOKEN").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -172,6 +177,7 @@ const ServerConfigLive = (input: CliInput) =>
       const authToken = resolveOptionPrecedence(
         input.authToken,
         Option.fromUndefinedOr(env.authToken),
+        Option.fromUndefinedOr(env.legacyAuthToken),
         Option.flatMap(bootstrapEnvelope, (bootstrap) =>
           Option.fromUndefinedOr(bootstrap.authToken),
         ),
@@ -208,6 +214,13 @@ const ServerConfigLive = (input: CliInput) =>
         ),
         () => "127.0.0.1",
       );
+      const resolvedAuthToken = Option.getOrUndefined(authToken)?.trim() || undefined;
+      if (requiresAuthForHost(host) && resolvedAuthToken === undefined) {
+        return yield* new StartupError({
+          message:
+            "TERMWEAVE_AUTH_TOKEN is required when Termweave binds beyond loopback (T3CODE_AUTH_TOKEN is accepted as a legacy alias).",
+        });
+      }
 
       const config: ServerConfigShape = {
         port,
@@ -215,7 +228,7 @@ const ServerConfigLive = (input: CliInput) =>
         host,
         baseDir,
         ...derivedPaths,
-        authToken: Option.getOrUndefined(authToken),
+        authToken: resolvedAuthToken,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
       } satisfies ServerConfigShape;

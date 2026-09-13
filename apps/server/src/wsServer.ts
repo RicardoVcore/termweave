@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import os from "node:os";
 import type { Duplex } from "node:stream";
 
@@ -1059,7 +1060,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return;
       }
 
-      if (providedToken !== authToken) {
+      const providedBytes = Buffer.from(providedToken ?? "");
+      const expectedBytes = Buffer.from(authToken);
+      const tokenMatches =
+        providedBytes.length === expectedBytes.length &&
+        timingSafeEqual(providedBytes, expectedBytes);
+      if (!tokenMatches) {
         rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
         return;
       }
