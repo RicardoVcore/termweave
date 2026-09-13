@@ -2,7 +2,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
   ProviderInteractionMode,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { findLatestProposedPlan, hasActionableProposedPlan } from "./sessionLogic";
 
 export interface ThreadStatusPill {

@@ -7,7 +7,7 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@termweave/contracts";
 import { Cache, Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";

@@ -1,4 +1,4 @@
-import type { GitStackedAction } from "@t3tools/contracts";
+import type { GitStackedAction } from "@termweave/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 

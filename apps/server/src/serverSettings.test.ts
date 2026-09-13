@@ -5,8 +5,8 @@ import {
   ProviderInstanceId,
   ServerSettings,
   ServerSettingsPatch,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@termweave/contracts";
+import { createModelSelection } from "@termweave/shared/model";
 import { assert, it } from "@effect/vitest";
 import { Duration, Effect, FileSystem, Layer, Schema } from "effect";
 
@@ -23,7 +23,7 @@ const makeServerSettingsLayer = () =>
     Layer.provideMerge(
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3code-server-settings-test-",
+          prefix: "termweave-server-settings-test-",
         }),
       ),
     ),

@@ -1,4 +1,4 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@termweave/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";

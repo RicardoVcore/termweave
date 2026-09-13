@@ -1,4 +1,4 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateState } from "@termweave/contracts";
 
 export function shouldBroadcastDownloadProgress(
   currentState: DesktopUpdateState,

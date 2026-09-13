@@ -2,9 +2,9 @@ import {
   ProviderDriverKind,
   type ServerProvider,
   type ServerProviderVersionAdvisory,
-} from "@t3tools/contracts";
-import { compareSemverVersions } from "@t3tools/shared/semver";
-import { resolveCommandPath } from "@t3tools/shared/shell";
+} from "@termweave/contracts";
+import { compareSemverVersions } from "@termweave/shared/semver";
+import { resolveCommandPath } from "@termweave/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

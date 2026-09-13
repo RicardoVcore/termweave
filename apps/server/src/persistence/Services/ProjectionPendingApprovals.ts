@@ -13,7 +13,7 @@ import {
   ProjectionPendingApprovalStatus,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -88,4 +88,6 @@ export interface ProjectionPendingApprovalRepositoryShape {
 export class ProjectionPendingApprovalRepository extends Context.Service<
   ProjectionPendingApprovalRepository,
   ProjectionPendingApprovalRepositoryShape
->()("t3/persistence/Services/ProjectionPendingApprovals/ProjectionPendingApprovalRepository") {}
+>()(
+  "termweave-server/persistence/Services/ProjectionPendingApprovals/ProjectionPendingApprovalRepository",
+) {}

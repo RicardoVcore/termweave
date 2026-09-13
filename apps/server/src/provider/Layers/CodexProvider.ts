@@ -11,10 +11,10 @@ import type {
   ModelCapabilities,
   ServerProviderModel,
   ServerProviderSkill,
-} from "@t3tools/contracts";
-import { ServerSettingsError } from "@t3tools/contracts";
+} from "@termweave/contracts";
+import { ServerSettingsError } from "@termweave/contracts";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities } from "@termweave/shared/model";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -230,8 +230,8 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
+      name: "termweave_desktop",
+      title: "Termweave Desktop",
       version: packageJson.version,
     },
     capabilities: {
@@ -269,8 +269,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   const initialize = yield* client.request("initialize", {
     clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
+      name: "termweave_desktop",
+      title: "Termweave Desktop",
       version: "0.1.0",
     },
     capabilities: {
@@ -341,7 +341,7 @@ const makePendingCodexProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Codex is disabled in T3 Code settings.",
+          message: "Codex is disabled in Termweave settings.",
         },
       });
     }
@@ -425,7 +425,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex is disabled in Termweave settings.",
       },
     });
   }

@@ -6,7 +6,7 @@ import {
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
   WS_CHANNELS,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 
 import { makeServerPushBus } from "./pushBus";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type KeybindingShortcut, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { type KeybindingShortcut, type ResolvedKeybindingsConfig } from "@termweave/contracts";
 import {
   modelPickerJumpIndexFromCommand,
   resolveTuiShortcutCommand,

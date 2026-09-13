@@ -37,4 +37,4 @@ export interface ProviderCommandReactorShape {
 export class ProviderCommandReactor extends Context.Service<
   ProviderCommandReactor,
   ProviderCommandReactorShape
->()("t3/orchestration/Services/ProviderCommandReactor") {}
+>()("termweave-server/orchestration/Services/ProviderCommandReactor") {}

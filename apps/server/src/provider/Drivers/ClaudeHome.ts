@@ -1,6 +1,6 @@
 import * as NodeOS from "node:os";
 
-import type { ClaudeSettings } from "@t3tools/contracts";
+import type { ClaudeSettings } from "@termweave/contracts";
 import { Effect, Path } from "effect";
 
 import { expandHomePath } from "../../pathExpansion";

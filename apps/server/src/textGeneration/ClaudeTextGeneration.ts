@@ -9,12 +9,16 @@
  */
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { type ClaudeSettings, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import {
+  type ClaudeSettings,
+  type ModelSelection,
+  TextGenerationError,
+} from "@termweave/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@termweave/shared/git";
 import {
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import { Effect, Option, Schema, Stream } from "effect";
 
 import { type TextGenerationShape } from "./TextGeneration.ts";

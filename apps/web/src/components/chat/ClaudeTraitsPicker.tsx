@@ -3,7 +3,7 @@ import {
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   applyClaudePromptEffortPrefix,
   getDefaultReasoningEffort,
@@ -14,7 +14,7 @@ import {
   supportsClaudeThinkingToggle,
   supportsClaudeUltrathinkKeyword,
   isClaudeUltrathinkPrompt,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import { memo, useCallback, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "../ui/button";

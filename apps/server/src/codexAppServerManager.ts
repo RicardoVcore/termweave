@@ -18,8 +18,8 @@ import {
   type ProviderTurnStartResult,
   RuntimeMode,
   ProviderInteractionMode,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+} from "@termweave/contracts";
+import { normalizeModelSlug } from "@termweave/shared/model";
 import { Effect, Context } from "effect";
 
 import {
@@ -406,8 +406,8 @@ export function normalizeCodexModelSlug(
 export function buildCodexInitializeParams() {
   return {
     clientInfo: {
-      name: "t3code_desktop",
-      title: "T3 Code Desktop",
+      name: "termweave_desktop",
+      title: "Termweave Desktop",
       version: "0.1.0",
     },
     capabilities: {

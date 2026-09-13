@@ -5,7 +5,7 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   formatShortcutLabel,
   isChatNewShortcut,

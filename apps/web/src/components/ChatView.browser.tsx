@@ -14,7 +14,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -119,7 +119,7 @@ function createBaseServerConfig(): ServerConfig {
   return {
     environment: TEST_ENVIRONMENT,
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.termweave-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [

@@ -5,14 +5,14 @@ import {
   ProviderDriverKind,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   createModelCapabilities,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
-} from "@t3tools/shared/model";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+} from "@termweave/shared/model";
+import { compareSemverVersions } from "@termweave/shared/semver";
 import {
   query as claudeQuery,
   type SDKUserMessage,
@@ -555,7 +555,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: "Claude is disabled in Termweave settings.",
       },
     });
   }
@@ -708,7 +708,7 @@ export const makePendingClaudeProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Claude is disabled in T3 Code settings.",
+          message: "Claude is disabled in Termweave settings.",
         },
       });
     }

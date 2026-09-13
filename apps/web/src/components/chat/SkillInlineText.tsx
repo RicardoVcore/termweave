@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill } from "@termweave/contracts";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import {

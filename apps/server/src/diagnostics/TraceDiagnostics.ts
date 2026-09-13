@@ -6,7 +6,7 @@ import type {
   ServerTraceDiagnosticsResult,
   ServerTraceDiagnosticsSpanOccurrence,
   ServerTraceDiagnosticsSpanSummary,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { FileSystem, Context } from "effect";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -47,7 +47,7 @@ export interface TraceDiagnosticsShape {
 }
 
 export class TraceDiagnostics extends Context.Service<TraceDiagnostics, TraceDiagnosticsShape>()(
-  "t3/diagnostics/TraceDiagnostics",
+  "termweave-server/diagnostics/TraceDiagnostics",
 ) {}
 
 interface TraceDiagnosticsInput {

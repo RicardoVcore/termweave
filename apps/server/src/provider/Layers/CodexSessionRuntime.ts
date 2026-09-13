@@ -14,8 +14,8 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+} from "@termweave/contracts";
+import { normalizeModelSlug } from "@termweave/shared/model";
 import {
   DateTime,
   Deferred,

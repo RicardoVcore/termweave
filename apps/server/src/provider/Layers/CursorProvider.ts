@@ -7,8 +7,8 @@ import type {
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
-} from "@t3tools/contracts";
-import { ProviderDriverKind } from "@t3tools/contracts";
+} from "@termweave/contracts";
+import { ProviderDriverKind } from "@termweave/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +25,7 @@ import {
   createModelCapabilities,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 
 import {
   buildBooleanOptionDescriptor,
@@ -81,7 +81,7 @@ export function buildInitialCursorProviderSnapshot(
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Cursor is disabled in T3 Code settings.",
+          message: "Cursor is disabled in Termweave settings.",
         },
       });
     }
@@ -1115,7 +1115,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Cursor is disabled in T3 Code settings.",
+        message: "Cursor is disabled in Termweave settings.",
       },
     });
   }

@@ -1,12 +1,12 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { type CodexSettings, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { type CodexSettings, type ModelSelection, TextGenerationError } from "@termweave/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@termweave/shared/git";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
-import { Effect, FileSystem, Option, Path, Random, Schema, Scope, Stream } from "effect";
+} from "@termweave/shared/model";
+import { Effect, FileSystem, Option, Path, Schema, Scope, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -73,7 +73,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const tempFileId = yield* Effect.sync(() => crypto.randomUUID());
       return yield* fileSystem
         .makeTempFileScoped({
-          prefix: `t3code-${prefix}-${process.pid}-${tempFileId}.tmp`,
+          prefix: `termweave-${prefix}-${process.pid}-${tempFileId}.tmp`,
         })
         .pipe(Effect.tap((filePath) => fileSystem.writeFileString(filePath, content)));
     }).pipe(

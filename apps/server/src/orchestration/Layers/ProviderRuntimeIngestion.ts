@@ -12,9 +12,9 @@ import {
   TurnId,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@termweave/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";

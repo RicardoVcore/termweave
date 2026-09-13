@@ -1,4 +1,4 @@
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError } from "@termweave/contracts";
 import { Schema } from "effect";
 
 const isTextGenerationError = Schema.is(TextGenerationError);

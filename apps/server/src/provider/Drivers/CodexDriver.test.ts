@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@termweave/contracts";
 import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 

@@ -2,7 +2,7 @@ import {
   defaultInstanceIdForDriver,
   type ProviderDriverKind,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 
 type ProviderUpdateTone = "loading" | "warning" | "error" | "success";
 

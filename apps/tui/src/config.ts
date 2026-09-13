@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-const APP_DIR_NAME = "t1code";
+const APP_DIR_NAME = "termweave";
 
 export interface TuiPaths {
   readonly userHomeDir: string;

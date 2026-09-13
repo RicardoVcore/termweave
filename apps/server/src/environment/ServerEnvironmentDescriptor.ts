@@ -1,7 +1,7 @@
 import os from "node:os";
 import crypto from "node:crypto";
 
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@termweave/contracts";
 import { Effect, FileSystem, Path } from "effect";
 
 import type { ServerConfigShape } from "../config.ts";

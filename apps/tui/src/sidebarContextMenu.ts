@@ -1,4 +1,4 @@
-import type { OrchestrationReadModel } from "@t3tools/contracts";
+import type { OrchestrationReadModel } from "@termweave/contracts";
 
 export type SidebarContextMenuActionId =
   | "rename"

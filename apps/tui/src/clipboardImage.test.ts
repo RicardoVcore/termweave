@@ -80,7 +80,7 @@ describe("saveClipboardImageToFile", () => {
   });
 
   it("reads clipboard images from wl-paste on Linux", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "t1code-clipboard-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-clipboard-"));
     tempRoots.push(root);
 
     const filePath = await saveClipboardImageToFile(root, {
@@ -99,7 +99,7 @@ describe("saveClipboardImageToFile", () => {
   });
 
   it("falls back to xclip and preserves the detected image type", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "t1code-clipboard-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-clipboard-"));
     tempRoots.push(root);
 
     const filePath = await saveClipboardImageToFile(root, {

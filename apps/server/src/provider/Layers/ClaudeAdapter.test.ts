@@ -16,8 +16,8 @@ import {
   ProviderItemId,
   ProviderRuntimeEvent,
   ThreadId,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@termweave/contracts";
+import { createModelSelection } from "@termweave/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Random, Stream } from "effect";
 

@@ -5,7 +5,7 @@ import type {
   SourceControlProviderKind,
   VcsDiscoveryItem,
   VcsDriverKind,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Layer, Schema, Context } from "effect";
 
 import { runProcess, type ProcessRunResult } from "../processRunner";
@@ -50,7 +50,7 @@ export interface SourceControlDiscoveryShape {
 export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   SourceControlDiscoveryShape
->()("t3/sourceControl/SourceControlDiscovery") {}
+>()("termweave-server/sourceControl/SourceControlDiscovery") {}
 
 class SourceControlDiscoveryError extends Schema.TaggedErrorClass<SourceControlDiscoveryError>()(
   "SourceControlDiscoveryError",

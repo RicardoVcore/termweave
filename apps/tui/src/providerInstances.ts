@@ -6,7 +6,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderState,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 
 export interface ProviderInstanceEntry {
   readonly instanceId: ProviderInstanceId;

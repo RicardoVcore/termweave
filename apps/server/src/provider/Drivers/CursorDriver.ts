@@ -12,7 +12,7 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@termweave/contracts";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -25,7 +25,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {
   buildInitialCursorProviderSnapshot,

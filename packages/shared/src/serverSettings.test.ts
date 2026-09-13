@@ -2,7 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { createModelSelection } from "./model";

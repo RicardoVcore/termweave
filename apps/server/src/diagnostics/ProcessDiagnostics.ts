@@ -3,7 +3,7 @@ import type {
   ServerProcessDiagnosticsResult,
   ServerProcessSignal,
   ServerSignalProcessResult,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Context } from "effect";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -41,7 +41,7 @@ export interface ProcessDiagnosticsShape {
 export class ProcessDiagnostics extends Context.Service<
   ProcessDiagnostics,
   ProcessDiagnosticsShape
->()("t3/diagnostics/ProcessDiagnostics") {}
+>()("termweave-server/diagnostics/ProcessDiagnostics") {}
 
 class ProcessDiagnosticsError extends Schema.TaggedErrorClass<ProcessDiagnosticsError>()(
   "ProcessDiagnosticsError",

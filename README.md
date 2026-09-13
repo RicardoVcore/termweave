@@ -1,36 +1,36 @@
 <div align="center">
 
-# t1code
+# termweave
 
 [![License](https://img.shields.io/badge/license-MIT-111111?style=flat-square)](./LICENSE)
-[![npm](https://img.shields.io/npm/v/%40maria__rcks%2Ft1code?color=111111&label=npm&style=flat-square)](https://www.npmjs.com/package/@maria_rcks/t1code)
-[![GitHub](https://img.shields.io/badge/github-maria--rcks%2Ft1code-111111?style=flat-square&logo=github)](https://github.com/maria-rcks/t1code)
+[![npm](https://img.shields.io/npm/v/termweave?color=111111&label=npm&style=flat-square)](https://www.npmjs.com/package/termweave)
+[![GitHub](https://img.shields.io/badge/github-RicardoVcore%2Ftermweave-111111?style=flat-square&logo=github)](https://github.com/RicardoVcore/termweave)
 
-<img src="./assets/repo/t1code-preview.webp" alt="t1code terminal UI screenshot" width="1000" />
+<img src="./assets/repo/termweave-preview.webp" alt="termweave terminal UI screenshot" width="1000" />
 
-_T3Code, but in your terminal._
+_A terminal-first control surface for coding agents._
 
 </div>
 
 Run instantly:
 
 ```bash
-bunx @maria_rcks/t1code
+bunx termweave
 ```
 
 Install globally:
 
 ```bash
-bun add -g @maria_rcks/t1code
+bun add -g termweave
 ```
 
 Develop from source:
 
 ```bash
-git clone https://github.com/maria-rcks/t1code.git
-cd t1code
+git clone https://github.com/RicardoVcore/termweave.git
+cd termweave
 bun install
 bun dev:tui
 ```
 
-<sub>Based on T3 Code by [@t3dotgg](https://github.com/t3dotgg) and [@juliusmarminge](https://github.com/juliusmarminge).</sub>
+<sub>Forked from [maria-rcks/t1code](https://github.com/maria-rcks/t1code), based on T3 Code by [@t3dotgg](https://github.com/t3dotgg) and [@juliusmarminge](https://github.com/juliusmarminge).</sub>

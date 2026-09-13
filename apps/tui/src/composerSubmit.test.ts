@@ -17,7 +17,7 @@ async function makeTempImage(
   fileName: string,
   bytes = Buffer.from("png-bytes"),
 ): Promise<{ root: string; filePath: string }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "t1code-composer-submit-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-composer-submit-"));
   tempRoots.push(root);
   const filePath = path.join(root, fileName);
   await fs.writeFile(filePath, bytes);

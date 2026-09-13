@@ -20,8 +20,8 @@ describe("AdvertisedEndpoints", () => {
         id: "local-backend",
         label: "Local backend",
         provider: {
-          id: "t1code-core",
-          label: "T1Code",
+          id: "termweave-core",
+          label: "Termweave",
           kind: "core",
           isAddon: false,
         },
@@ -36,7 +36,7 @@ describe("AdvertisedEndpoints", () => {
         status: "available",
         isDefault: true,
         description:
-          "Current T1Code backend endpoint for local browsers and attachable TUI sessions.",
+          "Current Termweave backend endpoint for local browsers and attachable TUI sessions.",
       },
     ]);
   });

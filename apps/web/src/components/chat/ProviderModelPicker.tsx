@@ -1,5 +1,5 @@
-import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
-import { resolveSelectableModel } from "@t3tools/shared/model";
+import { type ModelSlug, type ProviderKind } from "@termweave/contracts";
+import { resolveSelectableModel } from "@termweave/shared/model";
 import { memo, useState } from "react";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";

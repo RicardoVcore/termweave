@@ -2,8 +2,8 @@ import { createFileRoute, useCanGoBack, useNavigate } from "@tanstack/react-rout
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, Undo2Icon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@t3tools/contracts";
-import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { type ProviderKind, DEFAULT_GIT_TEXT_GENERATION_MODEL } from "@termweave/contracts";
+import { getModelOptions, normalizeModelSlug } from "@termweave/shared/model";
 import {
   getAppModelOptions,
   getCustomModelsForProvider,
@@ -463,7 +463,7 @@ function SettingsRouteView() {
             <SettingsSection title="General">
               <SettingsRow
                 title="Theme"
-                description="Choose how T3 Code looks across the app."
+                description="Choose how Termweave looks across the app."
                 resetAction={
                   theme !== "system" ? (
                     <SettingResetButton label="theme" onClick={() => setTheme("system")} />

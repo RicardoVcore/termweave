@@ -7,7 +7,7 @@ import {
   type TerminalEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -189,7 +189,7 @@ describe("TerminalManager", () => {
       ptyAdapter?: FakePtyAdapter;
     } = {},
   ) {
-    const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-"));
+    const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "termweave-terminal-"));
     tempDirs.push(logsDir);
     const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
     const manager = new TerminalManagerRuntime({

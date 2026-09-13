@@ -6,7 +6,7 @@
  *
  * @module ProjectionSnapshotQuery
  */
-import type { OrchestrationReadModel } from "@t3tools/contracts";
+import type { OrchestrationReadModel } from "@termweave/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -31,4 +31,4 @@ export interface ProjectionSnapshotQueryShape {
 export class ProjectionSnapshotQuery extends Context.Service<
   ProjectionSnapshotQuery,
   ProjectionSnapshotQueryShape
->()("t3/orchestration/Services/ProjectionSnapshotQuery") {}
+>()("termweave-server/orchestration/Services/ProjectionSnapshotQuery") {}

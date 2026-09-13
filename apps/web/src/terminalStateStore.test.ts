@@ -1,10 +1,10 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@termweave/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.make("thread-1");
-const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_STATE_STORAGE_KEY = "termweave:terminal-state:v1";
 
 const testLocalStorage = vi.hoisted(() => {
   const values = new Map<string, string>();

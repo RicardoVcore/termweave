@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@termweave/contracts";
 import { Effect, Layer, Sink, Stream } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";

@@ -1,5 +1,5 @@
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@termweave/contracts";
+import { TextGenerationError } from "@termweave/contracts";
 import { Effect, Layer, Context } from "effect";
 
 import {
@@ -114,7 +114,7 @@ export interface TextGenerationShape {
  * TextGeneration - Service tag for commit and PR text generation.
  */
 export class TextGeneration extends Context.Service<TextGeneration, TextGenerationShape>()(
-  "t3/textGeneration/TextGeneration",
+  "termweave-server/textGeneration/TextGeneration",
 ) {}
 
 type TextGenerationOp =

@@ -1,5 +1,5 @@
-import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { ProviderDriverKind, type ModelCapabilities } from "@termweave/contracts";
+import { createModelCapabilities } from "@termweave/shared/model";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 

@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 import { Effect, FileSystem, Layer, Path } from "effect";
-import type { GitActionProgressEvent, GitActionProgressPhase } from "@t3tools/contracts";
+import type { GitActionProgressEvent, GitActionProgressPhase } from "@termweave/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
-} from "@t3tools/shared/git";
+} from "@termweave/shared/git";
 
 import { GitManagerError } from "../Errors.ts";
 import {
@@ -101,7 +101,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `termweave/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -884,7 +884,7 @@ export const makeGitManager = Effect.gen(function* () {
         ...(model ? { model } : {}),
       });
 
-      const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+      const bodyFile = path.join(tempDir, `termweave-pr-body-${process.pid}-${randomUUID()}.md`);
       yield* fileSystem
         .writeFileString(bodyFile, generated.body)
         .pipe(

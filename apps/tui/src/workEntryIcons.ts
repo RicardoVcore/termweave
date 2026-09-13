@@ -1,4 +1,4 @@
-import type { WorkLogEntry } from "@t3tools/client-core";
+import type { WorkLogEntry } from "@termweave/client-core";
 
 function normalizeWorkEntryLabel(entry: WorkLogEntry): string {
   return (entry.toolTitle ?? entry.label)

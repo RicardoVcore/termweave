@@ -7,7 +7,7 @@
  *
  * @module ProviderAdapterRegistry
  */
-import type { ProviderDriverKind, ProviderInstanceId, ProviderKind } from "@t3tools/contracts";
+import type { ProviderDriverKind, ProviderInstanceId, ProviderKind } from "@termweave/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 import type * as PubSub from "effect/PubSub";
@@ -67,6 +67,6 @@ export interface ProviderAdapterRegistryShape {
 export class ProviderAdapterRegistry extends Context.Service<
   ProviderAdapterRegistry,
   ProviderAdapterRegistryShape
->()("t3/provider/Services/ProviderAdapterRegistry") {}
+>()("termweave-server/provider/Services/ProviderAdapterRegistry") {}
 
 // Dummy comment for workflow testing.

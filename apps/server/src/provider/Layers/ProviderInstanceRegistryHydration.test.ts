@@ -4,7 +4,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Layer, Schema, Scope } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 

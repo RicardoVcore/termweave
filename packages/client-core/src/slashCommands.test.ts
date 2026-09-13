@@ -35,14 +35,14 @@ describe("slashCommands", () => {
       args: "add ~/repo",
     });
     expect(
-      parseSlashCommandInput("/clone t3tools/t1code ~/src/t1code provider=azure-devops"),
+      parseSlashCommandInput("/clone t3tools/termweave ~/src/termweave provider=azure-devops"),
     ).toEqual({
       command: "clone",
-      args: "t3tools/t1code ~/src/t1code provider=azure-devops",
+      args: "t3tools/termweave ~/src/termweave provider=azure-devops",
     });
-    expect(parseSlashCommandInput("/publish t3tools/t1code provider=gitlab public")).toEqual({
+    expect(parseSlashCommandInput("/publish t3tools/termweave provider=gitlab public")).toEqual({
       command: "publish",
-      args: "t3tools/t1code provider=gitlab public",
+      args: "t3tools/termweave provider=gitlab public",
     });
   });
 });

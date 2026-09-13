@@ -12,7 +12,7 @@ import {
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
@@ -55,7 +55,7 @@ function createBaseServerConfig(): ServerConfig {
   return {
     environment: TEST_ENVIRONMENT,
     cwd: "/repo/project",
-    keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
+    keybindingsConfigPath: "/repo/project/.termweave-keybindings.json",
     keybindings: [],
     issues: [],
     providers: [

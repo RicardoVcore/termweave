@@ -9,7 +9,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Schema } from "effect";
 
 import {

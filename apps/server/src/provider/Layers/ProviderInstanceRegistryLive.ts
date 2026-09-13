@@ -5,7 +5,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";

@@ -1,6 +1,6 @@
-export * from "@t3tools/client-core/pendingUserInput";
+export * from "@termweave/client-core/pendingUserInput";
 
-import type { PendingUserInputDraftAnswer } from "@t3tools/client-core/pendingUserInput";
+import type { PendingUserInputDraftAnswer } from "@termweave/client-core/pendingUserInput";
 
 export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,

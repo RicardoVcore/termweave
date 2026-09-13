@@ -16,7 +16,7 @@ import {
   WS_METHODS,
   type WsPush,
   type ServerProviderStatus,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();

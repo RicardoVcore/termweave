@@ -4,8 +4,8 @@ import type {
   NativeApi,
   ServerConfigUpdatedPayload,
   WsWelcomePayload,
-} from "@t3tools/contracts";
-import { createTransportNativeApi } from "@t3tools/client-core";
+} from "@termweave/contracts";
+import { createTransportNativeApi } from "@termweave/client-core";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { WsTransport } from "./wsTransport";

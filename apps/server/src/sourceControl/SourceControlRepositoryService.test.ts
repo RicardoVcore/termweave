@@ -36,23 +36,23 @@ const serverConfigLayer = Layer.succeed(ServerConfig, {
   port: 0,
   cwd: "/workspace",
   host: undefined,
-  baseDir: "/tmp/t3code-test",
-  stateDir: "/tmp/t3code-test/state",
-  dbPath: "/tmp/t3code-test/state/state.sqlite",
-  settingsPath: "/tmp/t3code-test/state/settings.json",
-  providerStatusCacheDir: "/tmp/t3code-test/caches",
-  worktreesDir: "/tmp/t3code-test/worktrees",
-  attachmentsDir: "/tmp/t3code-test/state/attachments",
-  logsDir: "/tmp/t3code-test/logs",
-  keybindingsConfigPath: "/tmp/t3code-test/keybindings.json",
-  serverLogPath: "/tmp/t3code-test/logs/server.log",
-  serverTracePath: "/tmp/t3code-test/server.ndjson",
-  providerLogsDir: "/tmp/t3code-test/logs/provider",
-  providerEventLogPath: "/tmp/t3code-test/logs/provider/events.ndjson",
-  terminalLogsDir: "/tmp/t3code-test/logs/terminal",
-  anonymousIdPath: "/tmp/t3code-test/anonymous-id",
-  environmentIdPath: "/tmp/t3code-test/environment-id",
-  secretsDir: "/tmp/t3code-test/secrets",
+  baseDir: "/tmp/termweave-test",
+  stateDir: "/tmp/termweave-test/state",
+  dbPath: "/tmp/termweave-test/state/state.sqlite",
+  settingsPath: "/tmp/termweave-test/state/settings.json",
+  providerStatusCacheDir: "/tmp/termweave-test/caches",
+  worktreesDir: "/tmp/termweave-test/worktrees",
+  attachmentsDir: "/tmp/termweave-test/state/attachments",
+  logsDir: "/tmp/termweave-test/logs",
+  keybindingsConfigPath: "/tmp/termweave-test/keybindings.json",
+  serverLogPath: "/tmp/termweave-test/logs/server.log",
+  serverTracePath: "/tmp/termweave-test/server.ndjson",
+  providerLogsDir: "/tmp/termweave-test/logs/provider",
+  providerEventLogPath: "/tmp/termweave-test/logs/provider/events.ndjson",
+  terminalLogsDir: "/tmp/termweave-test/logs/terminal",
+  anonymousIdPath: "/tmp/termweave-test/anonymous-id",
+  environmentIdPath: "/tmp/termweave-test/environment-id",
+  secretsDir: "/tmp/termweave-test/secrets",
   staticDir: undefined,
   devUrl: undefined,
   noBrowser: true,
@@ -296,7 +296,7 @@ describe("SourceControlRepositoryService", () => {
   });
 
   it("clones a repository URL into the prepared destination path", async () => {
-    const parentDir = makeTempDir("t3code-source-control-clone-");
+    const parentDir = makeTempDir("termweave-source-control-clone-");
     const destinationPath = path.join(parentDir, "hello-world");
     const execute = vi.fn<GitCoreShape["execute"]>(() =>
       Effect.succeed({
@@ -337,7 +337,7 @@ describe("SourceControlRepositoryService", () => {
   });
 
   it("resolves repository clone URLs before cloning provider repositories", async () => {
-    const parentDir = makeTempDir("t3code-source-control-clone-provider-");
+    const parentDir = makeTempDir("termweave-source-control-clone-provider-");
     const destinationPath = path.join(parentDir, "hello-world");
     const execute = vi.fn<GitCoreShape["execute"]>(() =>
       Effect.succeed({
@@ -392,7 +392,7 @@ describe("SourceControlRepositoryService", () => {
   });
 
   it("resolves GitLab clone URLs before cloning provider repositories", async () => {
-    const parentDir = makeTempDir("t3code-source-control-clone-gitlab-");
+    const parentDir = makeTempDir("termweave-source-control-clone-gitlab-");
     const destinationPath = path.join(parentDir, "project");
     const execute = vi.fn<GitCoreShape["execute"]>(() =>
       Effect.succeed({
@@ -448,7 +448,7 @@ describe("SourceControlRepositoryService", () => {
   });
 
   it("resolves Azure DevOps clone URLs before cloning provider repositories", async () => {
-    const parentDir = makeTempDir("t3code-source-control-clone-azure-");
+    const parentDir = makeTempDir("termweave-source-control-clone-azure-");
     const destinationPath = path.join(parentDir, "repo");
     const execute = vi.fn<GitCoreShape["execute"]>(() =>
       Effect.succeed({
@@ -504,7 +504,7 @@ describe("SourceControlRepositoryService", () => {
   });
 
   it("resolves Bitbucket clone URLs before cloning provider repositories", async () => {
-    const parentDir = makeTempDir("t3code-source-control-clone-bitbucket-");
+    const parentDir = makeTempDir("termweave-source-control-clone-bitbucket-");
     const destinationPath = path.join(parentDir, "repo");
     const execute = vi.fn<GitCoreShape["execute"]>(() =>
       Effect.succeed({
@@ -560,7 +560,7 @@ describe("SourceControlRepositoryService", () => {
   });
 
   it("rejects non-empty clone destinations before running git", async () => {
-    const parentDir = makeTempDir("t3code-source-control-clone-nonempty-");
+    const parentDir = makeTempDir("termweave-source-control-clone-nonempty-");
     const destinationPath = path.join(parentDir, "hello-world");
     fs.mkdirSync(destinationPath);
     fs.writeFileSync(path.join(destinationPath, "README.md"), "existing");

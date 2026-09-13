@@ -16,7 +16,7 @@ import {
   GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";
@@ -69,5 +69,5 @@ export interface GitManagerShape {
  * GitManager - Service tag for stacked Git workflow orchestration.
  */
 export class GitManager extends Context.Service<GitManager, GitManagerShape>()(
-  "t3/git/Services/GitManager",
+  "termweave-server/git/Services/GitManager",
 ) {}

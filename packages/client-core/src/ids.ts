@@ -1,4 +1,4 @@
-import { CommandId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, ProjectId, ThreadId } from "@termweave/contracts";
 export function randomUUID(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();

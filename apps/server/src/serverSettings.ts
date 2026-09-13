@@ -10,10 +10,10 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
-} from "@t3tools/contracts";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
-import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+} from "@termweave/contracts";
+import { applyServerSettingsPatch } from "@termweave/shared/serverSettings";
+import { type DeepPartial, deepMerge } from "@termweave/shared/Struct";
+import { fromJsonStringPretty, fromLenientJson } from "@termweave/shared/schemaJson";
 import {
   Cache,
   Cause,
@@ -113,7 +113,7 @@ export interface ServerSettingsShape {
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   ServerSettingsShape
->()("t3/serverSettings/ServerSettingsService") {
+>()("termweave-server/serverSettings/ServerSettingsService") {
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     Layer.effect(
       ServerSettingsService,

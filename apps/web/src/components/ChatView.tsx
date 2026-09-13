@@ -20,13 +20,13 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   RuntimeMode,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   applyClaudePromptEffortPrefix,
   getDefaultModel,
   normalizeModelSlug,
   resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";

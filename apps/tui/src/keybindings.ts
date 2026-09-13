@@ -7,7 +7,7 @@ import {
   type ModelPickerJumpKeybindingCommand,
   type ResolvedKeybindingsConfig,
   type ThreadJumpKeybindingCommand,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 
 export interface TuiShortcutEventLike {
   readonly keyName: string;

@@ -1,4 +1,4 @@
-import type { AppSettings } from "@t3tools/client-core";
+import type { AppSettings } from "@termweave/client-core";
 import {
   type ProjectEntry,
   type ProviderInstanceId,
@@ -6,7 +6,7 @@ import {
   type ProviderModelOptions,
   type ProviderOptionSelection,
   type RuntimeMode,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { TuiPaths } from "./config";

@@ -15,7 +15,7 @@ import {
   OrchestrationCheckpointStatus,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Context, Option, Schema } from "effect";
 import type { Effect } from "effect";
 
@@ -90,4 +90,4 @@ export interface ProjectionCheckpointRepositoryShape {
 export class ProjectionCheckpointRepository extends Context.Service<
   ProjectionCheckpointRepository,
   ProjectionCheckpointRepositoryShape
->()("t3/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}
+>()("termweave-server/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}

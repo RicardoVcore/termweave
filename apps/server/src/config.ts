@@ -86,7 +86,7 @@ export const deriveServerPaths = Effect.fn(function* (
  * ServerConfig - Service tag for server runtime configuration.
  */
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
-  "t3/config/ServerConfig",
+  "termweave-server/config/ServerConfig",
 ) {
   static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
     Layer.effect(

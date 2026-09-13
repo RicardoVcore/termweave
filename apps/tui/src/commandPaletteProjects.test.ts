@@ -3,7 +3,7 @@ import { isCommandPaletteProjectPathQuery } from "./commandPaletteProjects";
 
 describe("isCommandPaletteProjectPathQuery", () => {
   it("detects explicit project path inputs", () => {
-    expect(isCommandPaletteProjectPathQuery("~/.local/src/t3code")).toBe(true);
+    expect(isCommandPaletteProjectPathQuery("~/.local/src/termweave")).toBe(true);
     expect(isCommandPaletteProjectPathQuery("~/")).toBe(true);
     expect(isCommandPaletteProjectPathQuery("/tmp/project")).toBe(true);
     expect(isCommandPaletteProjectPathQuery("./project")).toBe(true);

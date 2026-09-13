@@ -7,16 +7,16 @@
       "outputs": ["dist-electron/**"],
     },
     "dev": {
-      "dependsOn": ["t3#build"],
+      "dependsOn": ["termweave-server#build"],
       "persistent": true,
     },
     "start": {
-      "dependsOn": ["build", "@t3tools/web#build", "t3#build"],
+      "dependsOn": ["build", "@termweave/web#build", "termweave-server#build"],
       "cache": false,
       "persistent": true,
     },
     "smoke-test": {
-      "dependsOn": ["build", "@t3tools/web#build", "t3#build"],
+      "dependsOn": ["build", "@termweave/web#build", "termweave-server#build"],
       "cache": false,
       "outputs": [],
     },

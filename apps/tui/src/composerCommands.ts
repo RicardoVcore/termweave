@@ -1,4 +1,4 @@
-import type { ProviderApprovalDecision } from "@t3tools/contracts";
+import type { ProviderApprovalDecision } from "@termweave/contracts";
 
 export function parseStandaloneComposerModeCommand(text: string): "plan" | "default" | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());

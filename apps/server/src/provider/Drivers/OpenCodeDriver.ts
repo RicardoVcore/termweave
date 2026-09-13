@@ -12,7 +12,7 @@
  *
  * @module provider/Drivers/OpenCodeDriver
  */
-import { OpenCodeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { OpenCodeSettings, ProviderDriverKind, type ServerProvider } from "@termweave/contracts";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -25,7 +25,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
-import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import {
   checkOpenCodeProviderStatus,

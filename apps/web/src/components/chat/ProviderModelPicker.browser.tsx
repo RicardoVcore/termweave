@@ -1,4 +1,4 @@
-import { type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import { type ModelSlug, type ProviderKind } from "@termweave/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";

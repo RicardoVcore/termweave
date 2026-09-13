@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Random, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import * as Crypto from "node:crypto";
 import { homedir } from "node:os";
 import { ServerConfig } from "../config";

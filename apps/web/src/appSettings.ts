@@ -5,7 +5,7 @@ import {
   DEFAULT_APP_SETTINGS,
   normalizeAppSettings,
   type AppSettings,
-} from "@t3tools/client-core";
+} from "@termweave/client-core";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 
 export {
@@ -32,8 +32,12 @@ export {
   patchCustomModels,
   resolveAppModelSelection,
   TimestampFormat,
-} from "@t3tools/client-core";
-export type { AppModelOption, AppSettings, ProviderCustomModelConfig } from "@t3tools/client-core";
+} from "@termweave/client-core";
+export type {
+  AppModelOption,
+  AppSettings,
+  ProviderCustomModelConfig,
+} from "@termweave/client-core";
 
 export function useAppSettings() {
   const [settings, setSettings] = useLocalStorage(

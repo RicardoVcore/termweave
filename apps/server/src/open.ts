@@ -9,7 +9,7 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { extname, join } from "node:path";
 
-import { EDITORS, type EditorId } from "@t3tools/contracts";
+import { EDITORS, type EditorId } from "@termweave/contracts";
 import { Context, Schema, Effect, Layer } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -343,7 +343,7 @@ export interface OpenShape {
 /**
  * Open - Service tag for browser/editor launch operations.
  */
-export class Open extends Context.Service<Open, OpenShape>()("t3/open") {}
+export class Open extends Context.Service<Open, OpenShape>()("termweave-server/open") {}
 
 // ==============================
 // Implementations

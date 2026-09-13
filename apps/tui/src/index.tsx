@@ -4,7 +4,7 @@ import { createCliRenderer } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import React from "react";
-import { DEFAULT_APP_THEME } from "@t3tools/client-core";
+import { DEFAULT_APP_THEME } from "@termweave/client-core";
 import { resolveTuiPaths } from "./config";
 import { readPrefs } from "./prefs";
 import {

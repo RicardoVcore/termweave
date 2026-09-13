@@ -20,7 +20,7 @@ import type {
   GitRemoveWorktreeInput,
   GitStatusInput,
   GitStatusResult,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 
 import type { GitCommandError } from "../Errors.ts";
 
@@ -272,4 +272,6 @@ export interface GitCoreShape {
 /**
  * GitCore - Service tag for low-level Git repository operations.
  */
-export class GitCore extends Context.Service<GitCore, GitCoreShape>()("t3/git/Services/GitCore") {}
+export class GitCore extends Context.Service<GitCore, GitCoreShape>()(
+  "termweave-server/git/Services/GitCore",
+) {}

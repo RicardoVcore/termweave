@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   deriveProviderInstanceEntries,
   getProviderInstanceModelOptions,

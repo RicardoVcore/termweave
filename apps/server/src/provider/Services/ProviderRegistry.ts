@@ -3,7 +3,7 @@ import type {
   ProviderInstanceId,
   ServerProvider,
   ServerProviderUpdateState,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Context } from "effect";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -30,5 +30,5 @@ export interface ProviderRegistryShape {
 }
 
 export class ProviderRegistry extends Context.Service<ProviderRegistry, ProviderRegistryShape>()(
-  "t3/provider/Services/ProviderRegistry",
+  "termweave-server/provider/Services/ProviderRegistry",
 ) {}

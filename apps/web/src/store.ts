@@ -5,12 +5,12 @@ import {
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSessionStatus,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   inferProviderForModel,
   resolveModelSlug,
   resolveModelSlugForProvider,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -23,13 +23,13 @@ export interface AppState {
   threadsHydrated: boolean;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
+const PERSISTED_STATE_KEY = "termweave:renderer-state:v8";
 const LEGACY_PERSISTED_STATE_KEYS = [
-  "t3code:renderer-state:v7",
-  "t3code:renderer-state:v6",
-  "t3code:renderer-state:v5",
-  "t3code:renderer-state:v4",
-  "t3code:renderer-state:v3",
+  "termweave:renderer-state:v7",
+  "termweave:renderer-state:v6",
+  "termweave:renderer-state:v5",
+  "termweave:renderer-state:v4",
+  "termweave:renderer-state:v3",
   "codething:renderer-state:v4",
   "codething:renderer-state:v3",
   "codething:renderer-state:v2",

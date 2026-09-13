@@ -6,4 +6,4 @@ export {
   projectScriptIdFromCommand,
   projectScriptRuntimeEnv,
   setupProjectScript,
-} from "@t3tools/shared/projectScripts";
+} from "@termweave/shared/projectScripts";

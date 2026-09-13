@@ -71,7 +71,7 @@ function extractFatalStartupError(output: string): string | null {
   }
   if (/\b(EACCES|EPERM)\b|permission denied/iu.test(normalized)) {
     const firstLine = normalized.split(/\r?\n/u, 1)[0] ?? normalized;
-    return `T1Code could not start because a required path is not writable. ${firstLine}`;
+    return `Termweave could not start because a required path is not writable. ${firstLine}`;
   }
   return null;
 }

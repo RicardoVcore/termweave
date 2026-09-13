@@ -1,6 +1,9 @@
 import { Buffer } from "node:buffer";
 import { Config, Effect, Layer, Option, Schema, Context } from "effect";
-import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@t3tools/contracts";
+import {
+  TrimmedNonEmptyString,
+  type SourceControlRepositoryVisibility,
+} from "@termweave/contracts";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 
@@ -48,7 +51,7 @@ export interface BitbucketApiShape {
 }
 
 export class BitbucketApi extends Context.Service<BitbucketApi, BitbucketApiShape>()(
-  "t3/sourceControl/BitbucketApi",
+  "termweave-server/sourceControl/BitbucketApi",
 ) {}
 
 const RawBitbucketRepositorySchema = Schema.Struct({

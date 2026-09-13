@@ -1,6 +1,6 @@
 import { Context } from "effect";
 import type { Effect } from "effect";
-import type { SourceControlRepositoryVisibility } from "@t3tools/contracts";
+import type { SourceControlRepositoryVisibility } from "@termweave/contracts";
 
 import type { ProcessRunResult } from "../../processRunner";
 import type { GitLabCliError } from "../Errors";
@@ -31,5 +31,5 @@ export interface GitLabCliShape {
 }
 
 export class GitLabCli extends Context.Service<GitLabCli, GitLabCliShape>()(
-  "t3/git/Services/GitLabCli",
+  "termweave-server/git/Services/GitLabCli",
 ) {}

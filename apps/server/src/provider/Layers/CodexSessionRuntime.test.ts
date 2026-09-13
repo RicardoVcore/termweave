@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@termweave/contracts";
 import { Effect, Schema } from "effect";
 import { describe, it } from "vitest";
 import * as CodexErrors from "effect-codex-app-server/errors";

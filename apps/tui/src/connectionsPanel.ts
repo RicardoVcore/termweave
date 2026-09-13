@@ -1,4 +1,4 @@
-import type { AdvertisedEndpoint } from "@t3tools/contracts";
+import type { AdvertisedEndpoint } from "@termweave/contracts";
 
 export interface TuiServerConnectionInfo {
   readonly host: string;
@@ -33,7 +33,7 @@ export function buildTuiAttachCommand(input: TuiServerConnectionInfo): string {
     ["T1CODE_PORT", input.port],
     ...(input.authToken ? ([["T1CODE_AUTH_TOKEN", input.authToken]] as const) : []),
   ];
-  return `env ${env.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} t1code`;
+  return `env ${env.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} termweave`;
 }
 
 export function formatTuiAttachCommandPreview(input: TuiServerConnectionInfo): string {

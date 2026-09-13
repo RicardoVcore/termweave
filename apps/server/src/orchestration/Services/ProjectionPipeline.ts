@@ -6,7 +6,7 @@
  *
  * @module OrchestrationProjectionPipeline
  */
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import type { OrchestrationEvent } from "@termweave/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -39,4 +39,4 @@ export interface OrchestrationProjectionPipelineShape {
 export class OrchestrationProjectionPipeline extends Context.Service<
   OrchestrationProjectionPipeline,
   OrchestrationProjectionPipelineShape
->()("t3/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}
+>()("termweave-server/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}

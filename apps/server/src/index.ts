@@ -3,12 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { CliConfig, t3Cli } from "./main";
+import { CliConfig, termweaveCli } from "./main";
 import { OpenLive } from "./open";
 import { Command } from "effect/unstable/cli";
 import { version } from "../package.json" with { type: "json" };
 import { ServerLive } from "./wsServer";
-import { layer as NetServiceLayer } from "@t3tools/shared/Net";
+import { layer as NetServiceLayer } from "@termweave/shared/Net";
 import { FetchHttpClient } from "effect/unstable/http";
 
 const RuntimeLayer = Layer.empty.pipe(
@@ -21,7 +21,7 @@ const RuntimeLayer = Layer.empty.pipe(
 );
 
 NodeRuntime.runMain(
-  Command.run(t3Cli, { version }).pipe(Effect.provide(RuntimeLayer)) as Effect.Effect<
+  Command.run(termweaveCli, { version }).pipe(Effect.provide(RuntimeLayer)) as Effect.Effect<
     void,
     never,
     never

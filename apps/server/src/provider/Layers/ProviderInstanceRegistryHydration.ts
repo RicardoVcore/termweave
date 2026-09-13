@@ -4,7 +4,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   type ServerSettings,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Layer, Schema, Stream } from "effect";
 
 import { ServerSettingsService } from "../../serverSettings.ts";

@@ -17,7 +17,7 @@ describe("branding", () => {
 
     expect(branding.HOSTED_APP_CHANNEL).toBeNull();
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Dev)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Termweave (Dev)");
   });
 
   it("uses nightly hosted channel branding", async () => {
@@ -28,7 +28,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Termweave (Nightly)");
   });
 
   it("uses latest hosted channel branding", async () => {
@@ -39,7 +39,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("latest");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Latest");
     expect(branding.APP_STAGE_LABEL).toBe("Latest");
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Latest)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Termweave (Latest)");
   });
 
   it("ignores unknown hosted channels", async () => {
@@ -49,6 +49,6 @@ describe("branding", () => {
 
     expect(branding.HOSTED_APP_CHANNEL).toBeNull();
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
-    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Dev)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Termweave (Dev)");
   });
 });

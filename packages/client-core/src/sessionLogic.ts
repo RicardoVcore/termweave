@@ -9,7 +9,7 @@ import {
   type ToolLifecycleItemType,
   type TurnId,
   type UserInputQuestion,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 
 import type {
   ChatMessage,

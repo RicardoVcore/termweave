@@ -42,14 +42,14 @@ import {
   ThreadId,
   TurnId,
   type UserInputQuestion,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import {
   Cause,
   DateTime,

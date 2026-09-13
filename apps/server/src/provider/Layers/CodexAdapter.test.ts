@@ -16,8 +16,8 @@ import {
   type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+} from "@termweave/contracts";
+import { createModelSelection } from "@termweave/shared/model";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
@@ -40,7 +40,7 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
 class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
-  "t3/provider/Layers/CodexAdapter.test/CodexAdapter",
+  "termweave-server/provider/Layers/CodexAdapter.test/CodexAdapter",
 ) {}
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);

@@ -4,7 +4,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem, Schema } from "effect";
 
@@ -159,7 +159,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       version: null,
       status: "disabled",
       auth: { status: "unknown" },
-      message: "Codex is disabled in T3 Code settings.",
+      message: "Codex is disabled in Termweave settings.",
     });
 
     assert.deepStrictEqual(

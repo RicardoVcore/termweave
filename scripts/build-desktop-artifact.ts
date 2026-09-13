@@ -168,7 +168,7 @@ interface StagePackageJson {
   readonly name: string;
   readonly version: string;
   readonly buildVersion: string;
-  readonly t3codeCommitHash: string;
+  readonly termweaveCommitHash: string;
   readonly private: true;
   readonly description: string;
   readonly author: string;
@@ -317,7 +317,7 @@ function stageMacIcons(stageResourcesDir: string, verbose: boolean) {
     }
 
     const tmpRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-icon-build-",
+      prefix: "termweave-icon-build-",
     });
 
     const iconPngPath = path.join(stageResourcesDir, "icon.png");
@@ -449,7 +449,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: "com.t3tools.t3code",
+    appId: "com.termweave.app",
     productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     directories: {
@@ -564,7 +564,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const commitHash = resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
-    prefix: `t3code-desktop-${options.platform}-stage-`,
+    prefix: `termweave-desktop-${options.platform}-stage-`,
   });
 
   const stageAppDir = path.join(stageRoot, "app");
@@ -621,15 +621,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     name: "t3-code-desktop",
     version: appVersion,
     buildVersion: appVersion,
-    t3codeCommitHash: commitHash,
+    termweaveCommitHash: commitHash,
     private: true,
-    description: "T3 Code desktop build",
+    description: "Termweave desktop build",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.js",
     build: yield* createBuildConfig(
       options.platform,
       options.target,
-      desktopPackageJson.productName ?? "T3 Code",
+      desktopPackageJson.productName ?? "Termweave",
       options.signed,
     ),
     dependencies: {
@@ -770,7 +770,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription("Build a desktop artifact for Termweave."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

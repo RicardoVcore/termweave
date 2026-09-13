@@ -23,7 +23,7 @@ import {
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Exit, Fiber, FileSystem, Layer, Queue, Schema, Scope, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -32,7 +32,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 
 import {
   ProviderAdapterRequestError,

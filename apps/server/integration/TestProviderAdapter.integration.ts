@@ -12,7 +12,7 @@ import {
   ThreadId,
   TurnId,
   ProviderKind,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Queue, Stream } from "effect";
 
 import {

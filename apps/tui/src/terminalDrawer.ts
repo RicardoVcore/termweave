@@ -1,4 +1,4 @@
-import type { TerminalEvent, TerminalSessionSnapshot } from "@t3tools/contracts";
+import type { TerminalEvent, TerminalSessionSnapshot } from "@termweave/contracts";
 
 export const TUI_TERMINAL_DEFAULT_ROWS = 12;
 export const TUI_TERMINAL_MAX_OUTPUT_CHARS = 60_000;

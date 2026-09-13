@@ -8,7 +8,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderTurnStartResult,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   ApprovalRequestId,
   EventId,
@@ -18,7 +18,7 @@ import {
   ProviderSessionStartInput,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 

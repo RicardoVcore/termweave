@@ -8,7 +8,7 @@
  */
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, Context } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@termweave/shared/Net";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
@@ -98,7 +98,9 @@ export interface CliConfigShape {
 /**
  * CliConfig - Service tag for startup CLI/runtime helpers.
  */
-export class CliConfig extends Context.Service<CliConfig, CliConfigShape>()("t3/main/CliConfig") {
+export class CliConfig extends Context.Service<CliConfig, CliConfigShape>()(
+  "termweave-server/main/CliConfig",
+) {
   static readonly layer = Layer.effect(
     CliConfig,
     Effect.gen(function* () {
@@ -388,7 +390,7 @@ const makeServerProgram = (input: CliInput) =>
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
     const { authToken, devUrl, ...safeConfig } = config;
-    yield* Effect.logInfo("T3 Code running", {
+    yield* Effect.logInfo("Termweave running", {
       ...safeConfig,
       devUrl: devUrl?.toString(),
       authEnabled: Boolean(authToken),
@@ -428,7 +430,7 @@ const hostFlag = Flag.string("host").pipe(
   Flag.optional,
 );
 const t3HomeFlag = Flag.string("home-dir").pipe(
-  Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_HOME)."),
+  Flag.withDescription("Base directory for all Termweave data (equivalent to T3CODE_HOME)."),
   Flag.optional,
 );
 const devUrlFlag = Flag.string("dev-url").pipe(
@@ -464,7 +466,7 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.optional,
 );
 
-export const t3Cli = Command.make("t3", {
+export const termweaveCli = Command.make("termweave", {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
@@ -476,6 +478,6 @@ export const t3Cli = Command.make("t3", {
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
-  Command.withDescription("Run the T3 Code server."),
+  Command.withDescription("Run the Termweave server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
 );

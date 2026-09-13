@@ -22,7 +22,7 @@ function makeServerConfig(baseDir: string): ServerConfigShape {
     mode: "tui",
     port: 0,
     host: undefined,
-    cwd: "/workspace/t1code",
+    cwd: "/workspace/termweave",
     baseDir,
     staticDir: undefined,
     devUrl: undefined,
@@ -35,7 +35,7 @@ function makeServerConfig(baseDir: string): ServerConfigShape {
 
 describe("buildServerEnvironmentDescriptor", () => {
   it("persists a stable local environment id", async () => {
-    const baseDir = makeTempDir("t1code-environment-descriptor-");
+    const baseDir = makeTempDir("termweave-environment-descriptor-");
     try {
       const serverConfig = makeServerConfig(baseDir);
       const effect = buildServerEnvironmentDescriptor(serverConfig).pipe(

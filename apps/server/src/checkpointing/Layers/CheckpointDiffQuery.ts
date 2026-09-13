@@ -4,7 +4,7 @@ import {
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Layer, Option, Schema } from "effect";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";

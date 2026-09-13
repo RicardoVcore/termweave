@@ -28,7 +28,7 @@ import {
   WsResponse,
   type WsPushEnvelopeBase,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   Cause,
@@ -86,7 +86,7 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult, formatSchemaError } from "@termweave/shared/schemaJson";
 import { buildServerEnvironmentDescriptor } from "./environment/ServerEnvironmentDescriptor.ts";
 import { buildCoreAdvertisedEndpoints } from "./remoteAccess/AdvertisedEndpoints.ts";
 
@@ -112,7 +112,9 @@ export interface ServerShape {
 /**
  * Server - Service tag for HTTP/WebSocket lifecycle management.
  */
-export class Server extends Context.Service<Server, ServerShape>()("t3/wsServer/Server") {}
+export class Server extends Context.Service<Server, ServerShape>()(
+  "termweave-server/wsServer/Server",
+) {}
 
 const isServerNotRunningError = (error: Error): boolean => {
   const maybeCode = (error as NodeJS.ErrnoException).code;

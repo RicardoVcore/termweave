@@ -1,4 +1,4 @@
-import { type MessageId, type ServerProviderSkill, type TurnId } from "@t3tools/contracts";
+import { type MessageId, type ServerProviderSkill, type TurnId } from "@termweave/contracts";
 import {
   memo,
   useCallback,

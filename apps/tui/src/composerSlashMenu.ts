@@ -2,7 +2,7 @@ import {
   extractSlashCommandQuery,
   matchSlashCommands,
   type SlashCommandDefinition,
-} from "@t3tools/client-core";
+} from "@termweave/client-core";
 
 export const TUI_SLASH_COMMAND_MENU_LIMIT = 8;
 

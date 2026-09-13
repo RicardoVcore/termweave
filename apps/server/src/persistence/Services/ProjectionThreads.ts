@@ -13,7 +13,7 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -92,4 +92,4 @@ export interface ProjectionThreadRepositoryShape {
 export class ProjectionThreadRepository extends Context.Service<
   ProjectionThreadRepository,
   ProjectionThreadRepositoryShape
->()("t3/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}
+>()("termweave-server/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}

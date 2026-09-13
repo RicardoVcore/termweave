@@ -11,7 +11,7 @@ import {
   ProjectId,
   ProviderKind,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Option, Schema, Scope } from "effect";
 

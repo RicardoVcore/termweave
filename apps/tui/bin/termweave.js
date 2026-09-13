@@ -28,7 +28,7 @@ if (process.versions.bun === undefined) {
 
   child.once("error", (error) => {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      printError("t1code requires Bun on your PATH to launch the TUI runtime.");
+      printError("termweave requires Bun on your PATH to launch the TUI runtime.");
       process.exit(1);
       return;
     }

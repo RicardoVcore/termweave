@@ -70,7 +70,7 @@ import {
   type SourceControlProviderKind,
   type SourceControlRepositoryVisibility,
   type VcsDiscoveryItem,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   DEFAULT_AUTO_OPEN_PLAN_SIDEBAR,
   DEFAULT_APP_SETTINGS,
@@ -135,7 +135,7 @@ import {
   formatContextWindowTokens,
   type ContextWindowSnapshot,
   type SlashCommandDefinition,
-} from "@t3tools/client-core";
+} from "@termweave/client-core";
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
@@ -153,13 +153,13 @@ import {
   supportsClaudeFastMode,
   supportsClaudeThinkingToggle,
   supportsClaudeUltrathinkKeyword,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import {
   nextProjectScriptId,
   primaryProjectScript,
   projectScriptCwd,
   projectScriptRuntimeEnv,
-} from "@t3tools/shared/projectScripts";
+} from "@termweave/shared/projectScripts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useKeyboard } from "@opentui/react";
 import packageJson from "../package.json";
@@ -547,7 +547,7 @@ const OPEN_TUI_DIFF_METADATA_PREFIXES = [
   "rename from ",
   "rename to ",
 ] as const;
-const WORKTREE_BRANCH_PREFIX = "t3code";
+const WORKTREE_BRANCH_PREFIX = "termweave";
 const ENV_MODE_OPTIONS: ReadonlyArray<{
   readonly value: ThreadEnvMode;
   readonly label: string;
@@ -3844,7 +3844,7 @@ function ProjectScriptsPanel(props: {
       <SettingsSection title="Project actions">
         <SettingsRow
           title="Project scripts"
-          description="Create reusable shell commands for this project, matching t3code actions."
+          description="Create reusable shell commands for this project, matching termweave actions."
           status={`${scripts.length} configured · ${primaryScript ? `Default: ${primaryScript.name}` : "No default script"}`}
           control={
             <ToolbarButton label="Add script" surface="inset" onPress={() => props.onAdd()} />
@@ -3954,7 +3954,7 @@ function ProjectScriptsPanel(props: {
           </SettingsRow>
           <SettingsRow
             title="Icon"
-            description="Pick the semantic script icon used in t3code."
+            description="Pick the semantic script icon used in termweave."
             control={
               <box style={{ flexDirection: "row", alignItems: "center", gap: 1 }}>
                 {PROJECT_SCRIPT_ICON_OPTIONS.map((option) => (
@@ -12517,7 +12517,7 @@ export function App({
                         <SettingsSection title="General">
                           <SettingsRow
                             title="Theme"
-                            description="Choose how T3 Code looks across the app."
+                            description="Choose how Termweave looks across the app."
                             resetAction={
                               appSettings.theme !== DEFAULT_APP_THEME ? (
                                 <SettingResetButton

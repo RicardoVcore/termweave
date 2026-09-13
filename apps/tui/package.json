@@ -1,20 +1,19 @@
 {
-  "name": "@maria_rcks/t1code",
+  "name": "termweave",
   "version": "0.0.24",
-  "description": "Terminal-first T3 Code fork with an OpenTUI client",
-  "homepage": "https://github.com/maria-rcks/t1code#readme",
+  "description": "Terminal-first coding-agent client with an OpenTUI client",
+  "homepage": "https://github.com/RicardoVcore/termweave#readme",
   "bugs": {
-    "url": "https://github.com/maria-rcks/t1code/issues"
+    "url": "https://github.com/RicardoVcore/termweave/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maria-rcks/t1code.git",
+    "url": "git+https://github.com/RicardoVcore/termweave.git",
     "directory": "apps/tui"
   },
   "bin": {
-    "t1": "./bin/t1code.js",
-    "t1code": "./bin/t1code.js"
+    "termweave": "./bin/termweave.js"
   },
   "files": [
     "README.md",
@@ -45,9 +44,9 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@t3tools/client-core": "workspace:*",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@termweave/client-core": "workspace:*",
+    "@termweave/contracts": "workspace:*",
+    "@termweave/shared": "workspace:*",
     "@types/node": "catalog:",
     "@types/react": "^19.0.0",
     "tsdown": "catalog:",

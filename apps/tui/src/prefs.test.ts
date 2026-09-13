@@ -7,7 +7,7 @@ import type { TuiPaths } from "./config";
 import { readPrefs, writePrefs } from "./prefs";
 
 async function makePaths(): Promise<{ root: string; paths: TuiPaths }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "t1code-prefs-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-prefs-"));
   return {
     root,
     paths: {

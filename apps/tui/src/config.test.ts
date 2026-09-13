@@ -34,12 +34,12 @@ describe("resolveTuiPaths", () => {
 
     expect(paths).toEqual({
       userHomeDir: "/Users/tester",
-      homeDir: "/var/data/t1code",
-      configHomeDir: "/var/config/t1code",
-      stateHomeDir: "/var/state/t1code",
-      prefsPath: "/var/config/t1code/prefs.json",
-      logPath: "/var/state/t1code/tui.log",
-      imagesDir: "/var/state/t1code/images",
+      homeDir: "/var/data/termweave",
+      configHomeDir: "/var/config/termweave",
+      stateHomeDir: "/var/state/termweave",
+      prefsPath: "/var/config/termweave/prefs.json",
+      logPath: "/var/state/termweave/tui.log",
+      imagesDir: "/var/state/termweave/images",
     });
   });
 
@@ -52,11 +52,11 @@ describe("resolveTuiPaths", () => {
     expect(paths).toEqual({
       userHomeDir: "/Users/tester",
       homeDir: "/Users/tester/.t1",
-      configHomeDir: "/Users/tester/.config/t1code",
-      stateHomeDir: "/Users/tester/.config/t1code",
-      prefsPath: "/Users/tester/.config/t1code/prefs.json",
-      logPath: "/Users/tester/.config/t1code/tui.log",
-      imagesDir: "/Users/tester/.config/t1code/images",
+      configHomeDir: "/Users/tester/.config/termweave",
+      stateHomeDir: "/Users/tester/.config/termweave",
+      prefsPath: "/Users/tester/.config/termweave/prefs.json",
+      logPath: "/Users/tester/.config/termweave/tui.log",
+      imagesDir: "/Users/tester/.config/termweave/images",
     });
   });
 });

@@ -3,13 +3,13 @@ import type {
   CodexReasoningEffort,
   ProviderKind,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
   normalizeCodexModelOptions,
   resolveReasoningEffortForProvider,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import { memo, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";

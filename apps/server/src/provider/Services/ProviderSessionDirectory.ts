@@ -4,7 +4,7 @@ import type {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Context, Option } from "effect";
 import type { Effect } from "effect";
 
@@ -56,4 +56,4 @@ export interface ProviderSessionDirectoryShape {
 export class ProviderSessionDirectory extends Context.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape
->()("t3/provider/Services/ProviderSessionDirectory") {}
+>()("termweave-server/provider/Services/ProviderSessionDirectory") {}

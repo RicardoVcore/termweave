@@ -5,7 +5,7 @@ export default defineConfig({
   format: ["esm"],
   outDir: "dist",
   clean: true,
-  noExternal: (id) => id.startsWith("@t3tools/"),
+  noExternal: (id) => id.startsWith("@termweave/"),
   banner: {
     js: "#!/usr/bin/env bun\n",
   },

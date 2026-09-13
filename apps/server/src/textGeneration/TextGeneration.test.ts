@@ -1,8 +1,8 @@
 import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { ProviderInstanceId } from "@termweave/contracts";
+import { createModelSelection } from "@termweave/shared/model";
 import { Effect, PubSub, Result, Schema, Stream } from "effect";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";

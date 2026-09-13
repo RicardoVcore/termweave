@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Random } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;

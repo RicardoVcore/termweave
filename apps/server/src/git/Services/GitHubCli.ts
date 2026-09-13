@@ -7,7 +7,7 @@
  */
 import { Context } from "effect";
 import type { Effect } from "effect";
-import type { SourceControlRepositoryVisibility } from "@t3tools/contracts";
+import type { SourceControlRepositoryVisibility } from "@termweave/contracts";
 
 import type { ProcessRunResult } from "../../processRunner";
 import type { GitHubCliError } from "../Errors.ts";
@@ -109,5 +109,5 @@ export interface GitHubCliShape {
  * GitHubCli - Service tag for GitHub CLI process execution.
  */
 export class GitHubCli extends Context.Service<GitHubCli, GitHubCliShape>()(
-  "t3/git/Services/GitHubCli",
+  "termweave-server/git/Services/GitHubCli",
 ) {}

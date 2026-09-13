@@ -11,7 +11,7 @@ import {
   type ProviderInstanceConfig,
   type ServerSettings,
   type ServerSettingsPatch,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Schema } from "effect";
 
 export type ProviderSettingsKey = keyof ServerSettings["providers"];

@@ -1,4 +1,4 @@
-export const APP_BASE_NAME = "T3 Code";
+export const APP_BASE_NAME = "Termweave";
 const hostedAppChannel = import.meta.env.VITE_HOSTED_APP_CHANNEL?.trim().toLowerCase();
 
 export const HOSTED_APP_CHANNEL =

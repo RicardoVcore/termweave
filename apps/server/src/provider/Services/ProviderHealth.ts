@@ -6,7 +6,7 @@
  *
  * @module ProviderHealth
  */
-import type { ServerProviderStatus } from "@t3tools/contracts";
+import type { ServerProviderStatus } from "@termweave/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -18,5 +18,5 @@ export interface ProviderHealthShape {
 }
 
 export class ProviderHealth extends Context.Service<ProviderHealth, ProviderHealthShape>()(
-  "t3/provider/Services/ProviderHealth",
+  "termweave-server/provider/Services/ProviderHealth",
 ) {}

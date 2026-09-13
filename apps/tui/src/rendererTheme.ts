@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import type { AppTheme } from "@t3tools/client-core";
+import type { AppTheme } from "@termweave/client-core";
 import {
   TERMINAL_MATCH_THEME_ID,
   hasUsableTerminalColors,

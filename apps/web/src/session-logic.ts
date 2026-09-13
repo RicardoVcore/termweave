@@ -1,1 +1,1 @@
-export * from "@t3tools/client-core/sessionLogic";
+export * from "@termweave/client-core/sessionLogic";

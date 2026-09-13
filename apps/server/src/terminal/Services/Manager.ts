@@ -16,7 +16,7 @@ import {
   TerminalSessionSnapshot,
   TerminalSessionStatus,
   TerminalWriteInput,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { PtyProcess } from "./PTY";
 import { Effect, Schema, Context } from "effect";
 
@@ -114,5 +114,5 @@ export interface TerminalManagerShape {
  * TerminalManager - Service tag for terminal session orchestration.
  */
 export class TerminalManager extends Context.Service<TerminalManager, TerminalManagerShape>()(
-  "t3/terminal/Services/Manager/TerminalManager",
+  "termweave-server/terminal/Services/Manager/TerminalManager",
 ) {}

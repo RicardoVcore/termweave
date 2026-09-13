@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@termweave/contracts";
+import { createModelSelection } from "@termweave/shared/model";
 import { Effect, FileSystem, Layer, Path, Result, Schema } from "effect";
 import { expect } from "vitest";
 
@@ -17,7 +17,7 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
 );
 
 const CodexTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3code-codex-text-generation-test-",
+  prefix: "termweave-codex-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeFakeCodexBinary(
@@ -161,7 +161,7 @@ function withFakeCodexEnv<A, E, R>(
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "termweave-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
     const config = decodeCodexSettings({ binaryPath: codexPath });
     const textGeneration = yield* makeCodexTextGeneration(config);

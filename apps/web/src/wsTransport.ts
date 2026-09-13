@@ -1,4 +1,4 @@
-import { WsTransport as BaseWsTransport } from "@t3tools/client-core";
+import { WsTransport as BaseWsTransport } from "@termweave/client-core";
 
 export class WsTransport extends BaseWsTransport {
   constructor(url?: string) {

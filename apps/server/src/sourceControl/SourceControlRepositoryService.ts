@@ -9,7 +9,7 @@ import {
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, FileSystem, Layer, Path, Schema, Context } from "effect";
 
 import { ServerConfig } from "../config";
@@ -36,7 +36,7 @@ export interface SourceControlRepositoryServiceShape {
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
   SourceControlRepositoryServiceShape
->()("t3/sourceControl/SourceControlRepositoryService") {}
+>()("termweave-server/sourceControl/SourceControlRepositoryService") {}
 
 function detailFromUnknown(cause: unknown): string {
   if (cause && typeof cause === "object") {

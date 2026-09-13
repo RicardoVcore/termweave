@@ -1,4 +1,4 @@
-import { ProjectId, type ThreadId } from "@t3tools/contracts";
+import { ProjectId, type ThreadId } from "@termweave/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -9,8 +9,8 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
-const WORKTREE_BRANCH_PREFIX = "t3code";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "termweave:last-invoked-script-by-project";
+const WORKTREE_BRANCH_PREFIX = "termweave";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 

@@ -1,15 +1,15 @@
-import type { GitRunStackedActionResult, GitStackedAction } from "@t3tools/contracts";
-import { resolveQuickAction } from "@t3tools/client-core";
+import type { GitRunStackedActionResult, GitStackedAction } from "@termweave/contracts";
+import { resolveQuickAction } from "@termweave/client-core";
 export {
   buildGitActionMenuItems as buildMenuItems,
   resolveQuickAction,
-} from "@t3tools/client-core";
+} from "@termweave/client-core";
 export type {
   GitActionIconName,
   GitActionMenuItem,
   GitDialogAction,
   GitQuickAction,
-} from "@t3tools/client-core";
+} from "@termweave/client-core";
 
 export interface DefaultBranchActionDialogCopy {
   title: string;
@@ -142,4 +142,4 @@ export function resolveDefaultBranchActionDialogCopy(input: {
 }
 
 // Re-export from shared for backwards compatibility in this module's exports
-export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+export { resolveAutoFeatureBranchName } from "@termweave/shared/git";

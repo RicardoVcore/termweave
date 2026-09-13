@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect";
-import { TrimmedNonEmptyString } from "@t3tools/contracts";
+import { TrimmedNonEmptyString } from "@termweave/contracts";
 
 import { runProcess } from "../../processRunner";
 import { AzureDevOpsCliError } from "../Errors";

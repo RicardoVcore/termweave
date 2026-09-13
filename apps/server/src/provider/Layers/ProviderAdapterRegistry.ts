@@ -3,7 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderKind,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Layer, Schema } from "effect";
 
 import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";

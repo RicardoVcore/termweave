@@ -1,4 +1,4 @@
-import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
+import { ServerSettings, type ServerSettingsPatch } from "@termweave/contracts";
 import { Option, Schema } from "effect";
 import { createModelSelection } from "./model";
 import { fromLenientJson } from "./schemaJson";

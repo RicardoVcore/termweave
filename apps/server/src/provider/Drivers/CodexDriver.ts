@@ -21,7 +21,7 @@
  *
  * @module provider/Drivers/CodexDriver
  */
-import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@termweave/contracts";
 import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";

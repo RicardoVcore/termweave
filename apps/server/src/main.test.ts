@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import type { OrchestrationReadModel } from "@t3tools/contracts";
+import type { OrchestrationReadModel } from "@termweave/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,9 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach } from "vitest";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@termweave/shared/Net";
 
-import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from "./main";
+import { CliConfig, recordStartupHeartbeat, termweaveCli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
@@ -72,7 +72,7 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
     ...env,
   };
 
-  return Command.runWith(t3Cli, { version: "0.0.0-test" })(args).pipe(
+  return Command.runWith(termweaveCli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({

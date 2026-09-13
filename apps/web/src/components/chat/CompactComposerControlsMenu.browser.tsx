@@ -1,4 +1,4 @@
-import { type ProviderModelOptions, ThreadId } from "@t3tools/contracts";
+import { type ProviderModelOptions, ThreadId } from "@termweave/contracts";
 import "../../index.css";
 
 import { page } from "vitest/browser";

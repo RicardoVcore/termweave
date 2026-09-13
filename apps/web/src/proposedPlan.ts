@@ -1,4 +1,4 @@
-export * from "@t3tools/client-core/proposedPlan";
+export * from "@termweave/client-core/proposedPlan";
 
 function sanitizePlanFileSegment(input: string): string {
   const sanitized = input

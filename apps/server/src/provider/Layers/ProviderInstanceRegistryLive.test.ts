@@ -3,7 +3,7 @@ import {
   ProviderInstanceId,
   type ProviderInstanceConfigMap,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";

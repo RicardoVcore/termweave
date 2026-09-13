@@ -3,7 +3,7 @@ import {
   type ProviderKind,
   type ProviderModelOptions,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
@@ -12,7 +12,7 @@ import {
   normalizeCodexModelOptions,
   resolveReasoningEffortForProvider,
   supportsClaudeUltrathinkKeyword,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 import type { ReactNode } from "react";
 import { ClaudeTraitsMenuContent, ClaudeTraitsPicker } from "./ClaudeTraitsPicker";
 import { CodexTraitsMenuContent, CodexTraitsPicker } from "./CodexTraitsPicker";

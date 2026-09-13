@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkLogEntry } from "@t3tools/client-core";
+import type { WorkLogEntry } from "@termweave/client-core";
 
 import { resolveWorkEntryIcon } from "./workEntryIcons";
 

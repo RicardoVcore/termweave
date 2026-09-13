@@ -2,7 +2,7 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { DateTime, Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";

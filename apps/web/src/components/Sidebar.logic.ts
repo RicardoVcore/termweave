@@ -2,7 +2,7 @@ import {
   resolveProjectStatusIndicator,
   resolveThreadStatusPill,
   type ThreadStatusPill,
-} from "@t3tools/client-core";
+} from "@termweave/client-core";
 import { cn } from "../lib/utils";
 import { hasUnseenCompletion } from "../session-logic";
 

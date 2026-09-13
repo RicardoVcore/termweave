@@ -20,7 +20,8 @@ function resolveTuiPaths(env: NodeJS.ProcessEnv = process.env): {
 } {
   return {
     homeDir: env.T1CODE_HOME?.trim() || path.join(os.homedir(), ".t1"),
-    configHomeDir: env.T1CODE_CONFIG_HOME?.trim() || path.join(os.homedir(), ".config", "t1code"),
+    configHomeDir:
+      env.T1CODE_CONFIG_HOME?.trim() || path.join(os.homedir(), ".config", "termweave"),
   };
 }
 

@@ -5,8 +5,8 @@ import {
   WebSocketResponse,
   type WsResponse as WsResponseMessage,
   WsResponse as WsResponseSchema,
-} from "@t3tools/contracts";
-import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+} from "@termweave/contracts";
+import { decodeUnknownJsonResult, formatSchemaError } from "@termweave/shared/schemaJson";
 import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -253,10 +253,12 @@ export class WsTransport {
       return;
     }
 
-    ws.onopen = handleOpen;
-    ws.onmessage = handleMessage;
-    ws.onclose = handleClose;
-    ws.onerror = handleError;
+    Object.assign(ws, {
+      onopen: handleOpen,
+      onmessage: handleMessage,
+      onclose: handleClose,
+      onerror: handleError,
+    });
   }
 
   private handleMessage(raw: unknown) {

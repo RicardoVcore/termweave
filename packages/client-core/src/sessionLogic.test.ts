@@ -1,4 +1,4 @@
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { ApprovalRequestId } from "@termweave/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

@@ -4,7 +4,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -50,5 +50,5 @@ export class ProjectionThreadProposedPlanRepository extends Context.Service<
   ProjectionThreadProposedPlanRepository,
   ProjectionThreadProposedPlanRepositoryShape
 >()(
-  "t3/persistence/Services/ProjectionThreadProposedPlans/ProjectionThreadProposedPlanRepository",
+  "termweave-server/persistence/Services/ProjectionThreadProposedPlans/ProjectionThreadProposedPlanRepository",
 ) {}

@@ -7,8 +7,8 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderState,
-} from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+} from "@termweave/contracts";
+import { normalizeModelSlug } from "@termweave/shared/model";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";

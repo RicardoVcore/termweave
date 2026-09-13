@@ -1,4 +1,4 @@
-export * from "@t3tools/client-core/types";
+export * from "@termweave/client-core/types";
 
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";

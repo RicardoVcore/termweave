@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ClaudeSettings, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import { ClaudeSettings, ModelSelection, ProviderInstanceId } from "@termweave/contracts";
 import { Effect, Schema } from "effect";
 
 import {
@@ -63,7 +63,7 @@ describe("ClaudeProvider", () => {
       assert.equal(snapshot.enabled, false);
       assert.equal(snapshot.status, "disabled");
       assert.equal(snapshot.auth.status, "unknown");
-      assert.equal(snapshot.message, "Claude is disabled in T3 Code settings.");
+      assert.equal(snapshot.message, "Claude is disabled in Termweave settings.");
       assert.equal(
         snapshot.models.some((model) => model.slug === "custom-claude" && model.isCustom),
         true,

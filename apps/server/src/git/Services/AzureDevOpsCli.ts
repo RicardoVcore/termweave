@@ -1,6 +1,6 @@
 import { Context } from "effect";
 import type { Effect } from "effect";
-import type { SourceControlRepositoryVisibility } from "@t3tools/contracts";
+import type { SourceControlRepositoryVisibility } from "@termweave/contracts";
 
 import type { ProcessRunResult } from "../../processRunner";
 import type { AzureDevOpsCliError } from "../Errors";
@@ -31,5 +31,5 @@ export interface AzureDevOpsCliShape {
 }
 
 export class AzureDevOpsCli extends Context.Service<AzureDevOpsCli, AzureDevOpsCliShape>()(
-  "t3/git/Services/AzureDevOpsCli",
+  "termweave-server/git/Services/AzureDevOpsCli",
 ) {}

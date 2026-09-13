@@ -1,6 +1,6 @@
 import { assert, describe, it, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-import { ProviderDriverKind, ProviderInstanceId, type ProviderKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ProviderKind } from "@termweave/contracts";
 import { Effect, Layer, PubSub, Schema, Stream } from "effect";
 
 import { ProviderUnsupportedError } from "../Errors.ts";

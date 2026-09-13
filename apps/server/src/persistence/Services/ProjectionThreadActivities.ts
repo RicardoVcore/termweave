@@ -13,7 +13,7 @@ import {
   OrchestrationThreadActivityTone,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -80,4 +80,6 @@ export interface ProjectionThreadActivityRepositoryShape {
 export class ProjectionThreadActivityRepository extends Context.Service<
   ProjectionThreadActivityRepository,
   ProjectionThreadActivityRepositoryShape
->()("t3/persistence/Services/ProjectionThreadActivities/ProjectionThreadActivityRepository") {}
+>()(
+  "termweave-server/persistence/Services/ProjectionThreadActivities/ProjectionThreadActivityRepository",
+) {}

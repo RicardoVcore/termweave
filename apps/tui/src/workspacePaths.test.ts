@@ -8,14 +8,14 @@ describe("workspace path helpers", () => {
     const userHomeDir = "/Users/maria";
 
     expect(expandUserPath("~", userHomeDir)).toBe("/Users/maria");
-    expect(expandUserPath("~/.local/src/t3code", userHomeDir)).toBe(
-      path.join("/Users/maria", ".local/src/t3code"),
+    expect(expandUserPath("~/.local/src/termweave", userHomeDir)).toBe(
+      path.join("/Users/maria", ".local/src/termweave"),
     );
   });
 
   it("normalizes tilde workspace roots from the user's home", () => {
-    expect(normalizeWorkspaceRoot(" ~/.local/src/t3code ", "/Users/maria")).toBe(
-      path.resolve("/Users/maria/.local/src/t3code"),
+    expect(normalizeWorkspaceRoot(" ~/.local/src/termweave ", "/Users/maria")).toBe(
+      path.resolve("/Users/maria/.local/src/termweave"),
     );
   });
 

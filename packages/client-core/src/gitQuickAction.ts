@@ -1,4 +1,4 @@
-import type { GitStackedAction, GitStatusResult } from "@t3tools/contracts";
+import type { GitStackedAction, GitStatusResult } from "@termweave/contracts";
 
 export interface GitQuickAction {
   label: string;

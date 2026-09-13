@@ -31,7 +31,7 @@
       "outputs": ["dist/**", "dist-electron/**"]
     },
     "dev": {
-      "dependsOn": ["@t3tools/contracts#build"],
+      "dependsOn": ["@termweave/contracts#build"],
       "cache": false,
       "persistent": true
     },

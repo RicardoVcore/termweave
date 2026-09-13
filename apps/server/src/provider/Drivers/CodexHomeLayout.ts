@@ -1,6 +1,6 @@
 import * as NodeOS from "node:os";
 
-import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
+import { ProviderDriverKind, type CodexSettings } from "@termweave/contracts";
 import { Effect, FileSystem, Path, PlatformError, Schema } from "effect";
 
 import { expandHomePath } from "../../pathExpansion";

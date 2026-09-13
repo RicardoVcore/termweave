@@ -4,7 +4,7 @@ import {
   type ProviderKind,
   type ProviderInstanceId,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Effect, Layer, Option } from "effect";
 
 import { ProviderSessionRuntimeRepository } from "../../persistence/Services/ProviderSessionRuntime.ts";

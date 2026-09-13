@@ -1,4 +1,4 @@
-import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@t3tools/contracts";
+import { CheckpointRef, IsoDateTime, NonNegativeInt, ThreadId, TurnId } from "@termweave/contracts";
 import { Schema, Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -44,5 +44,5 @@ export interface RuntimeReceiptBusShape {
 }
 
 export class RuntimeReceiptBus extends Context.Service<RuntimeReceiptBus, RuntimeReceiptBusShape>()(
-  "t3/orchestration/Services/RuntimeReceiptBus",
+  "termweave-server/orchestration/Services/RuntimeReceiptBus",
 ) {}

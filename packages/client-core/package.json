@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/client-core",
+  "name": "@termweave/client-core",
   "version": "0.0.13",
   "private": true,
   "type": "module",
@@ -47,8 +47,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@termweave/contracts": "workspace:*",
+    "@termweave/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

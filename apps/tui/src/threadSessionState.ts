@@ -1,1 +1,1 @@
-export { isThreadSessionActivelyWorking } from "@t3tools/client-core";
+export { isThreadSessionActivelyWorking } from "@termweave/client-core";

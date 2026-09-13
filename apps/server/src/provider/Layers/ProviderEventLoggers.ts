@@ -11,7 +11,7 @@ export interface ProviderEventLoggersShape {
 export class ProviderEventLoggers extends Context.Service<
   ProviderEventLoggers,
   ProviderEventLoggersShape
->()("t3/provider/Layers/ProviderEventLoggers") {}
+>()("termweave-server/provider/Layers/ProviderEventLoggers") {}
 
 export const NoOpProviderEventLoggers: ProviderEventLoggersShape = {
   native: undefined,

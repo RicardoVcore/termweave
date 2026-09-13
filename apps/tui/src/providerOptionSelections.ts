@@ -3,12 +3,12 @@ import type {
   ProviderModelOptions,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   isClaudeUltrathinkPrompt,
-} from "@t3tools/shared/model";
+} from "@termweave/shared/model";
 
 export function mergeProviderOptionSelections(
   base: ReadonlyArray<ProviderOptionSelection> | null | undefined,

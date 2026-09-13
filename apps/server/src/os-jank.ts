@@ -1,7 +1,7 @@
 import * as OS from "node:os";
 import * as nodePath from "node:path";
 import { Effect, Path } from "effect";
-import { readPathFromLoginShell } from "@t3tools/shared/shell";
+import { readPathFromLoginShell } from "@termweave/shared/shell";
 
 export function fixPath(): void {
   if (process.platform !== "darwin") return;

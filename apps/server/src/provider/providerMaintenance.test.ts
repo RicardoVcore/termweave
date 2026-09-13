@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@termweave/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

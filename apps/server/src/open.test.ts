@@ -259,7 +259,7 @@ it.layer(NodeServices.layer)("launchDetached", (it) => {
   it.effect("rejects when command does not exist", () =>
     Effect.gen(function* () {
       const result = yield* launchDetached({
-        command: `t3code-no-such-command-${Date.now()}`,
+        command: `termweave-no-such-command-${Date.now()}`,
         args: [],
       }).pipe(Effect.result);
       assert.equal(result._tag, "Failure");

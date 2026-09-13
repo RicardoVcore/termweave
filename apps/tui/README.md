@@ -1,19 +1,19 @@
-# t1code
+# termweave
 
-Terminal-first T3 Code fork with an OpenTUI client.
+Terminal-first coding-agent client with an OpenTUI client.
 
 ## Install
 
 ```bash
-bunx @maria_rcks/t1code
+bunx termweave
 ```
 
 Requires Bun `>=1.3.9`.
 
 Linux notes:
 
-- T1Code follows XDG defaults on Linux:
-  `XDG_CONFIG_HOME/t1code` for prefs, `XDG_STATE_HOME/t1code` for logs and image state, and `XDG_DATA_HOME/t1code` for app data.
+- Termweave follows XDG defaults on Linux:
+  `XDG_CONFIG_HOME/termweave` for prefs, `XDG_STATE_HOME/termweave` for logs and image state, and `XDG_DATA_HOME/termweave` for app data.
 - Opening links uses desktop helpers such as `xdg-open` or `gio open`.
 - Clipboard image paste works with `wl-paste` on Wayland or `xclip` on X11.
 
@@ -25,7 +25,7 @@ Linux notes:
 
 ## Source
 
-- Repo: https://github.com/maria-rcks/t1code
-- Issues: https://github.com/maria-rcks/t1code/issues
+- Repo: https://github.com/RicardoVcore/termweave
+- Issues: https://github.com/RicardoVcore/termweave/issues
 
-Based on T3 Code by `@t3dotgg` and `@juliusmarminge`.
+Forked from [maria-rcks/t1code](https://github.com/maria-rcks/t1code), based on T3 Code by `@t3dotgg` and `@juliusmarminge`.

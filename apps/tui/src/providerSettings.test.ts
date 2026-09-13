@@ -4,7 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderInstanceConfig,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { Schema } from "effect";
 import {
   ADDITIONAL_COMING_SOON_MODEL_PROVIDER_OPTIONS,

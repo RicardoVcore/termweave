@@ -14,7 +14,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WsWelcomePayload,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import { WsTransport } from "./wsTransport";
 
 export interface NativeApiAdapterOptions {

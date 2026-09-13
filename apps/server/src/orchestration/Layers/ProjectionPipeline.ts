@@ -2,7 +2,7 @@ import {
   ApprovalRequestId,
   type ChatAttachment,
   type OrchestrationEvent,
-} from "@t3tools/contracts";
+} from "@termweave/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

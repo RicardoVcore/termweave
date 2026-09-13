@@ -1,4 +1,4 @@
-import type { AppTheme } from "@t3tools/client-core";
+import type { AppTheme } from "@termweave/client-core";
 
 export interface TerminalColors {
   readonly palette: readonly (string | null)[];
