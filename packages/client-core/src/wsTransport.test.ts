@@ -224,4 +224,19 @@ describe("WsTransport reconnect", () => {
 
     transport.dispose();
   });
+
+  it("does not include auth tokens in WebSocket warnings", () => {
+    const token = "must-never-enter-warnings";
+    const onWarning = vi.fn();
+    const transport = new WsTransport({
+      url: `ws://localhost:3020/?token=${token}`,
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onWarning,
+    });
+
+    sockets[0]?.emitError();
+
+    expect(JSON.stringify(onWarning.mock.calls)).not.toContain(token);
+    transport.dispose();
+  });
 });

@@ -50,8 +50,7 @@ export function buildCoreAdvertisedEndpoints(input: {
       source: "server",
       status: "available",
       isDefault: true,
-      description:
-        "Current Termweave backend endpoint for attachable TUI sessions.",
+      description: "Current Termweave backend endpoint for attachable TUI sessions.",
     }),
   ];
 }

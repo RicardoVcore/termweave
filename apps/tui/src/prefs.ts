@@ -11,6 +11,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { TuiPaths } from "./config";
 import type { TuiThemeId } from "./theme";
+import { normalizeConnectionProfiles, type ConnectionProfile } from "./connectionProfiles";
 
 export interface PersistedComposerImageAttachment {
   readonly type: "image";
@@ -43,6 +44,7 @@ export interface PersistedDraftThreadState {
 }
 
 export interface TuiPrefs {
+  readonly connectionProfiles?: readonly ConnectionProfile[];
   readonly tuiThemeId?: TuiThemeId;
   readonly selectedProjectId?: string;
   readonly selectedThreadId?: string;
@@ -77,7 +79,11 @@ export async function readPrefs(paths: TuiPaths): Promise<TuiPrefs> {
   try {
     const raw = await fs.readFile(paths.prefsPath, "utf8");
     const parsed = JSON.parse(raw) as TuiPrefs;
-    return parsed ?? {};
+    if (!parsed || !("connectionProfiles" in parsed)) return parsed ?? {};
+    return {
+      ...parsed,
+      connectionProfiles: normalizeConnectionProfiles(parsed.connectionProfiles),
+    };
   } catch {
     return {};
   }
@@ -85,5 +91,9 @@ export async function readPrefs(paths: TuiPaths): Promise<TuiPrefs> {
 
 export async function writePrefs(paths: TuiPaths, prefs: TuiPrefs): Promise<void> {
   await fs.mkdir(path.dirname(paths.prefsPath), { recursive: true });
-  await fs.writeFile(paths.prefsPath, JSON.stringify(prefs, null, 2));
+  const persistedPrefs =
+    "connectionProfiles" in prefs
+      ? { ...prefs, connectionProfiles: normalizeConnectionProfiles(prefs.connectionProfiles) }
+      : prefs;
+  await fs.writeFile(paths.prefsPath, JSON.stringify(persistedPrefs, null, 2));
 }

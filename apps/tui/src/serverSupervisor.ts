@@ -36,7 +36,7 @@ export interface RunningServer {
 export interface AttachedServerConnection {
   readonly host: string;
   readonly port: number;
-  readonly authToken: string;
+  readonly authToken: string | null;
   readonly wsUrl: string;
 }
 
@@ -120,8 +120,18 @@ function parseConfiguredPort(value: string | undefined): number | null {
   return port;
 }
 
-export function buildServerWsUrl(host: string, port: number, authToken: string): string {
-  return `ws://${formatHostForUrl(host)}:${port}/?token=${encodeURIComponent(authToken)}`;
+export function buildServerWsUrl(host: string, port: number, authToken?: string | null): string {
+  const baseUrl = `ws://${formatHostForUrl(host)}:${port}/`;
+  return authToken ? `${baseUrl}?token=${encodeURIComponent(authToken)}` : baseUrl;
+}
+
+export function resolveServerAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  return (
+    env.TERMWEAVE_AUTH_TOKEN?.trim() ||
+    env.T1CODE_AUTH_TOKEN?.trim() ||
+    env.T3CODE_AUTH_TOKEN?.trim() ||
+    null
+  );
 }
 
 export function resolveAttachedServerConnection(
@@ -137,9 +147,11 @@ export function resolveAttachedServerConnection(
     throw new Error("T1CODE_TUI_ATTACH_ONLY requires a valid T1CODE_PORT.");
   }
 
-  const authToken = env.T1CODE_AUTH_TOKEN?.trim();
+  const authToken = resolveServerAuthToken(env);
   if (!authToken) {
-    throw new Error("T1CODE_TUI_ATTACH_ONLY requires T1CODE_AUTH_TOKEN.");
+    throw new Error(
+      "T1CODE_TUI_ATTACH_ONLY requires TERMWEAVE_AUTH_TOKEN (or a legacy auth-token variable).",
+    );
   }
 
   return {

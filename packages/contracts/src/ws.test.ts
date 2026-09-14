@@ -215,6 +215,13 @@ it.effect("accepts typed websocket push envelopes with sequence", () =>
       sequence: 1,
       channel: WS_CHANNELS.serverWelcome,
       data: {
+        environment: {
+          environmentId: "environment-1",
+          label: "test environment",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: false },
+        },
         cwd: "/tmp/workspace",
         projectName: "workspace",
       },

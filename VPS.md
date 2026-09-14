@@ -25,7 +25,7 @@ bun run build
 Generate token and run server. Keep token outside shell history where possible:
 
 ```bash
-export T3CODE_AUTH_TOKEN="$(openssl rand -hex 32)"
+export TERMWEAVE_AUTH_TOKEN="$(openssl rand -hex 32)"
 export T3CODE_HOME="$HOME/.local/share/termweave"
 bun run --cwd apps/server start -- --host 0.0.0.0 --port 3773
 ```
@@ -49,7 +49,7 @@ Create `/etc/termweave/server.env` with mode `600`:
 ```text
 T3CODE_HOST=100.64.0.10
 T3CODE_PORT=3773
-T3CODE_AUTH_TOKEN=replace-with-random-token
+TERMWEAVE_AUTH_TOKEN=replace-with-random-token
 ```
 
 Install Node.js at `/usr/bin/node`, build as above, then enable service:
@@ -67,3 +67,21 @@ Updates: stop service, update source, run frozen install and build, then start
 service. Roll back by checking out previous commit and rebuilding. Back up
 `/var/lib/termweave` before updates; it contains SQLite state, provider data,
 attachments, and logs.
+
+## Token rotation and revocation
+
+Token protects WebSocket access. It does not encrypt transport. A private LAN
+limits who can reach the port but does not provide encryption. Use SSH
+port-forwarding, Tailscale, or TLS when transport confidentiality is required.
+
+To rotate a systemd deployment:
+
+1. Stop the service: `sudo systemctl stop termweave-server`.
+2. Replace `TERMWEAVE_AUTH_TOKEN` in `/etc/termweave/server.env` with a new
+   random value: `openssl rand -hex 32`.
+3. Update local TUI connection settings with new token.
+4. Start service: `sudo systemctl start termweave-server`.
+
+Restart closes existing WebSocket connections. Old token stops working after
+restart. For direct runs, stop process, replace environment token, then start
+again.
