@@ -278,6 +278,7 @@ async function renderKittyImagePreviewAsync(
 export async function cacheRemoteAttachmentToFile(input: {
   attachment: TerminalImageAttachment & { id: string };
   baseUrl: string;
+  authToken?: string | null;
   cacheDir: string;
 }): Promise<string> {
   await fs.mkdir(input.cacheDir, { recursive: true });
@@ -291,6 +292,7 @@ export async function cacheRemoteAttachmentToFile(input: {
 
   const response = await fetch(
     `${input.baseUrl.replace(/\/+$/, "")}/attachments/${encodeURIComponent(input.attachment.id)}`,
+    input.authToken ? { headers: { Authorization: `Bearer ${input.authToken}` } } : undefined,
   );
   if (!response.ok) {
     throw new Error(`Attachment fetch failed with ${response.status}.`);

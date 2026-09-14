@@ -759,6 +759,36 @@ describe("WebSocket Server", () => {
     expect(bytes).toEqual(Buffer.from("hello-attachment"));
   });
 
+  it("requires authentication for persisted attachments when auth is enabled", async () => {
+    const baseDir = makeTempDir("termweave-state-attachments-auth-");
+    const { attachmentsDir } = deriveServerPathsSync(baseDir);
+    const attachmentPath = path.join(attachmentsDir, "thread-a", "message-a", "0.png");
+    fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+    fs.writeFileSync(attachmentPath, Buffer.from("authenticated-attachment"));
+
+    server = await createTestServer({ cwd: "/test/project", baseDir, authToken: "secret-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    const attachmentUrl = `http://127.0.0.1:${port}/attachments/thread-a/message-a/0.png`;
+
+    const unauthorizedResponse = await fetch(attachmentUrl);
+    expect(unauthorizedResponse.status).toBe(401);
+    expect(unauthorizedResponse.headers.get("cache-control")).toBe("no-store");
+
+    const queryResponse = await fetch(
+      `${attachmentUrl}?token=${encodeURIComponent("secret-token")}`,
+    );
+    expect(queryResponse.status).toBe(200);
+
+    const bearerResponse = await fetch(attachmentUrl, {
+      headers: { Authorization: "Bearer secret-token" },
+    });
+    expect(bearerResponse.status).toBe(200);
+    expect(Buffer.from(await bearerResponse.arrayBuffer())).toEqual(
+      Buffer.from("authenticated-attachment"),
+    );
+  });
+
   it("serves persisted attachments for URL-encoded paths", async () => {
     const baseDir = makeTempDir("termweave-state-attachments-encoded-");
     const { attachmentsDir } = deriveServerPathsSync(baseDir);

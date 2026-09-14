@@ -134,6 +134,21 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
   );
 }
 
+function authTokenMatches(
+  providedToken: string | null | undefined,
+  expectedToken: string,
+): boolean {
+  const providedBytes = Buffer.from(providedToken ?? "");
+  const expectedBytes = Buffer.from(expectedToken);
+  return (
+    providedBytes.length === expectedBytes.length && timingSafeEqual(providedBytes, expectedBytes)
+  );
+}
+
+function readBearerToken(authorization: string | undefined): string | null {
+  return authorization?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
+}
+
 function websocketRawToString(raw: unknown): string | null {
   if (typeof raw === "string") {
     return raw;
@@ -477,6 +492,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
         if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
+          if (
+            authToken &&
+            !authTokenMatches(url.searchParams.get("token"), authToken) &&
+            !authTokenMatches(readBearerToken(req.headers.authorization), authToken)
+          ) {
+            respond(
+              401,
+              {
+                "Cache-Control": "no-store",
+                "Content-Type": "text/plain",
+                "WWW-Authenticate": "Bearer",
+              },
+              "Unauthorized",
+            );
+            return;
+          }
+
           const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
           const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
           if (!normalizedRelativePath) {
@@ -1060,12 +1092,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return;
       }
 
-      const providedBytes = Buffer.from(providedToken ?? "");
-      const expectedBytes = Buffer.from(authToken);
-      const tokenMatches =
-        providedBytes.length === expectedBytes.length &&
-        timingSafeEqual(providedBytes, expectedBytes);
-      if (!tokenMatches) {
+      if (!authTokenMatches(providedToken, authToken)) {
         rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
         return;
       }

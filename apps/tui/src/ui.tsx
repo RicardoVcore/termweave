@@ -6905,12 +6905,13 @@ export function App({
           mimeType: attachment.mimeType,
         },
         baseUrl: serverHttpOrigin,
+        authToken: tuiServerConnection?.authToken ?? null,
         cacheDir: path.join(paths.imagesDir, "preview-cache"),
       });
       previewAttachmentCacheRef.current.set(cacheKey, filePath);
       return filePath;
     },
-    [paths.imagesDir, serverHttpOrigin],
+    [paths.imagesDir, serverHttpOrigin, tuiServerConnection?.authToken],
   );
 
   function closeImagePreview() {

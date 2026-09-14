@@ -181,12 +181,40 @@ const ServerConfigLive = (input: CliInput) =>
         ),
       );
       const derivedPaths = yield* deriveServerPaths(baseDir);
-      const authToken = resolveOptionPrecedence(
-        Option.flatMap(input.authToken, authTokenOption),
-        authTokenOption(env.authToken),
-        authTokenOption(env.legacyAuthToken),
-        Option.flatMap(bootstrapEnvelope, (bootstrap) => authTokenOption(bootstrap.authToken)),
+
+      const cliAuthToken = yield* Option.match(input.authToken, {
+        onNone: () => Effect.succeed(Option.none<string>()),
+        onSome: (value) => {
+          const normalizedToken = normalizeAuthToken(value);
+          return normalizedToken
+            ? Effect.succeed(Option.some(normalizedToken))
+            : Effect.fail(
+                new StartupError({ message: "--auth-token must contain a non-whitespace token." }),
+              );
+        },
+      });
+      const bootstrapAuthToken = Option.flatMap(bootstrapEnvelope, (bootstrap) =>
+        authTokenOption(bootstrap.authToken),
       );
+      const environmentAuthToken = authTokenOption(env.authToken);
+      const legacyEnvironmentAuthToken = authTokenOption(env.legacyAuthToken);
+      const authToken = resolveOptionPrecedence(
+        cliAuthToken,
+        bootstrapAuthToken,
+        environmentAuthToken,
+        legacyEnvironmentAuthToken,
+      );
+
+      if (
+        Option.isNone(cliAuthToken) &&
+        Option.isNone(bootstrapAuthToken) &&
+        Option.isNone(environmentAuthToken) &&
+        Option.isSome(legacyEnvironmentAuthToken)
+      ) {
+        yield* Effect.logWarning(
+          "T3CODE_AUTH_TOKEN is deprecated; use TERMWEAVE_AUTH_TOKEN instead.",
+        );
+      }
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
         Option.getOrElse(
@@ -340,7 +368,7 @@ const t3HomeFlag = Flag.string("home-dir").pipe(
   Flag.optional,
 );
 const authTokenFlag = Flag.string("auth-token").pipe(
-  Flag.withDescription("Auth token required for WebSocket connections."),
+  Flag.withDescription("Auth token required for HTTP attachment and WebSocket connections."),
   Flag.withAlias("token"),
   Flag.optional,
 );

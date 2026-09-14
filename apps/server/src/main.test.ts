@@ -112,6 +112,25 @@ it.layer(testLayer)("server CLI command", (it) => {
     }),
   );
 
+  it.effect("rejects an explicitly blank auth token instead of falling back", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        runCli(["--host", "0.0.0.0", "--auth-token", "   "], {
+          TERMWEAVE_AUTH_TOKEN: "environment-token",
+        }),
+      );
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(
+          Cause.pretty(result.cause),
+          /--auth-token must contain a non-whitespace token/,
+        );
+      }
+      assert.equal(start.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("falls back to legacy token when new token is blank", () =>
     Effect.gen(function* () {
       yield* runCli([], {
