@@ -57,7 +57,19 @@ function throwIfAborted(signal: AbortSignal): void {
 export function buildSshTunnelArgs(
   input: SshTunnelInput & { readonly localPort: number; readonly controlPath: string },
 ): string[] {
-  if (!input.target.trim()) throw new Error("SSH target is required.");
+  const target = input.target.trim();
+  const separator = target.lastIndexOf("@");
+  const username = separator >= 0 ? target.slice(0, separator) : null;
+  const host = separator >= 0 ? target.slice(separator + 1) : target;
+  if (
+    !target ||
+    target.startsWith("-") ||
+    !host ||
+    host.startsWith("-") ||
+    (username !== null && (!username || username.startsWith("-")))
+  ) {
+    throw new Error("Invalid SSH target.");
+  }
   if (!validPort(input.localPort) || !validPort(input.remotePort)) {
     throw new Error("SSH tunnel ports must be between 1 and 65535.");
   }
@@ -78,7 +90,7 @@ export function buildSshTunnelArgs(
   ];
   if (input.sshPort !== undefined) args.push("-p", String(input.sshPort));
   if (input.identityPath?.trim()) args.push("-i", input.identityPath.trim());
-  args.push(input.target.trim());
+  args.push(target);
   return args;
 }
 

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildServerWsUrl,
   resolveAttachedServerConnection,
+  resolveServerAuthToken,
   startServerSupervisor,
 } from "./serverSupervisor";
 
@@ -28,6 +29,18 @@ afterEach(() => {
 describe("startServerSupervisor", () => {
   it("builds tokenless URLs for SSH-forwarded loopback servers", () => {
     expect(buildServerWsUrl("127.0.0.1", 43110)).toBe("ws://127.0.0.1:43110/");
+  });
+
+  it("resolves canonical and legacy server auth-token variables", () => {
+    expect(
+      resolveServerAuthToken({
+        TERMWEAVE_AUTH_TOKEN: " canonical ",
+        T1CODE_AUTH_TOKEN: "t1-legacy",
+        T3CODE_AUTH_TOKEN: "t3-legacy",
+      }),
+    ).toBe("canonical");
+    expect(resolveServerAuthToken({ T1CODE_AUTH_TOKEN: " t1-legacy " })).toBe("t1-legacy");
+    expect(resolveServerAuthToken({ T3CODE_AUTH_TOKEN: " t3-legacy " })).toBe("t3-legacy");
   });
 
   it("resolves attach-only server config from env", () => {
@@ -59,7 +72,7 @@ describe("startServerSupervisor", () => {
         T1CODE_TUI_ATTACH_ONLY: "1",
         T1CODE_PORT: "43111",
       }),
-    ).toThrow("T1CODE_TUI_ATTACH_ONLY requires T1CODE_AUTH_TOKEN.");
+    ).toThrow("T1CODE_TUI_ATTACH_ONLY requires TERMWEAVE_AUTH_TOKEN");
   });
 
   it("ignores ambient T1CODE server env when launching a managed child", async () => {

@@ -34,6 +34,9 @@ export function parseSshAttachCommand(args: readonly string[]): SshConnectionPro
     throw new Error(`Invalid SSH target. ${USAGE}`);
   }
   const username = separator > 0 ? target.slice(0, separator) : undefined;
+  if (username?.startsWith("-")) {
+    throw new Error(`Invalid SSH target. ${USAGE}`);
+  }
 
   return {
     id: `cli:ssh:${target}`,
@@ -90,7 +93,10 @@ export async function startSshAttach(
   const watchTunnel = (tunnel: SshTunnel) => {
     currentTunnel = tunnel;
     const onExit = () => {
-      if (stopped || currentTunnel !== tunnel) return;
+      if (stopped || currentTunnel !== tunnel) {
+        tunnel.stop();
+        return;
+      }
       removeExitListener?.();
       tunnel.stop();
       currentTunnel = null;

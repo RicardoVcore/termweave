@@ -15,10 +15,14 @@ afterEach(() => {
 
 function waitForOutput(child: ChildProcess, expected: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`Timed out waiting for ${expected}.`)),
-      5_000,
-    );
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      const diagnostic = stderr.trim() ? `\n${stderr.trim()}` : "";
+      reject(new Error(`Timed out waiting for ${expected}.${diagnostic}`));
+    }, 5_000);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
     child.stdout?.on("data", (chunk: Buffer) => {
       if (!chunk.toString().includes(expected)) return;
       clearTimeout(timeout);
@@ -26,7 +30,8 @@ function waitForOutput(child: ChildProcess, expected: string): Promise<void> {
     });
     child.once("exit", (code, signal) => {
       clearTimeout(timeout);
-      reject(new Error(`TUI exited before ${expected} (${code ?? signal}).`));
+      const diagnostic = stderr.trim() ? `\n${stderr.trim()}` : "";
+      reject(new Error(`TUI exited before ${expected} (${code ?? signal}).${diagnostic}`));
     });
   });
 }
@@ -46,7 +51,7 @@ describe("TUI process signals", () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "termweave-signal-test-"));
     const stopMarker = path.join(tempDir, "stopped");
     const child = spawn(
-      process.execPath,
+      "bun",
       [
         "--preload",
         path.join(import.meta.dirname, "testFixtures", "indexSignalPreload.ts"),

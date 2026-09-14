@@ -125,6 +125,15 @@ export function buildServerWsUrl(host: string, port: number, authToken?: string 
   return authToken ? `${baseUrl}?token=${encodeURIComponent(authToken)}` : baseUrl;
 }
 
+export function resolveServerAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  return (
+    env.TERMWEAVE_AUTH_TOKEN?.trim() ||
+    env.T1CODE_AUTH_TOKEN?.trim() ||
+    env.T3CODE_AUTH_TOKEN?.trim() ||
+    null
+  );
+}
+
 export function resolveAttachedServerConnection(
   env: NodeJS.ProcessEnv = process.env,
 ): AttachedServerConnection | null {
@@ -138,9 +147,11 @@ export function resolveAttachedServerConnection(
     throw new Error("T1CODE_TUI_ATTACH_ONLY requires a valid T1CODE_PORT.");
   }
 
-  const authToken = env.T1CODE_AUTH_TOKEN?.trim();
+  const authToken = resolveServerAuthToken(env);
   if (!authToken) {
-    throw new Error("T1CODE_TUI_ATTACH_ONLY requires T1CODE_AUTH_TOKEN.");
+    throw new Error(
+      "T1CODE_TUI_ATTACH_ONLY requires TERMWEAVE_AUTH_TOKEN (or a legacy auth-token variable).",
+    );
   }
 
   return {

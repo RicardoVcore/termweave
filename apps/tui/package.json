@@ -47,6 +47,7 @@
     "@termweave/client-core": "workspace:*",
     "@termweave/contracts": "workspace:*",
     "@termweave/shared": "workspace:*",
+    "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "^19.0.0",
     "tsdown": "catalog:",

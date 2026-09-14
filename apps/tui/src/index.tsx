@@ -15,6 +15,7 @@ import {
 } from "./rendererTheme";
 import { normalizeTuiThemeId, resolveTerminalThemeMode, resolveTuiTheme } from "./theme";
 import { App } from "./ui";
+import { resolveServerAuthToken } from "./serverSupervisor";
 import { buildSshAttachServerConnection, startSshAttach } from "./tuiCli";
 
 function readBooleanEnv(value: string | undefined): boolean | undefined {
@@ -95,7 +96,7 @@ sshAttach = await startSshAttach(process.argv.slice(2), { signal: sshStartup.sig
   },
 );
 if (shuttingDown) await new Promise<never>(() => {});
-const sshAuthToken = process.env.TERMWEAVE_AUTH_TOKEN?.trim() || null;
+const sshAuthToken = resolveServerAuthToken();
 const initialServerConnection = sshAttach
   ? buildSshAttachServerConnection(sshAttach, sshAuthToken)
   : undefined;
@@ -114,10 +115,10 @@ if (process.env.T1CODE_HEADLESS === "1") {
     height,
     kittyKeyboard: true,
   });
-  let unmountRoot = () => {};
+  let unmountRoot: (() => void) | null = null;
   destroyUi = () => {
     try {
-      unmountRoot();
+      unmountRoot?.();
     } catch {}
     try {
       testSetup.renderer.destroy();
@@ -155,10 +156,10 @@ if (process.env.T1CODE_HEADLESS === "1") {
     useKittyKeyboard: shouldUseKittyKeyboard() ? { events: true } : null,
     ...(!shouldDeferInitialBackground ? { backgroundColor: initialTheme.palette.canvas } : {}),
   });
-  let unmountRoot = () => {};
+  let unmountRoot: (() => void) | null = null;
   destroyUi = () => {
     try {
-      unmountRoot();
+      unmountRoot?.();
     } catch {}
     try {
       renderer.destroy();

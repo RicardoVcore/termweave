@@ -38,6 +38,23 @@ describe("SSH tunnel", () => {
     ]);
   });
 
+  it("rejects option-like SSH targets at the argv construction boundary", () => {
+    for (const target of [
+      "-oProxyCommand=evil@realhost",
+      "-oProxyCommand=evil@realhost@example.com",
+      "user@-oProxyCommand=evil",
+    ]) {
+      expect(() =>
+        buildSshTunnelArgs({
+          target,
+          localPort: 41_001,
+          remotePort: 3773,
+          controlPath: "/tmp/termweave-control",
+        }),
+      ).toThrow("Invalid SSH target");
+    }
+  });
+
   it("starts after local readiness and stops cleanly", async () => {
     const child = Object.assign(new EventEmitter(), {
       killed: false,

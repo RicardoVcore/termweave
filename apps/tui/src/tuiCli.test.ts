@@ -190,6 +190,9 @@ describe("TUI CLI", () => {
   it("keeps local startup and rejects malformed attach commands", () => {
     expect(parseSshAttachCommand([])).toBeNull();
     expect(() => parseSshAttachCommand(["attach", "ssh", "@host"])).toThrow("Invalid SSH target");
+    expect(() => parseSshAttachCommand(["attach", "ssh", "-oProxyCommand=evil@realhost"])).toThrow(
+      "Invalid SSH target",
+    );
     expect(() => parseSshAttachCommand(["attach", "ssh", "-V"])).toThrow("Invalid SSH target");
     expect(() => parseSshAttachCommand(["attach", "direct", "host"])).toThrow(
       "Usage: termweave [attach ssh user@host]",
