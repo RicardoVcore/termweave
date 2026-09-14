@@ -120,4 +120,54 @@ describe("WsTransport reconnect", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     transport.dispose();
   });
+
+  it("emits ordered state transitions across connect, drop, and reconnect", async () => {
+    const states: string[] = [];
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onStateChange: (state) => states.push(state),
+    });
+    sockets[0]?.open();
+    sockets[0]?.close();
+    await vi.advanceTimersByTimeAsync(500);
+    sockets[1]?.open();
+
+    expect(states).toEqual(["open", "closed", "reconnecting", "open"]);
+    transport.dispose();
+  });
+
+  it("stopReconnecting halts the retry loop and suspends", async () => {
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+    });
+    sockets[0]?.open();
+    sockets[0]?.close();
+
+    transport.stopReconnecting();
+    expect(transport.getState()).toBe("suspended");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sockets).toHaveLength(1);
+
+    transport.dispose();
+  });
+
+  it("reconnect resumes from suspended", async () => {
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+    });
+    sockets[0]?.open();
+    sockets[0]?.close();
+    transport.stopReconnecting();
+
+    transport.reconnect();
+    expect(sockets).toHaveLength(2);
+    sockets[1]?.open();
+    expect(transport.getState()).toBe("open");
+
+    transport.dispose();
+  });
 });

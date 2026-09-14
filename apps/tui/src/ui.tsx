@@ -132,6 +132,7 @@ import {
   type ThreadStatusPill,
   type TimelineEntry,
   WsTransport,
+  type TransportState,
   formatContextWindowTokens,
   type ContextWindowSnapshot,
   type SlashCommandDefinition,
@@ -4130,6 +4131,8 @@ export function App({
   const [serverConfig, setServerConfig] = useState<TuiServerConfig>(null);
   const [serverSettings, setServerSettings] = useState<ServerSettings | null>(null);
   const [, setStatus] = useState("Booting");
+  const [connectionState, setConnectionState] = useState<TransportState>("connecting");
+  const transportRef = useRef<WsTransport | null>(null);
   const [selectionCopyToast, setSelectionCopyToast] = useState<string | null>(null);
   const [startupIssue, setStartupIssue] = useState<string | null>(null);
   const [mainView, setMainView] = useState<MainView>("thread");
@@ -4870,7 +4873,18 @@ export function App({
         const transport = new WsTransport({
           url: server.wsUrl,
           onWarning: (message, details) => logger.log("ws.warning", { message, details }),
+          onStateChange: (state, previous) => {
+            if (disposed) return;
+            setConnectionState(state);
+            // A fresh open after any drop means we may have missed events while
+            // gone; pull a full snapshot to reconcile. The very first open
+            // (previous === "connecting") is the initial load, handled elsewhere.
+            if (state === "open" && previous !== "connecting") {
+              void refresh("reconnect");
+            }
+          },
         });
+        transportRef.current = transport;
         setServerWsUrl(server.wsUrl);
         setServerHttpOrigin(resolveHttpOriginFromWsUrl(server.wsUrl));
         const nativeBridge = createTransportNativeApi({ transport });
@@ -5025,6 +5039,7 @@ export function App({
           unsubscribeServerConfig();
           unsubscribeTerminalEvents();
           transport.dispose();
+          transportRef.current = null;
           server.stop();
         };
       } catch (error) {
@@ -7839,6 +7854,16 @@ export function App({
       source: key.source,
       sequence: key.sequence,
     });
+    // Ctrl+R toggles the reconnect loop while disconnected: cancel a running
+    // retry (suspend) or resume from a suspended state. Inert when connected.
+    if (key.ctrl && key.name === "r" && connectionState !== "open") {
+      const transport = transportRef.current;
+      if (transport) {
+        if (connectionState === "suspended") transport.reconnect();
+        else transport.stopReconnecting();
+      }
+      return;
+    }
     const shortcutCommand = resolveTuiShortcutCommand(
       {
         keyName: key.name,
@@ -12492,6 +12517,17 @@ export function App({
               minHeight: 0,
             }}
           >
+            {connectionState === "reconnecting" || connectionState === "closed" ? (
+              <text
+                content="Reconnecting to server... (Ctrl+R to stop)"
+                style={{ fg: PALETTE.warning }}
+              />
+            ) : connectionState === "suspended" ? (
+              <text
+                content="Disconnected - press Ctrl+R to reconnect"
+                style={{ fg: PALETTE.composerStop }}
+              />
+            ) : null}
             {mainView === "thread" && selectionCopyToast ? (
               <SelectionCopyToast message={selectionCopyToast} />
             ) : null}
