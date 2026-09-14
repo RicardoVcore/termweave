@@ -132,6 +132,7 @@ import {
   type ThreadStatusPill,
   type TimelineEntry,
   WsTransport,
+  type TransportState,
   formatContextWindowTokens,
   type ContextWindowSnapshot,
   type SlashCommandDefinition,
@@ -4137,6 +4138,8 @@ export function App({
   const [serverConfig, setServerConfig] = useState<TuiServerConfig>(null);
   const [serverSettings, setServerSettings] = useState<ServerSettings | null>(null);
   const [, setStatus] = useState("Booting");
+  const [connectionState, setConnectionState] = useState<TransportState>("connecting");
+  const transportRef = useRef<WsTransport | null>(null);
   const [selectionCopyToast, setSelectionCopyToast] = useState<string | null>(null);
   const [startupIssue, setStartupIssue] = useState<string | null>(null);
   const [mainView, setMainView] = useState<MainView>("thread");
@@ -4878,10 +4881,32 @@ export function App({
             port: attachedServer.port,
           });
         }
+        let connectionSuspended = false;
         const transport = new WsTransport({
           url: server.wsUrl,
           onWarning: (message, details) => logger.log("ws.warning", { message, details }),
+          onStateChange: (state) => {
+            if (disposed) return;
+            setConnectionState(state);
+            // While the user has paused reconnection, stop the snapshot-retry
+            // churn - every attempt just queues a request that times out.
+            connectionSuspended = state === "suspended";
+            if (connectionSuspended && refreshTimer !== null) {
+              clearTimeout(refreshTimer);
+              refreshTimer = null;
+            }
+          },
+          // Fired only on a re-open (auto or manual resume), never the first
+          // connect. Pull a full snapshot plus server config/settings to
+          // reconcile anything missed while disconnected.
+          onReconnect: () => {
+            if (disposed) return;
+            void refresh("reconnect");
+            void loadServerConfig();
+            void loadServerSettings();
+          },
         });
+        transportRef.current = transport;
         setServerWsUrl(server.wsUrl);
         setServerHttpOrigin(resolveHttpOriginFromWsUrl(server.wsUrl));
         const nativeBridge = createTransportNativeApi({ transport });
@@ -4891,7 +4916,7 @@ export function App({
         let refreshAttempts = 0;
 
         const scheduleRefreshRetry = (reason: string) => {
-          if (disposed || refreshTimer !== null) return;
+          if (disposed || connectionSuspended || refreshTimer !== null) return;
           refreshTimer = setTimeout(() => {
             refreshTimer = null;
             void refresh(`retry:${reason}`);
@@ -4931,48 +4956,52 @@ export function App({
         });
 
         setApi(nativeApi);
-        void nativeApi.server
-          .getConfig()
-          .then((config) => {
-            if (!disposed) {
-              setServerConfig(config);
-            }
-          })
-          .catch((error) => {
-            logger.log("serverConfig.loadFailed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-        void nativeApi.server
-          .getSettings()
-          .then((settings) => {
-            if (!disposed) {
-              setServerSettings(settings);
-              setOpenInstallProviders({
-                codex: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[0]!,
-                ),
-                claudeAgent: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[1]!,
-                ),
-                cursor: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[2]!,
-                ),
-                opencode: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[3]!,
-                ),
+        const loadServerConfig = () =>
+          nativeApi.server
+            .getConfig()
+            .then((config) => {
+              if (!disposed) {
+                setServerConfig(config);
+              }
+            })
+            .catch((error) => {
+              logger.log("serverConfig.loadFailed", {
+                error: error instanceof Error ? error.message : String(error),
               });
-            }
-          })
-          .catch((error) => {
-            logger.log("serverSettings.loadFailed", {
-              error: error instanceof Error ? error.message : String(error),
             });
-          });
+        const loadServerSettings = () =>
+          nativeApi.server
+            .getSettings()
+            .then((settings) => {
+              if (!disposed) {
+                setServerSettings(settings);
+                setOpenInstallProviders({
+                  codex: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[0]!,
+                  ),
+                  claudeAgent: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[1]!,
+                  ),
+                  cursor: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[2]!,
+                  ),
+                  opencode: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[3]!,
+                  ),
+                });
+              }
+            })
+            .catch((error) => {
+              logger.log("serverSettings.loadFailed", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+        void loadServerConfig();
+        void loadServerSettings();
         await refresh("initial");
         const unsubscribeWelcome = nativeBridge.events.onServerWelcome((payload) => {
           logger.log("server.welcome", payload as Record<string, unknown>);
@@ -5036,6 +5065,7 @@ export function App({
           unsubscribeServerConfig();
           unsubscribeTerminalEvents();
           transport.dispose();
+          transportRef.current = null;
           server.stop();
         };
       } catch (error) {
@@ -7852,6 +7882,16 @@ export function App({
       source: key.source,
       sequence: key.sequence,
     });
+    // Ctrl+R toggles the reconnect loop while disconnected: cancel a running
+    // retry (suspend) or resume from a suspended state. Inert when connected.
+    if (key.ctrl && key.name === "r" && connectionState !== "open") {
+      const transport = transportRef.current;
+      if (transport) {
+        if (connectionState === "suspended") transport.reconnect();
+        else transport.stopReconnecting();
+      }
+      return;
+    }
     const shortcutCommand = resolveTuiShortcutCommand(
       {
         keyName: key.name,
@@ -12505,6 +12545,17 @@ export function App({
               minHeight: 0,
             }}
           >
+            {connectionState === "reconnecting" || connectionState === "closed" ? (
+              <text
+                content="Reconnecting to server... (Ctrl+R to stop)"
+                style={{ fg: PALETTE.warning }}
+              />
+            ) : connectionState === "suspended" ? (
+              <text
+                content="Disconnected - press Ctrl+R to reconnect"
+                style={{ fg: PALETTE.composerStop }}
+              />
+            ) : null}
             {mainView === "thread" && selectionCopyToast ? (
               <SelectionCopyToast message={selectionCopyToast} />
             ) : null}
