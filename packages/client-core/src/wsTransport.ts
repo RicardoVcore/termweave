@@ -242,7 +242,7 @@ export class WsTransport {
       if (this.ws !== ws) {
         return;
       }
-      this.onWarning("WebSocket connection error", { type: event.type, url: this.url });
+      this.onWarning("WebSocket connection error", { type: event.type });
     };
 
     if (ws.addEventListener) {

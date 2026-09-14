@@ -247,7 +247,11 @@ import {
   shouldTrackSystemThemeMode,
 } from "./rendererTheme";
 import { resolveTuiResponsiveLayout, TUI_SIDEBAR_WIDTH } from "./responsiveLayout";
-import { resolveAttachedServerConnection, startServerSupervisor } from "./serverSupervisor";
+import {
+  resolveAttachedServerConnection,
+  startServerSupervisor,
+  type AttachedServerConnection,
+} from "./serverSupervisor";
 import { createCoalescedRefreshRunner } from "./snapshotRefresh";
 import {
   cacheRemoteAttachmentToFile,
@@ -4114,6 +4118,7 @@ export function App({
   initialTuiThemeId,
   initialSystemThemeMode,
   initialTerminalThemeColors,
+  initialServerConnection,
 }: {
   renderer: CliRenderer;
   interruptRequestToken?: number;
@@ -4122,6 +4127,7 @@ export function App({
   initialTuiThemeId?: TuiThemeId;
   initialSystemThemeMode?: TuiThemeMode | null;
   initialTerminalThemeColors?: TerminalColors | null;
+  initialServerConnection?: AttachedServerConnection;
 }) {
   const terminalRenderer = _renderer as unknown as TerminalRenderer;
   const paths = useMemo(() => resolveTuiPaths(), []);
@@ -4845,7 +4851,7 @@ export function App({
         setDiffView(prefs.diffView ?? "unified");
         setPrefsReady(true);
 
-        const attachedServer = resolveAttachedServerConnection();
+        const attachedServer = initialServerConnection ?? resolveAttachedServerConnection();
         const server = attachedServer
           ? {
               wsUrl: attachedServer.wsUrl,
@@ -5046,7 +5052,7 @@ export function App({
       clearTerminalImagePreview(terminalRenderer);
       cleanup?.();
     };
-  }, [logger, paths, terminalRenderer]);
+  }, [initialServerConnection, logger, paths, terminalRenderer]);
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId;

@@ -36,7 +36,7 @@ export interface RunningServer {
 export interface AttachedServerConnection {
   readonly host: string;
   readonly port: number;
-  readonly authToken: string;
+  readonly authToken: string | null;
   readonly wsUrl: string;
 }
 
@@ -120,8 +120,9 @@ function parseConfiguredPort(value: string | undefined): number | null {
   return port;
 }
 
-export function buildServerWsUrl(host: string, port: number, authToken: string): string {
-  return `ws://${formatHostForUrl(host)}:${port}/?token=${encodeURIComponent(authToken)}`;
+export function buildServerWsUrl(host: string, port: number, authToken?: string | null): string {
+  const baseUrl = `ws://${formatHostForUrl(host)}:${port}/`;
+  return authToken ? `${baseUrl}?token=${encodeURIComponent(authToken)}` : baseUrl;
 }
 
 export function resolveAttachedServerConnection(

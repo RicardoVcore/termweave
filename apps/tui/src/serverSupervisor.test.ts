@@ -3,7 +3,11 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveAttachedServerConnection, startServerSupervisor } from "./serverSupervisor";
+import {
+  buildServerWsUrl,
+  resolveAttachedServerConnection,
+  startServerSupervisor,
+} from "./serverSupervisor";
 
 const expectedPackagedBunCommand = () => (process.versions.bun ? process.execPath : "bun");
 
@@ -22,6 +26,10 @@ afterEach(() => {
 });
 
 describe("startServerSupervisor", () => {
+  it("builds tokenless URLs for SSH-forwarded loopback servers", () => {
+    expect(buildServerWsUrl("127.0.0.1", 43110)).toBe("ws://127.0.0.1:43110/");
+  });
+
   it("resolves attach-only server config from env", () => {
     expect(
       resolveAttachedServerConnection({
