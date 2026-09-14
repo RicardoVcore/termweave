@@ -56,6 +56,10 @@ export interface WsTransportOptions {
   /** Fired on every transport state transition, so callers can render connection
    *  status and resync after a reconnect. */
   readonly onStateChange?: (state: TransportState, previous: TransportState) => void;
+  /** Fired when the socket opens again after having been open before - i.e. a
+   *  reconnect, whether automatic or a manual reconnect() from suspend. Not fired
+   *  on the initial connection. Callers use it to resync state missed while gone. */
+  readonly onReconnect?: () => void;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -99,6 +103,7 @@ export class WsTransport {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private hasOpened = false;
   private state: TransportState = "connecting";
   private readonly url: string;
   private readonly WebSocketCtor: WebSocketCtor;
@@ -106,12 +111,14 @@ export class WsTransport {
   private readonly onStateChange:
     | ((state: TransportState, previous: TransportState) => void)
     | undefined;
+  private readonly onReconnect: (() => void) | undefined;
 
   constructor(options: WsTransportOptions) {
     this.url = options.url;
     this.WebSocketCtor = options.WebSocketCtor ?? getDefaultWebSocketCtor();
     this.onWarning = options.onWarning ?? ((message, details) => console.warn(message, details));
     this.onStateChange = options.onStateChange;
+    this.onReconnect = options.onReconnect;
     this.connect();
   }
 
@@ -234,13 +241,17 @@ export class WsTransport {
     this.setState("suspended");
   }
 
-  /** Manually (re)start connecting after a suspend or close. */
+  /** Manually (re)start connecting after a suspend or close. Closes any
+   *  in-progress socket first so a stale attempt cannot leak. */
   reconnect() {
     if (this.disposed || this.state === "open" || this.state === "connecting") return;
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    const stale = this.ws;
+    this.ws = null;
+    stale?.close();
     this.reconnectAttempt = 0;
     this.connect();
   }
@@ -268,8 +279,17 @@ export class WsTransport {
         return;
       }
       this.reconnectAttempt = 0;
+      const reopened = this.hasOpened;
+      this.hasOpened = true;
       this.setState("open");
       this.flushQueue();
+      if (reopened) {
+        try {
+          this.onReconnect?.();
+        } catch {
+          // Never let a listener break the transport.
+        }
+      }
     };
     const handleMessage = (event: { data?: unknown }) => {
       if (this.ws !== ws) {

@@ -170,4 +170,58 @@ describe("WsTransport reconnect", () => {
 
     transport.dispose();
   });
+
+  it("fires onReconnect on re-open but not on the first connect", async () => {
+    const onReconnect = vi.fn();
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onReconnect,
+    });
+    sockets[0]?.open();
+    expect(onReconnect).not.toHaveBeenCalled();
+
+    sockets[0]?.close();
+    await vi.advanceTimersByTimeAsync(500);
+    sockets[1]?.open();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    transport.dispose();
+  });
+
+  it("fires onReconnect after a manual resume from suspend", () => {
+    const onReconnect = vi.fn();
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+      onReconnect,
+    });
+    sockets[0]?.open();
+    sockets[0]?.close();
+    transport.stopReconnecting();
+
+    transport.reconnect();
+    sockets[1]?.open();
+    expect(onReconnect).toHaveBeenCalledTimes(1);
+
+    transport.dispose();
+  });
+
+  it("reconnect closes an in-progress socket instead of leaking it", async () => {
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+    });
+    sockets[0]?.open();
+    sockets[0]?.close();
+    await vi.advanceTimersByTimeAsync(500);
+    // sockets[1] is now the in-progress reconnect attempt (not yet open).
+    expect(sockets).toHaveLength(2);
+
+    transport.reconnect();
+    expect(sockets[1]?.readyState).toBe(MockWebSocket.CLOSED);
+    expect(sockets).toHaveLength(3);
+
+    transport.dispose();
+  });
 });
