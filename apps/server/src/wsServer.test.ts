@@ -551,9 +551,7 @@ function ensureParentDir(filePath: string): void {
 }
 
 function deriveServerPathsSync(baseDir: string) {
-  return Effect.runSync(
-    deriveServerPaths(baseDir).pipe(Effect.provide(NodeServices.layer)),
-  );
+  return Effect.runSync(deriveServerPaths(baseDir).pipe(Effect.provide(NodeServices.layer)));
 }
 
 describe("WebSocket Server", () => {
