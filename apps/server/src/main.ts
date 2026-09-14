@@ -8,12 +8,7 @@
  */
 import { Config, Data, Effect, Layer, Option, Schema, Context } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import {
-  DEFAULT_PORT,
-  deriveServerPaths,
-  ServerConfig,
-  type ServerConfigShape,
-} from "./config";
+import { DEFAULT_PORT, deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config";
 import { fixPath, resolveBaseDir } from "./os-jank";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
@@ -78,7 +73,6 @@ export interface CliConfigShape {
    * Apply OS-specific PATH normalization.
    */
   readonly fixPath: Effect.Effect<void>;
-
 }
 
 /**

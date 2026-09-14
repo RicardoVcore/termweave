@@ -6,13 +6,13 @@ Use this when local Termweave TUI connects to Termweave server running on local 
 
 The Termweave CLI accepts the following configuration options, available either as CLI flags or environment variables:
 
-| CLI flag                | Env var               | Notes                                                                                |
-| ----------------------- | --------------------- | ------------------------------------------------------------------------------------ |
-| `--port <number>`       | `T3CODE_PORT`         | HTTP/WebSocket port.                                                                 |
-| `--host <address>`      | `T3CODE_HOST`         | Bind interface/address.                                                              |
-| `--home-dir <path>`     | `T3CODE_HOME`         | Base directory.                                                                      |
-| `--auth-token <token>`  | `T3CODE_AUTH_TOKEN`   | WebSocket auth token. Use this for standard CLI and remote-server flows.             |
-| `--bootstrap-fd <fd>`   | `T3CODE_BOOTSTRAP_FD` | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
+| CLI flag               | Env var               | Notes                                                                                |
+| ---------------------- | --------------------- | ------------------------------------------------------------------------------------ |
+| `--port <number>`      | `T3CODE_PORT`         | HTTP/WebSocket port.                                                                 |
+| `--host <address>`     | `T3CODE_HOST`         | Bind interface/address.                                                              |
+| `--home-dir <path>`    | `T3CODE_HOME`         | Base directory.                                                                      |
+| `--auth-token <token>` | `T3CODE_AUTH_TOKEN`   | WebSocket auth token. Use this for standard CLI and remote-server flows.             |
+| `--bootstrap-fd <fd>`  | `T3CODE_BOOTSTRAP_FD` | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
 
 > TIP: Use the `--help` flag to see all available options and their descriptions.
 
