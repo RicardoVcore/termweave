@@ -24,7 +24,7 @@ export interface SshTunnelDependencies {
   readonly spawnImpl?: (
     command: string,
     args: string[],
-    options: { readonly stdio: "inherit" },
+    options: { readonly stdio: "inherit"; readonly env: NodeJS.ProcessEnv },
   ) => ChildProcess;
   readonly reservePort?: () => Promise<number>;
   readonly confirmForward?: (input: {
@@ -183,7 +183,12 @@ export async function startSshTunnel(
     child = (dependencies.spawnImpl ?? spawn)(
       "ssh",
       buildSshTunnelArgs({ ...input, localPort, controlPath }),
-      { stdio: "inherit" },
+      // Force host-key/password/passphrase prompts onto the inherited terminal so
+      // OpenSSH owns the secret and Termweave never reads or stores it. Never spawn
+      // an SSH_ASKPASS helper (which would put us in the password path).
+      // ponytail: SSH_ASKPASS_REQUIRE needs OpenSSH >= 8.4; older ssh ignores it and
+      // still prompts on the tty, so no fallback needed.
+      { stdio: "inherit", env: { ...process.env, SSH_ASKPASS_REQUIRE: "never" } },
     );
   } catch (error) {
     await fs.rm(controlDir, { recursive: true, force: true });

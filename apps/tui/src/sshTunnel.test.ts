@@ -45,13 +45,13 @@ describe("SSH tunnel", () => {
       signalCode: null,
       kill: noopKill,
     });
-    let spawned: { command: string; args: string[] } | undefined;
+    let spawned: { command: string; args: string[]; env: NodeJS.ProcessEnv } | undefined;
     const tunnel = await startSshTunnel(
       { target: "vps", remotePort: 3773 },
       {
         reservePort: async () => 41002,
-        spawnImpl: (command, args) => {
-          spawned = { command, args };
+        spawnImpl: (command, args, options) => {
+          spawned = { command, args, env: options.env };
           return child as never;
         },
         confirmForward: async () => undefined,
@@ -60,7 +60,9 @@ describe("SSH tunnel", () => {
     );
 
     expect(tunnel.localPort).toBe(41002);
-    expect(spawned).toEqual({
+    // Prompts stay on the terminal; no askpass helper is ever spawned.
+    expect(spawned?.env.SSH_ASKPASS_REQUIRE).toBe("never");
+    expect(spawned).toMatchObject({
       command: "ssh",
       args: [
         "-N",

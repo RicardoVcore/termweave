@@ -15,7 +15,10 @@ afterEach(() => {
 
 function waitForOutput(child: ChildProcess, expected: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${expected}.`)), 5_000);
+    const timeout = setTimeout(
+      () => reject(new Error(`Timed out waiting for ${expected}.`)),
+      5_000,
+    );
     child.stdout?.on("data", (chunk: Buffer) => {
       if (!chunk.toString().includes(expected)) return;
       clearTimeout(timeout);
