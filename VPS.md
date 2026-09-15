@@ -9,7 +9,7 @@ No browser or Electron process runs on VPS.
 
 ## Direct install
 
-Requirements: Linux, Node.js 24.13+, Bun 1.3.9+, Git, and native build tools for
+Requirements: Linux, Node.js 24.13.1+, Bun 1.3.9+, Git, and native build tools for
 `node-pty` (`gcc`, `g++`, `make`, and Python). Node.js must be at `/usr/bin/node`
 for the systemd unit below (or set `TERMWEAVE_NODE_BIN` when running the
 verification script).
