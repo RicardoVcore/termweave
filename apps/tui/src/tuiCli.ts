@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { ConnectionProfile } from "./connectionProfiles";
 import { buildServerWsUrl, type AttachedServerConnection } from "./serverSupervisor";
 import { startSshTunnel, type SshTunnel, type SshTunnelInput } from "./sshTunnel";
@@ -190,8 +191,8 @@ function classifyIpv4(host: string): DirectHostClass | null {
 }
 
 function classifyIpv6(host: string): DirectHostClass | null {
+  if (isIP(host) !== 6) return null; // reject malformed IPv6 literals
   const value = host.toLowerCase();
-  if (!value.includes(":")) return null;
   if (value === "::1") return "loopback";
   if (/^fe[89ab]/u.test(value)) return "private"; // fe80::/10 link-local
   if (/^f[cd]/u.test(value)) return "private"; // fc00::/7 ULA, includes Tailscale fd7a:...
@@ -223,21 +224,32 @@ function parseDirectPort(value: string): number {
   return port;
 }
 
-function splitHostPort(input: string): { host: string; port: number } {
+function splitHostPort(input: string): { host: string; port: number; bracketed: boolean } {
   if (input.startsWith("[")) {
     const close = input.indexOf("]");
     if (close === -1) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
     const host = input.slice(1, close);
     const after = input.slice(close + 1);
+    // Only an empty suffix or an explicit ":port" may follow a bracketed host.
+    if (after !== "" && !after.startsWith(":")) {
+      throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+    }
     const port = after.startsWith(":") ? parseDirectPort(after.slice(1)) : DEFAULT_REMOTE_PORT;
-    return { host, port };
+    return { host, port, bracketed: true };
   }
-  // Bare IPv6 (more than one colon, no brackets): no port allowed.
-  if ((input.match(/:/gu) ?? []).length > 1) return { host: input, port: DEFAULT_REMOTE_PORT };
   const separator = input.lastIndexOf(":");
-  if (separator === -1) return { host: input, port: DEFAULT_REMOTE_PORT };
-  return { host: input.slice(0, separator), port: parseDirectPort(input.slice(separator + 1)) };
+  if (separator === -1) return { host: input, port: DEFAULT_REMOTE_PORT, bracketed: false };
+  return {
+    host: input.slice(0, separator),
+    port: parseDirectPort(input.slice(separator + 1)),
+    bracketed: false,
+  };
 }
+
+// Unbracketed hosts are IPv4 literals or DNS names; both use this character set.
+// This rejects userinfo (@), path/query/fragment, and backslashes that could
+// otherwise smuggle a different authority into the WebSocket URL.
+const UNBRACKETED_HOST = /^[a-zA-Z0-9.-]+$/u;
 
 export function parseDirectAttachCommand(args: readonly string[]): DirectAttachTarget | null {
   if (args.length === 0) return null;
@@ -257,8 +269,13 @@ export function parseDirectAttachCommand(args: readonly string[]): DirectAttachT
   }
   rest = rest.replace(/\/+$/u, "");
 
-  const { host, port } = splitHostPort(rest);
-  if (!host || host.startsWith("-")) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  const { host, port, bracketed } = splitHostPort(rest);
+  if (!host) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  if (bracketed) {
+    if (isIP(host) !== 6) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  } else if (!UNBRACKETED_HOST.test(host)) {
+    throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  }
   return { scheme, host, port, ...describeDirectHost(host) };
 }
 

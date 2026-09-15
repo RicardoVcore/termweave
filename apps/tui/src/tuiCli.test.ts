@@ -247,6 +247,21 @@ describe("TUI CLI", () => {
       expect(() => parseDirectAttachCommand(["attach", "direct", "host:99999"])).toThrow(
         "Invalid direct port",
       );
+      // Injection / smuggling attempts must not slip through as a different authority.
+      for (const target of [
+        "[::1]evil", // trailing garbage after bracketed host
+        "127.0.0.1@8.8.8.8", // userinfo hiding a public host
+        "ws://127.0.0.1@8.8.8.8",
+        "host/path",
+        "host?token=x",
+        "host#frag",
+        "host\\evil",
+        "[fd-not-an-ip:thing]", // malformed IPv6 literal
+      ]) {
+        expect(() => parseDirectAttachCommand(["attach", "direct", target])).toThrow(
+          "Invalid direct",
+        );
+      }
     });
 
     it("requires a token for every non-loopback bind, but not for loopback", () => {
