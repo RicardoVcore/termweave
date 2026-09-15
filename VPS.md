@@ -9,11 +9,18 @@ No browser or Electron process runs on VPS.
 
 ## Direct install
 
-Requirements: Linux, Node.js 22+, Bun 1.3.9+, Git, and native build tools for
-`node-pty` (`gcc`, `g++`, `make`, and Python).
+Requirements: Linux, Node.js 24.13.x (>= 24.13.1, < 25 - the range both the
+root build engine `^24.13.1` and the server runtime accept), Bun 1.3.9+, Git,
+and native build tools for `node-pty` (`gcc`, `g++`, `make`, and Python).
+Node.js must be at `/usr/bin/node` for the systemd unit below (or set
+`TERMWEAVE_NODE_BIN` when running the verification script). Install Bun on a
+system-wide path so the `termweave` service account can also run it during
+updates:
 
 ```bash
 sudo apt install git build-essential python3
+curl -fsSL https://bun.sh/install | bash          # installs to ~/.bun
+sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 sudo mkdir -p /opt/termweave
 sudo chown "$USER" /opt/termweave
 git clone https://github.com/RicardoVcore/termweave /opt/termweave
@@ -63,10 +70,182 @@ sudo systemctl status termweave-server
 sudo journalctl -u termweave-server -f
 ```
 
-Updates: stop service, update source, run frozen install and build, then start
-service. Roll back by checking out previous commit and rebuilding. Back up
-`/var/lib/termweave` before updates; it contains SQLite state, provider data,
-attachments, and logs.
+## Firewall
+
+The auth token gates WebSocket access but does not encrypt transport, so do not
+leave the port open to the public internet. Prefer binding to a Tailnet or LAN
+address (`T3CODE_HOST`), and restrict the port at the firewall to the networks
+you actually connect from.
+
+Default remote path is SSH (`termweave attach ssh`), which needs no extra
+inbound rule beyond port 22 - the server stays on loopback. Only open the
+Termweave port for direct/Tailnet attach.
+
+`ufw` (Debian/Ubuntu). **Allow your real SSH port before enabling the firewall,
+or you can lock yourself out** - if `sshd` listens on a non-default port, use
+that instead of `22`, and keep a second console/session open until you have
+confirmed you can still reach the box:
+
+```bash
+# Replace 22 with your real sshd port if you changed it (check: sudo ss -ltnp | grep sshd)
+sudo ufw allow 22/tcp
+sudo ufw allow from 100.64.0.0/10 to any port 3773 proto tcp
+sudo ufw default deny incoming
+sudo ufw status verbose   # confirm your SSH port is listed BEFORE enabling
+sudo ufw enable
+```
+
+Swap `100.64.0.0/10` for your LAN/VPN CIDR (for example `192.168.1.0/24`) if you
+attach over that instead.
+
+`nftables` equivalent. Loaded with `nft -f` so it is atomic and idempotent (the
+`table {}` / `delete table` preamble makes a rerun replace the table cleanly
+instead of duplicating rules). `tcp dport 22` matches SSH over both IPv4 and
+IPv6 in the `inet` family; `icmpv6` is allowed so IPv6 neighbour discovery keeps
+working on a dual-stack VPS:
+
+```bash
+sudo nft -f - <<'EOF'
+table inet termweave { }
+delete table inet termweave
+table inet termweave {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+    meta l4proto ipv6-icmp accept
+    tcp dport 22 accept
+    ip  saddr 100.64.0.0/10        tcp dport 3773 accept
+    ip6 saddr fd7a:115c:a1e0::/48  tcp dport 3773 accept
+  }
+}
+EOF
+```
+
+Swap the `saddr` CIDRs for your own tailnet/LAN ranges. Persist across reboot
+(the redirect, not a `tee` pipe, so an `nft` failure is not masked) and enable
+the service:
+
+```bash
+sudo sh -c 'nft list ruleset > /etc/nftables.conf'
+sudo systemctl enable nftables
+```
+
+The `policy drop` filters _all_ input, so keep the SSH, loopback, and icmpv6
+rules; adapt if you already manage another table.
+
+## Operations
+
+All data lives under `T3CODE_HOME` (`/var/lib/termweave` for the systemd unit):
+
+- `userdata/state.sqlite` - event-sourced SQLite state (threads, provider runs).
+- `userdata/attachments/` - stored attachments.
+- `userdata/secrets/`, `userdata/settings.json`, `userdata/keybindings.json`.
+- `userdata/logs/` - `server.log`, `server.trace.ndjson`, `provider/`, `terminals/`.
+- `caches/` - provider status cache (safe to discard).
+- `worktrees/` - provider working trees.
+
+Logs:
+
+```bash
+sudo journalctl -u termweave-server -f          # follow
+sudo journalctl -u termweave-server --since today
+```
+
+Backup. Stop first for a consistent SQLite snapshot; abort if the stop fails
+(so a live DB is never archived), restart afterwards whatever `tar` did, and
+fail (non-zero exit) if either `tar` or the restart failed. The archive contains
+`userdata/secrets/`, so it is locked to `600` (the `700` backup dir already
+keeps it root-only):
+
+```bash
+sudo install -d -m 700 /var/backups/termweave
+sudo systemctl stop termweave-server || { echo "stop failed, not backing up a live DB"; exit 1; }
+backup="/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz"
+sudo tar czf "$backup" -C /var/lib termweave; rc=$?
+sudo chmod 600 "$backup" 2>/dev/null
+sudo systemctl start termweave-server; start_rc=$?
+[ "$rc" -eq 0 ] && echo "backup ok: $backup" || echo "BACKUP FAILED (rc=$rc)"
+[ "$start_rc" -eq 0 ] || { echo "WARNING: service did not restart"; exit 1; }
+[ "$rc" -eq 0 ]
+```
+
+Update. Each step must succeed before the next, so the service only restarts on
+a good build; if the build fails the service stays stopped - fix it or roll back
+before starting. The `termweave` account has no `~/.bun`, so this needs Bun on a
+system-wide path (see Direct install) and sets `HOME`/`PATH` explicitly:
+
+```bash
+sudo systemctl stop termweave-server &&
+  sudo -u termweave env PATH=/usr/local/bin:/usr/bin HOME=/var/lib/termweave bash -euc '
+    cd /opt/termweave &&
+    git fetch origin &&
+    git checkout <new-commit-or-tag> &&
+    bun install --frozen-lockfile &&
+    bun run build
+  ' && sudo systemctl start termweave-server && sudo bash /opt/termweave/deploy/verify-server.sh
+```
+
+Roll back to the previous commit and rebuild, same fail-fast chaining:
+
+```bash
+sudo systemctl stop termweave-server &&
+  sudo -u termweave env PATH=/usr/local/bin:/usr/bin HOME=/var/lib/termweave bash -euc '
+    cd /opt/termweave &&
+    git checkout <previous-commit> &&
+    bun install --frozen-lockfile &&
+    bun run build
+  ' && sudo systemctl start termweave-server
+```
+
+Restore state from a backup **only** when a schema/data migration left the old
+code incompatible with the current state (a plain code rollback does not need
+it). Extract into a staging directory and swap it in, so no stale files from the
+current deployment (for example SQLite WAL/sidecar files) survive the restore.
+The previous state is kept at `/var/lib/termweave.old`:
+
+```bash
+sudo systemctl stop termweave-server &&
+  sudo rm -rf /var/lib/termweave.restore &&
+  sudo mkdir -p /var/lib/termweave.restore &&
+  sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib/termweave.restore &&
+  sudo test -f /var/lib/termweave.restore/termweave/userdata/state.sqlite &&
+  sudo rm -rf /var/lib/termweave.old &&
+  sudo mv /var/lib/termweave /var/lib/termweave.old &&
+  sudo mv /var/lib/termweave.restore/termweave /var/lib/termweave &&
+  sudo chown -R termweave:termweave /var/lib/termweave &&
+  sudo systemctl start termweave-server
+```
+
+Any step failing stops the chain before the swap, so the live directory is only
+replaced once a validated copy is in place. Remove `/var/lib/termweave.old` once
+the restored service is confirmed healthy.
+
+Always back up before an update so this restore is available if a migration is
+involved.
+
+## Verify the deployment
+
+After install or update, run the mechanical health check on the VPS:
+
+```bash
+sudo bash /opt/termweave/deploy/verify-server.sh
+```
+
+It checks the Node path and version, that the native `node-pty` module loads,
+the service user, data-directory ownership and writability, the installed unit,
+the service state, and the listening port. Exit code is non-zero if any check
+fails.
+
+Two properties need a manual check because they depend on live state:
+
+- **SIGTERM flushes state.** Open a thread from the TUI, then
+  `sudo systemctl stop termweave-server`. The stop should return promptly (the
+  server runs finalizers on SIGTERM); the journal should show a clean shutdown,
+  not a `SIGKILL` timeout.
+- **Restart preserves state.** Start the service again and reconnect the TUI.
+  The thread and its history should still be present - they are event-sourced in
+  the SQLite state under `/var/lib/termweave`.
 
 ## Token rotation and revocation
 
