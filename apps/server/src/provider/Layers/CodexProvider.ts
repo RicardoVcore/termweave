@@ -21,6 +21,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { loadCodexModelsFromCache } from "../Drivers/CodexModelsCache.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
@@ -303,10 +304,16 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
+  // Older codex builds (and some account types) return no models over the
+  // app-server RPC; fall back to codex's own on-disk catalog so the picker
+  // still reflects the real, current models.
+  const resolvedModels =
+    models.length > 0 ? models : yield* loadCodexModelsFromCache(input.homePath);
+
   return {
     account: accountResponse,
     version,
-    models: appendCustomCodexModels(models, input.customModels ?? []),
+    models: appendCustomCodexModels(resolvedModels, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
 });
