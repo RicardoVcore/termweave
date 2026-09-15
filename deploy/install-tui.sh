@@ -35,8 +35,10 @@ fi
 
 if [ "${TERMWEAVE_SKIP_DEPS:-0}" != 1 ] && command -v apt-get >/dev/null 2>&1; then
   log "build dependencies for native node-pty (local mode)"
-  sudo apt-get update -y
-  sudo apt-get install -y build-essential python3
+  SUDO=""
+  [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+  $SUDO apt-get update -y
+  $SUDO apt-get install -y build-essential python3
 fi
 
 log "install dependencies (builds native node-pty)"

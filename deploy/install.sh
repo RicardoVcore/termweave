@@ -54,7 +54,7 @@ node_ok() {
 
 log "build dependencies"
 $SUDO apt-get update -y
-$SUDO apt-get install -y git curl build-essential python3
+$SUDO apt-get install -y git curl build-essential python3 openssl
 
 if [ "${TERMWEAVE_SKIP_RUNTIME:-0}" != 1 ]; then
   if node_ok; then
@@ -100,31 +100,45 @@ $SUDO chown -R "$(id -un)":"$(id -gn)" "$INSTALL_DIR" # build as the invoking us
 (cd "$INSTALL_DIR" && "$BUN" install --frozen-lockfile && "$BUN" run build)
 
 log "service environment (/etc/termweave/server.env)"
+# Reconcile host/port every run and preserve an existing token (unless
+# TERMWEAVE_AUTH_TOKEN overrides). Ensure a token whenever the bind is
+# non-loopback. Always mode 600 - it holds the token.
+EXISTING_TOKEN=""
 if [ -f /etc/termweave/server.env ]; then
-  log "keeping existing /etc/termweave/server.env"
-else
-  TOKEN="${TERMWEAVE_AUTH_TOKEN:-}"
-  if [ -z "$TOKEN" ] && ! is_loopback "$HOST"; then TOKEN="$(openssl rand -hex 32)"; fi
-  {
-    echo "T3CODE_HOST=${HOST}"
-    echo "T3CODE_PORT=${PORT}"
-    [ -n "$TOKEN" ] && echo "TERMWEAVE_AUTH_TOKEN=${TOKEN}"
-  } | $SUDO tee /etc/termweave/server.env >/dev/null
-  $SUDO chmod 600 /etc/termweave/server.env
-  [ -n "$TOKEN" ] && log "generated auth token (stored in /etc/termweave/server.env)"
+  EXISTING_TOKEN="$($SUDO grep -sE '^TERMWEAVE_AUTH_TOKEN=' /etc/termweave/server.env | head -1 | cut -d= -f2- || true)"
 fi
+TOKEN="${TERMWEAVE_AUTH_TOKEN:-$EXISTING_TOKEN}"
+if [ -z "$TOKEN" ] && ! is_loopback "$HOST"; then
+  TOKEN="$(openssl rand -hex 32)"
+  log "generated auth token (stored in /etc/termweave/server.env)"
+fi
+$SUDO install -m 600 /dev/null /etc/termweave/server.env # create 600 before writing content
+{
+  echo "T3CODE_HOST=${HOST}"
+  echo "T3CODE_PORT=${PORT}"
+  [ -n "$TOKEN" ] && echo "TERMWEAVE_AUTH_TOKEN=${TOKEN}"
+} | $SUDO tee /etc/termweave/server.env >/dev/null
 
 log "hand the install to the service user and enable the unit"
 $SUDO chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-$SUDO install -m 644 "$INSTALL_DIR/deploy/systemd/termweave-server.service" \
-  /etc/systemd/system/termweave-server.service
+# Render the unit with the configured user/paths (the template ships defaults).
+$SUDO sed \
+  -e "s|^User=.*|User=${SERVICE_USER}|" \
+  -e "s|^Group=.*|Group=${SERVICE_USER}|" \
+  -e "s|^WorkingDirectory=.*|WorkingDirectory=${INSTALL_DIR}|" \
+  -e "s|^Environment=T3CODE_HOME=.*|Environment=T3CODE_HOME=${DATA_DIR}|" \
+  -e "s|^ExecStart=.*|ExecStart=/usr/bin/node ${INSTALL_DIR}/apps/server/dist/index.mjs|" \
+  -e "s|^ReadWritePaths=.*|ReadWritePaths=${DATA_DIR}|" \
+  "$INSTALL_DIR/deploy/systemd/termweave-server.service" |
+  $SUDO tee /etc/systemd/system/termweave-server.service >/dev/null
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now termweave-server
-
-log "verify"
-$SUDO bash "$INSTALL_DIR/deploy/verify-server.sh" || true
 
 log "done - logs: ${SUDO:+sudo }journalctl -u termweave-server -f"
 if ! is_loopback "$HOST"; then
   echo "Non-loopback bind (${HOST}): restrict the port at the firewall (see VPS.md)."
 fi
+
+log "verify"
+$SUDO env TERMWEAVE_USER="$SERVICE_USER" TERMWEAVE_INSTALL_DIR="$INSTALL_DIR" \
+  T3CODE_HOME="$DATA_DIR" bash "$INSTALL_DIR/deploy/verify-server.sh" # exit status propagates
