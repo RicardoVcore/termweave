@@ -294,21 +294,25 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, liveModels] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
-      requestAllCodexModels(client),
+      // Best-effort: some codex builds reject `model/list`, and a thrown error
+      // must not abort the whole probe (which would leave models empty).
+      requestAllCodexModels(client).pipe(
+        Effect.catch(() => Effect.succeed([] as ReadonlyArray<ServerProviderModel>)),
+      ),
     ],
     { concurrency: "unbounded" },
   );
 
-  // Older codex builds (and some account types) return no models over the
-  // app-server RPC; fall back to codex's own on-disk catalog so the picker
-  // still reflects the real, current models.
-  const resolvedModels =
-    models.length > 0 ? models : yield* loadCodexModelsFromCache(input.homePath);
+  // Prefer codex's own on-disk catalog: it is the fresh, account-correct model
+  // list (the app-server RPC is often stale or empty). Fall back to whatever
+  // the RPC returned only when the cache is unavailable.
+  const cacheModels = yield* loadCodexModelsFromCache(input.homePath);
+  const resolvedModels = cacheModels.length > 0 ? cacheModels : liveModels;
 
   return {
     account: accountResponse,
@@ -334,7 +338,11 @@ const makePendingCodexProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = emptyCodexModelsFromSettings(codexSettings);
+    const cacheModels = yield* loadCodexModelsFromCache(codexSettings.homePath);
+    const models =
+      cacheModels.length > 0
+        ? appendCustomCodexModels(cacheModels, codexSettings.customModels)
+        : emptyCodexModelsFromSettings(codexSettings);
 
     if (!codexSettings.enabled) {
       return buildServerProvider({
@@ -418,7 +426,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   ChildProcessSpawner.ChildProcessSpawner
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const emptyModels = emptyCodexModelsFromSettings(codexSettings);
+  // Seed models from codex's on-disk catalog so the picker shows the real,
+  // current models even when the probe is disabled, fails, or times out.
+  const cacheModels = yield* loadCodexModelsFromCache(codexSettings.homePath);
+  const emptyModels =
+    cacheModels.length > 0
+      ? appendCustomCodexModels(cacheModels, codexSettings.customModels)
+      : emptyCodexModelsFromSettings(codexSettings);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
