@@ -131,7 +131,7 @@ sudo sh -c 'nft list ruleset > /etc/nftables.conf'
 sudo systemctl enable nftables
 ```
 
-The `policy drop` filters *all* input, so keep the SSH, loopback, and icmpv6
+The `policy drop` filters _all_ input, so keep the SSH, loopback, and icmpv6
 rules; adapt if you already manage another table.
 
 ## Operations

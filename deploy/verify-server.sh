@@ -125,8 +125,14 @@ if command -v systemctl >/dev/null 2>&1; then
   check_prop User "${SERVICE_USER}" eq
   check_prop Group "${SERVICE_USER}" eq
   check_prop WorkingDirectory "${INSTALL_DIR}" eq
-  # ExecStart must run the same Node binary this script validated, on the server entry.
-  check_prop ExecStart "${NODE_BIN}" contains
+  # ExecStart executable must be exactly NODE_BIN (systemd reports it as
+  # `path=<bin> ;`, so match that token - substring would accept /usr/bin/nodejs
+  # for /usr/bin/node). The server entry is an argument, matched by path.
+  execstart="$(systemctl show -p ExecStart --value "${SERVICE}" 2>/dev/null)"
+  case "${execstart}" in
+  *"path=${NODE_BIN} "*) pass "unit ExecStart runs ${NODE_BIN}" ;;
+  *) bad "unit ExecStart executable is not ${NODE_BIN} (got: ${execstart})" ;;
+  esac
   check_prop ExecStart "${SERVER_ENTRY}" contains
 
   if systemctl is-active --quiet "${SERVICE}"; then
