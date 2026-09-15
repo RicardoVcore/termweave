@@ -9,8 +9,10 @@ No browser or Electron process runs on VPS.
 
 ## Direct install
 
-Requirements: Linux, Node.js 22+, Bun 1.3.9+, Git, and native build tools for
-`node-pty` (`gcc`, `g++`, `make`, and Python).
+Requirements: Linux, Node.js 24.10+, Bun 1.3.9+, Git, and native build tools for
+`node-pty` (`gcc`, `g++`, `make`, and Python). Node.js must be at `/usr/bin/node`
+for the systemd unit below (or set `TERMWEAVE_NODE_BIN` when running the
+verification script).
 
 ```bash
 sudo apt install git build-essential python3
@@ -74,28 +76,50 @@ Default remote path is SSH (`termweave attach ssh`), which needs no extra
 inbound rule beyond port 22 - the server stays on loopback. Only open the
 Termweave port for direct/Tailnet attach.
 
-`ufw` (Debian/Ubuntu), allowing only the Tailscale CGNAT range:
+`ufw` (Debian/Ubuntu). **Allow your real SSH port before enabling the firewall,
+or you can lock yourself out** - if `sshd` listens on a non-default port, use
+that instead of `22`, and keep a second console/session open until you have
+confirmed you can still reach the box:
 
 ```bash
-sudo ufw default deny incoming
+# Replace 22 with your real sshd port if you changed it (check: sudo ss -ltnp | grep sshd)
 sudo ufw allow 22/tcp
 sudo ufw allow from 100.64.0.0/10 to any port 3773 proto tcp
+sudo ufw default deny incoming
+sudo ufw status verbose   # confirm your SSH port is listed BEFORE enabling
 sudo ufw enable
-sudo ufw status verbose
 ```
 
 Swap `100.64.0.0/10` for your LAN/VPN CIDR (for example `192.168.1.0/24`) if you
-attach over that instead. `nftables` equivalent:
+attach over that instead.
+
+`nftables` equivalent. This creates the table and chain (a bare VPS has neither),
+keeps established traffic, and allows the Termweave port only from the tailnet:
 
 ```bash
-sudo nft add rule inet filter input tcp dport 3773 ip saddr 100.64.0.0/10 accept
-sudo nft add rule inet filter input tcp dport 3773 drop
+sudo nft add table inet termweave
+sudo nft add chain inet termweave input '{ type filter hook input priority 0; policy drop; }'
+sudo nft add rule inet termweave input ct state established,related accept
+sudo nft add rule inet termweave input iif lo accept
+sudo nft add rule inet termweave input tcp dport 22 accept
+sudo nft add rule inet termweave input ip saddr 100.64.0.0/10 tcp dport 3773 accept
 ```
+
+Persist across reboot with `sudo nft list ruleset | sudo tee /etc/nftables.conf`
+and `sudo systemctl enable nftables`. Note the `policy drop` above filters *all*
+input, so keep the SSH and loopback rules; adapt if you already manage
+`inet filter`.
 
 ## Operations
 
-Data paths (all under `T3CODE_HOME`, `/var/lib/termweave` for the systemd unit):
-SQLite state, provider data, attachments, and logs.
+All data lives under `T3CODE_HOME` (`/var/lib/termweave` for the systemd unit):
+
+- `userdata/state.sqlite` - event-sourced SQLite state (threads, provider runs).
+- `userdata/attachments/` - stored attachments.
+- `userdata/secrets/`, `userdata/settings.json`, `userdata/keybindings.json`.
+- `userdata/logs/` - `server.log`, `server.trace.ndjson`, `provider/`, `terminals/`.
+- `caches/` - provider status cache (safe to discard).
+- `worktrees/` - provider working trees.
 
 Logs:
 
@@ -104,36 +128,59 @@ sudo journalctl -u termweave-server -f          # follow
 sudo journalctl -u termweave-server --since today
 ```
 
-Backup (stop first for a consistent SQLite snapshot):
+Backup. Stop first for a consistent SQLite snapshot; the `trap` restarts the
+service even if `tar` fails:
+
+```bash
+sudo install -d -m 700 /var/backups/termweave
+sudo systemctl stop termweave-server
+trap 'sudo systemctl start termweave-server' EXIT
+sudo tar czf "/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz" -C /var/lib termweave
+```
+
+(The `trap` fires when the shell/session ends; in a script use `trap ... EXIT`
+around the `tar`.)
+
+Update. Each step must succeed before the next, so the service only restarts on
+a good build; if the build fails the service stays stopped - fix it or roll back
+before starting:
 
 ```bash
 sudo systemctl stop termweave-server
-sudo tar czf "/var/backups/termweave-$(date +%F).tar.gz" -C /var/lib termweave
-sudo systemctl start termweave-server
+sudo -u termweave bash -euc '
+  cd /opt/termweave &&
+  git fetch origin &&
+  git checkout <new-commit-or-tag> &&
+  bun install --frozen-lockfile &&
+  bun run build
+' && sudo systemctl start termweave-server && sudo bash /opt/termweave/deploy/verify-server.sh
 ```
 
-Update:
+Roll back to the previous commit and rebuild, same fail-fast chaining:
 
 ```bash
 sudo systemctl stop termweave-server
-sudo -u termweave git -C /opt/termweave fetch origin
-sudo -u termweave git -C /opt/termweave checkout <new-commit-or-tag>
-sudo -u termweave bash -c 'cd /opt/termweave && bun install --frozen-lockfile && bun run build'
-sudo systemctl start termweave-server
-sudo bash /opt/termweave/deploy/verify-server.sh
+sudo -u termweave bash -euc '
+  cd /opt/termweave &&
+  git checkout <previous-commit> &&
+  bun install --frozen-lockfile &&
+  bun run build
+' && sudo systemctl start termweave-server
 ```
 
-Roll back: check out the previous commit and rebuild, same steps:
+Restore state from a backup **only** when a schema/data migration left the old
+code incompatible with the current state (a plain code rollback does not need
+it). This overwrites `/var/lib/termweave` - destructive:
 
 ```bash
 sudo systemctl stop termweave-server
-sudo -u termweave git -C /opt/termweave checkout <previous-commit>
-sudo -u termweave bash -c 'cd /opt/termweave && bun install --frozen-lockfile && bun run build'
+sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib
+sudo chown -R termweave:termweave /var/lib/termweave
 sudo systemctl start termweave-server
 ```
 
-Back up `/var/lib/termweave` before every update so a rollback can restore state
-if a migration is involved.
+Always back up before an update so this restore is available if a migration is
+involved.
 
 ## Verify the deployment
 
