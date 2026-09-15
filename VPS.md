@@ -63,10 +63,100 @@ sudo systemctl status termweave-server
 sudo journalctl -u termweave-server -f
 ```
 
-Updates: stop service, update source, run frozen install and build, then start
-service. Roll back by checking out previous commit and rebuilding. Back up
-`/var/lib/termweave` before updates; it contains SQLite state, provider data,
-attachments, and logs.
+## Firewall
+
+The auth token gates WebSocket access but does not encrypt transport, so do not
+leave the port open to the public internet. Prefer binding to a Tailnet or LAN
+address (`T3CODE_HOST`), and restrict the port at the firewall to the networks
+you actually connect from.
+
+Default remote path is SSH (`termweave attach ssh`), which needs no extra
+inbound rule beyond port 22 - the server stays on loopback. Only open the
+Termweave port for direct/Tailnet attach.
+
+`ufw` (Debian/Ubuntu), allowing only the Tailscale CGNAT range:
+
+```bash
+sudo ufw default deny incoming
+sudo ufw allow 22/tcp
+sudo ufw allow from 100.64.0.0/10 to any port 3773 proto tcp
+sudo ufw enable
+sudo ufw status verbose
+```
+
+Swap `100.64.0.0/10` for your LAN/VPN CIDR (for example `192.168.1.0/24`) if you
+attach over that instead. `nftables` equivalent:
+
+```bash
+sudo nft add rule inet filter input tcp dport 3773 ip saddr 100.64.0.0/10 accept
+sudo nft add rule inet filter input tcp dport 3773 drop
+```
+
+## Operations
+
+Data paths (all under `T3CODE_HOME`, `/var/lib/termweave` for the systemd unit):
+SQLite state, provider data, attachments, and logs.
+
+Logs:
+
+```bash
+sudo journalctl -u termweave-server -f          # follow
+sudo journalctl -u termweave-server --since today
+```
+
+Backup (stop first for a consistent SQLite snapshot):
+
+```bash
+sudo systemctl stop termweave-server
+sudo tar czf "/var/backups/termweave-$(date +%F).tar.gz" -C /var/lib termweave
+sudo systemctl start termweave-server
+```
+
+Update:
+
+```bash
+sudo systemctl stop termweave-server
+sudo -u termweave git -C /opt/termweave fetch origin
+sudo -u termweave git -C /opt/termweave checkout <new-commit-or-tag>
+sudo -u termweave bash -c 'cd /opt/termweave && bun install --frozen-lockfile && bun run build'
+sudo systemctl start termweave-server
+sudo bash /opt/termweave/deploy/verify-server.sh
+```
+
+Roll back: check out the previous commit and rebuild, same steps:
+
+```bash
+sudo systemctl stop termweave-server
+sudo -u termweave git -C /opt/termweave checkout <previous-commit>
+sudo -u termweave bash -c 'cd /opt/termweave && bun install --frozen-lockfile && bun run build'
+sudo systemctl start termweave-server
+```
+
+Back up `/var/lib/termweave` before every update so a rollback can restore state
+if a migration is involved.
+
+## Verify the deployment
+
+After install or update, run the mechanical health check on the VPS:
+
+```bash
+sudo bash /opt/termweave/deploy/verify-server.sh
+```
+
+It checks the Node path and version, that the native `node-pty` module loads,
+the service user, data-directory ownership and writability, the installed unit,
+the service state, and the listening port. Exit code is non-zero if any check
+fails.
+
+Two properties need a manual check because they depend on live state:
+
+- **SIGTERM flushes state.** Open a thread from the TUI, then
+  `sudo systemctl stop termweave-server`. The stop should return promptly (the
+  server runs finalizers on SIGTERM); the journal should show a clean shutdown,
+  not a `SIGKILL` timeout.
+- **Restart preserves state.** Start the service again and reconnect the TUI.
+  The thread and its history should still be present - they are event-sourced in
+  the SQLite state under `/var/lib/termweave`.
 
 ## Token rotation and revocation
 
