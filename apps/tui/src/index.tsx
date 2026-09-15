@@ -16,7 +16,12 @@ import {
 import { normalizeTuiThemeId, resolveTerminalThemeMode, resolveTuiTheme } from "./theme";
 import { App } from "./ui";
 import { resolveServerAuthToken } from "./serverSupervisor";
-import { buildSshAttachServerConnection, startSshAttach } from "./tuiCli";
+import {
+  buildDirectAttachServerConnection,
+  buildSshAttachServerConnection,
+  parseDirectAttachCommand,
+  startSshAttach,
+} from "./tuiCli";
 
 function readBooleanEnv(value: string | undefined): boolean | undefined {
   if (!value) return undefined;
@@ -89,17 +94,23 @@ const shutdown = (code = 0, error?: unknown) => {
 process.on("SIGINT", onSigint);
 process.on("SIGTERM", onSigterm);
 process.once("exit", stopSshAttach);
-sshAttach = await startSshAttach(process.argv.slice(2), { signal: sshStartup.signal }).catch(
-  (error: unknown) => {
-    if (!shuttingDown) throw error;
-    return null;
-  },
-);
+const cliArgs = process.argv.slice(2);
+const directTarget = parseDirectAttachCommand(cliArgs);
+if (!directTarget) {
+  sshAttach = await startSshAttach(cliArgs, { signal: sshStartup.signal }).catch(
+    (error: unknown) => {
+      if (!shuttingDown) throw error;
+      return null;
+    },
+  );
+}
 if (shuttingDown) await new Promise<never>(() => {});
 const sshAuthToken = resolveServerAuthToken();
-const initialServerConnection = sshAttach
-  ? buildSshAttachServerConnection(sshAttach, sshAuthToken)
-  : undefined;
+const initialServerConnection = directTarget
+  ? buildDirectAttachServerConnection(directTarget, sshAuthToken)
+  : sshAttach
+    ? buildSshAttachServerConnection(sshAttach, sshAuthToken)
+    : undefined;
 const initialServerConnectionProps = initialServerConnection ? { initialServerConnection } : {};
 
 if (process.env.T1CODE_HEADLESS === "1") {

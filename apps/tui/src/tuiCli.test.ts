@@ -3,7 +3,9 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
+  parseDirectAttachCommand,
   parseSshAttachCommand,
   sshTunnelInputFromProfile,
   startSshAttach,
@@ -194,8 +196,95 @@ describe("TUI CLI", () => {
       "Invalid SSH target",
     );
     expect(() => parseSshAttachCommand(["attach", "ssh", "-V"])).toThrow("Invalid SSH target");
-    expect(() => parseSshAttachCommand(["attach", "direct", "host"])).toThrow(
-      "Usage: termweave [attach ssh user@host]",
-    );
+    // `attach direct ...` is not the SSH parser's concern; it returns null.
+    expect(parseSshAttachCommand(["attach", "direct", "host"])).toBeNull();
+  });
+
+  describe("direct attach", () => {
+    it("parses host, port, scheme, and classifies the host", () => {
+      expect(parseDirectAttachCommand([])).toBeNull();
+      expect(parseDirectAttachCommand(["attach", "ssh", "user@host"])).toBeNull();
+
+      expect(parseDirectAttachCommand(["attach", "direct", "100.101.102.103:4000"])).toMatchObject({
+        scheme: "ws",
+        host: "100.101.102.103",
+        port: 4000,
+        hostClass: "private", // Tailscale CGNAT range
+        hostKind: "ip",
+      });
+
+      expect(parseDirectAttachCommand(["attach", "direct", "wss://vps.example.com"])).toMatchObject(
+        {
+          scheme: "wss",
+          host: "vps.example.com",
+          port: 3773, // default remote port
+          hostClass: "public",
+          hostKind: "name",
+        },
+      );
+
+      expect(parseDirectAttachCommand(["attach", "direct", "[fd7a:1::2]:5000"])).toMatchObject({
+        host: "fd7a:1::2",
+        port: 5000,
+        hostClass: "private", // fc00::/7 ULA (Tailscale)
+      });
+
+      expect(parseDirectAttachCommand(["attach", "direct", "127.0.0.1"])).toMatchObject({
+        hostClass: "loopback",
+      });
+      expect(parseDirectAttachCommand(["attach", "direct", "8.8.8.8"])).toMatchObject({
+        hostClass: "public",
+        hostKind: "ip",
+      });
+    });
+
+    it("rejects malformed direct targets", () => {
+      expect(() => parseDirectAttachCommand(["attach", "direct"])).toThrow("attach direct");
+      expect(() => parseDirectAttachCommand(["attach", "direct", "-x"])).toThrow("Invalid direct");
+      expect(() => parseDirectAttachCommand(["attach", "direct", "host:0"])).toThrow(
+        "Invalid direct port",
+      );
+      expect(() => parseDirectAttachCommand(["attach", "direct", "host:99999"])).toThrow(
+        "Invalid direct port",
+      );
+    });
+
+    it("requires a token for every non-loopback bind, but not for loopback", () => {
+      const loopback = parseDirectAttachCommand(["attach", "direct", "127.0.0.1:3773"])!;
+      expect(buildDirectAttachServerConnection(loopback, null).wsUrl).toBe("ws://127.0.0.1:3773/");
+
+      const priv = parseDirectAttachCommand(["attach", "direct", "192.168.1.10:3773"])!;
+      expect(() => buildDirectAttachServerConnection(priv, null)).toThrow(
+        "requires an application token",
+      );
+      expect(buildDirectAttachServerConnection(priv, "s3cret").wsUrl).toBe(
+        "ws://192.168.1.10:3773/?token=s3cret",
+      );
+    });
+
+    it("rejects plain ws:// to a public IP, but only warns for an unknown hostname", () => {
+      const publicIp = parseDirectAttachCommand(["attach", "direct", "203.0.113.5:3773"])!;
+      expect(() => buildDirectAttachServerConnection(publicIp, "tok")).toThrow(
+        "Refusing plain ws://",
+      );
+
+      const publicName = parseDirectAttachCommand(["attach", "direct", "vps.example.com:3773"])!;
+      const warnings: string[] = [];
+      const conn = buildDirectAttachServerConnection(publicName, "tok", {
+        warn: (message) => warnings.push(message),
+      });
+      expect(conn.wsUrl).toBe("ws://vps.example.com:3773/?token=tok");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("unencrypted");
+
+      // wss:// to the same public host is accepted without a warning.
+      const secure = parseDirectAttachCommand(["attach", "direct", "wss://203.0.113.5:3773"])!;
+      const secureWarnings: string[] = [];
+      const secureConn = buildDirectAttachServerConnection(secure, "tok", {
+        warn: (message) => secureWarnings.push(message),
+      });
+      expect(secureConn.wsUrl).toBe("wss://203.0.113.5:3773/?token=tok");
+      expect(secureWarnings).toHaveLength(0);
+    });
   });
 });

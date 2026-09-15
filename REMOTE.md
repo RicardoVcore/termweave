@@ -89,3 +89,48 @@ ssh -N -L 3773:127.0.0.1:3773 user@host
 Use any free local port on the left side. The server stays loopback-only on the
 VPS; SSH provides the encryption and VPS authentication, so the Termweave
 application token is optional on this path.
+
+## 4) Direct WebSocket attach
+
+For a server reachable on a private network you already trust - a Tailnet IP, a
+LAN/VPN address - connect the TUI straight to it:
+
+```bash
+termweave attach direct <host[:port]>
+# examples
+termweave attach direct 100.101.102.103        # Tailscale IP, default port 3773
+termweave attach direct 192.168.1.50:3773      # LAN
+termweave attach direct wss://vps.example.com  # public host, TLS terminated in front
+```
+
+The target may be a bare `host[:port]` (assumes `ws://`) or a full
+`ws://` / `wss://` URL. Default port is `3773`. IPv6 literals use brackets:
+`[fd7a:1::2]:3773`.
+
+Security rules enforced by the client:
+
+- **Application token required for every non-loopback bind.** Set
+  `TERMWEAVE_AUTH_TOKEN` (legacy `T3CODE_AUTH_TOKEN`/`T1CODE_AUTH_TOKEN` still
+  accepted). Loopback (`127.0.0.1`, `::1`, `localhost`) may connect without one.
+- **Plain `ws://` to a public IP is refused.** Use `wss://` (put TLS - a reverse
+  proxy such as Caddy/nginx - in front of the server), or reach the host over
+  Tailscale / a private network, or use `termweave attach ssh`.
+- A `ws://` connection to an unresolved public *hostname* is allowed with a
+  loud warning, since it may be a Tailscale MagicDNS or LAN name whose network
+  encrypts the traffic. Prefer `wss://` when the network does not.
+
+Private/Tailscale ranges recognized as non-public: `10/8`, `172.16/12`,
+`192.168/16`, `169.254/16`, `100.64/10` (CGNAT, includes Tailscale), IPv6
+`fc00::/7` (ULA, includes Tailscale `fd7a:…`) and `fe80::/10`.
+
+### Tailscale
+
+Tailscale is optional infrastructure. Install and configure it yourself
+(<https://tailscale.com/download>); Termweave never installs, configures, or
+manages it and does not require it for normal operation. Once your machine and
+the server share a tailnet, bind the server to its Tailnet IP (see section 2)
+and point the TUI at that address:
+
+```bash
+termweave attach direct "$(tailscale ip -4)":3773
+```
