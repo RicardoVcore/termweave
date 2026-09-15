@@ -2,6 +2,22 @@
 
 Use this when local Termweave TUI connects to Termweave server running on local machine or VPS.
 
+## Install the local client
+
+`deploy/install-tui.sh` builds the workspace (including the native `node-pty`
+that local all-in-one mode needs) and links the `termweave` command:
+
+```bash
+git clone https://github.com/RicardoVcore/termweave
+bash termweave/deploy/install-tui.sh
+```
+
+Then run `termweave` for a local session, or `termweave attach ssh user@host` /
+`termweave attach direct host[:port]` to reach a remote server. Needs Bun; on
+Debian/Ubuntu the script installs the `node-pty` build tools (set
+`TERMWEAVE_SKIP_DEPS=1` to skip, `TERMWEAVE_SKIP_LINK=1` to build without
+linking). See the top of the script for options.
+
 ## CLI ↔ Env option map
 
 The Termweave CLI accepts the following configuration options, available either as CLI flags or environment variables:

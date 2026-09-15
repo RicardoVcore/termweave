@@ -7,6 +7,28 @@ Termweave has two processes:
 
 No browser or Electron process runs on VPS.
 
+## Quick install
+
+On a fresh Debian/Ubuntu VPS, `deploy/install.sh` automates everything below -
+build deps, a supported Node at `/usr/bin/node` (NodeSource 24.x), system-wide
+Bun, clone + build, service user/dir/env, the systemd unit, then
+`verify-server.sh`. It is idempotent (re-run to update):
+
+```bash
+git clone https://github.com/RicardoVcore/termweave /tmp/termweave-src
+sudo bash /tmp/termweave-src/deploy/install.sh
+```
+
+Override defaults with env vars, e.g. a Tailscale bind with a generated token:
+
+```bash
+sudo env TERMWEAVE_HOST="$(tailscale ip -4)" TERMWEAVE_BRANCH=main \
+  bash /tmp/termweave-src/deploy/install.sh
+```
+
+See the top of `deploy/install.sh` for all `TERMWEAVE_*` options. The rest of
+this document is the manual equivalent and the operational reference.
+
 ## Direct install
 
 Requirements: Linux, Node.js 24.13.x (>= 24.13.1, < 25 - the range both the
