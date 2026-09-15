@@ -1,9 +1,11 @@
+import { isIP } from "node:net";
 import type { ConnectionProfile } from "./connectionProfiles";
 import { buildServerWsUrl, type AttachedServerConnection } from "./serverSupervisor";
 import { startSshTunnel, type SshTunnel, type SshTunnelInput } from "./sshTunnel";
 
 const DEFAULT_REMOTE_PORT = 3773;
-const USAGE = "Usage: termweave [attach ssh user@host]";
+const USAGE = "Usage: termweave [attach ssh user@host | attach direct [ws://|wss://]host[:port]]";
+const DIRECT_USAGE = "Usage: termweave attach direct [ws://|wss://]host[:port]";
 
 type SshConnectionProfile = Extract<ConnectionProfile, { readonly transport: "ssh" }>;
 
@@ -21,9 +23,19 @@ interface SshAttachDependencies {
   readonly clearTimeoutImpl?: typeof clearTimeout;
 }
 
+// The only recognized invocations are a bare local start (no args) and
+// `attach ssh|direct ...`. Reject anything else (a bogus command or an unknown
+// attach mode like `attach diret`) instead of silently starting a local server.
+export function assertKnownAttachCommand(args: readonly string[]): void {
+  if (args.length === 0) return;
+  if (args[0] === "attach" && (args[1] === "ssh" || args[1] === "direct")) return;
+  throw new Error(USAGE);
+}
+
 export function parseSshAttachCommand(args: readonly string[]): SshConnectionProfile | null {
   if (args.length === 0) return null;
-  if (args.length !== 3 || args[0] !== "attach" || args[1] !== "ssh") {
+  if (args[0] !== "attach" || args[1] !== "ssh") return null;
+  if (args.length !== 3) {
     throw new Error(USAGE);
   }
 
@@ -151,5 +163,173 @@ export function buildSshAttachServerConnection(
     port: attach.localPort,
     authToken: token,
     wsUrl: buildServerWsUrl("127.0.0.1", attach.localPort, token),
+  };
+}
+
+// ---- Phase 7: direct WebSocket attach ----
+//
+// Direct mode connects the TUI straight to a server socket the user has already
+// exposed on a private network (Tailscale, LAN/VPN). Termweave only consumes the
+// address; it never installs or configures Tailscale. Transport lifecycle and
+// reconnection are owned by WsTransport, so there is no tunnel process here.
+
+export type DirectHostClass = "loopback" | "private" | "public";
+export type DirectHostKind = "ip" | "name";
+
+export interface DirectAttachTarget {
+  readonly scheme: "ws" | "wss";
+  readonly host: string;
+  readonly port: number;
+  readonly hostClass: DirectHostClass;
+  readonly hostKind: DirectHostKind;
+}
+
+function classifyIpv4(host: string): DirectHostClass | null {
+  if (isIP(host) !== 4) return null; // only real dotted-decimal IPv4 literals
+  const [a, b] = host.split(".").map((part) => Number(part)) as [number, number, number, number];
+  if (a === 127) return "loopback";
+  if (a === 10) return "private";
+  if (a === 172 && b >= 16 && b <= 31) return "private";
+  if (a === 192 && b === 168) return "private";
+  if (a === 169 && b === 254) return "private"; // link-local
+  if (a === 100 && b >= 64 && b <= 127) return "private"; // CGNAT range, includes Tailscale
+  return "public";
+}
+
+function classifyIpv6(host: string): DirectHostClass | null {
+  if (isIP(host) !== 6) return null; // reject malformed IPv6 literals
+  const value = host.toLowerCase();
+  if (value === "::1") return "loopback";
+  if (/^fe[89ab]/u.test(value)) return "private"; // fe80::/10 link-local
+  if (/^f[cd]/u.test(value)) return "private"; // fc00::/7 ULA, includes Tailscale fd7a:...
+  return "public";
+}
+
+/** Classify a host literal or name for transport-security decisions. */
+export function describeDirectHost(host: string): {
+  hostClass: DirectHostClass;
+  hostKind: DirectHostKind;
+} {
+  const normalized = host.trim().toLowerCase();
+  if (normalized === "localhost") return { hostClass: "loopback", hostKind: "name" };
+  const v4 = classifyIpv4(normalized);
+  if (v4) return { hostClass: v4, hostKind: "ip" };
+  const v6 = classifyIpv6(normalized);
+  if (v6) return { hostClass: v6, hostKind: "ip" };
+  // A non-literal hostname (e.g. Tailscale MagicDNS, a LAN name) cannot be
+  // classified without resolving it, so treat it as public: require a token and
+  // warn on plain ws://, but do not hard-reject.
+  return { hostClass: "public", hostKind: "name" };
+}
+
+function parseDirectPort(value: string): number {
+  const trimmed = value.trim();
+  const port = Number(trimmed);
+  if (!/^\d+$/u.test(trimmed) || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Invalid direct port. ${DIRECT_USAGE}`);
+  }
+  return port;
+}
+
+function splitHostPort(input: string): { host: string; port: number; bracketed: boolean } {
+  if (input.startsWith("[")) {
+    const close = input.indexOf("]");
+    if (close === -1) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+    const host = input.slice(1, close);
+    const after = input.slice(close + 1);
+    // Only an empty suffix or an explicit ":port" may follow a bracketed host.
+    if (after !== "" && !after.startsWith(":")) {
+      throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+    }
+    const port = after.startsWith(":") ? parseDirectPort(after.slice(1)) : DEFAULT_REMOTE_PORT;
+    return { host, port, bracketed: true };
+  }
+  const separator = input.lastIndexOf(":");
+  if (separator === -1) return { host: input, port: DEFAULT_REMOTE_PORT, bracketed: false };
+  return {
+    host: input.slice(0, separator),
+    port: parseDirectPort(input.slice(separator + 1)),
+    bracketed: false,
+  };
+}
+
+// Unbracketed hosts are IPv4 literals or DNS names; both use this character set.
+// This rejects userinfo (@), path/query/fragment, and backslashes that could
+// otherwise smuggle a different authority into the WebSocket URL.
+const UNBRACKETED_HOST = /^[a-zA-Z0-9.-]+$/u;
+
+export function parseDirectAttachCommand(args: readonly string[]): DirectAttachTarget | null {
+  if (args.length === 0) return null;
+  if (args[0] !== "attach" || args[1] !== "direct") return null;
+  if (args.length !== 3) throw new Error(DIRECT_USAGE);
+
+  const raw = args[2]?.trim() ?? "";
+  if (!raw || raw.startsWith("-")) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+
+  let scheme: "ws" | "wss" = "ws";
+  let rest = raw;
+  if (/^wss:\/\//iu.test(rest)) {
+    scheme = "wss";
+    rest = rest.slice("wss://".length);
+  } else if (/^ws:\/\//iu.test(rest)) {
+    rest = rest.slice("ws://".length);
+  }
+  rest = rest.replace(/\/+$/u, "");
+
+  const { host, port, bracketed } = splitHostPort(rest);
+  if (!host) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  if (bracketed) {
+    if (isIP(host) !== 6) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  } else if (!UNBRACKETED_HOST.test(host)) {
+    throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
+  }
+  return { scheme, host, port, ...describeDirectHost(host) };
+}
+
+export interface DirectAttachOptions {
+  readonly warn?: (message: string) => void;
+}
+
+function buildDirectWsUrl(target: DirectAttachTarget, token: string | null): string {
+  const hostForUrl = target.host.includes(":") ? `[${target.host}]` : target.host;
+  const base = `${target.scheme}://${hostForUrl}:${target.port}/`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+export function buildDirectAttachServerConnection(
+  target: DirectAttachTarget,
+  authToken?: string | null,
+  options: DirectAttachOptions = {},
+): AttachedServerConnection {
+  const token = authToken?.trim() || null;
+
+  // Every non-loopback direct bind requires an application token.
+  if (target.hostClass !== "loopback" && !token) {
+    throw new Error(
+      "Direct attach to a non-loopback address requires an application token. " +
+        "Set TERMWEAVE_AUTH_TOKEN (or a legacy auth-token variable).",
+    );
+  }
+
+  // Plain ws:// to a public target is unencrypted on the open internet.
+  if (target.hostClass === "public" && target.scheme === "ws") {
+    if (target.hostKind === "ip") {
+      throw new Error(
+        `Refusing plain ws:// to public address "${target.host}". Use wss:// (TLS), or reach ` +
+          "the host over Tailscale / a private network, or use `termweave attach ssh`.",
+      );
+    }
+    (options.warn ?? ((message: string) => process.stderr.write(`${message}\n`)))(
+      `Warning: plain ws:// to "${target.host}", which is not a recognized private/Tailscale ` +
+        "address. Traffic is unencrypted unless the network (e.g. Tailscale/WireGuard) encrypts " +
+        "it. Prefer wss:// on public networks.",
+    );
+  }
+
+  return {
+    host: target.host,
+    port: target.port,
+    authToken: token,
+    wsUrl: buildDirectWsUrl(target, token),
   };
 }

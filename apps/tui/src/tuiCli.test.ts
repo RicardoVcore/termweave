@@ -3,7 +3,11 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertKnownAttachCommand,
+  buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
+  describeDirectHost,
+  parseDirectAttachCommand,
   parseSshAttachCommand,
   sshTunnelInputFromProfile,
   startSshAttach,
@@ -194,8 +198,153 @@ describe("TUI CLI", () => {
       "Invalid SSH target",
     );
     expect(() => parseSshAttachCommand(["attach", "ssh", "-V"])).toThrow("Invalid SSH target");
-    expect(() => parseSshAttachCommand(["attach", "direct", "host"])).toThrow(
-      "Usage: termweave [attach ssh user@host]",
-    );
+    // `attach direct ...` is not the SSH parser's concern; it returns null.
+    expect(parseSshAttachCommand(["attach", "direct", "host"])).toBeNull();
+  });
+
+  it("rejects an unknown attach mode instead of silently starting a local server", () => {
+    expect(() => assertKnownAttachCommand(["attach", "diret", "host"])).toThrow("attach");
+    expect(() => assertKnownAttachCommand(["attach"])).toThrow("attach");
+    expect(() => assertKnownAttachCommand(["bogus"])).toThrow("attach");
+    expect(() => assertKnownAttachCommand(["--help"])).toThrow("attach");
+    expect(() => assertKnownAttachCommand(["attach", "ssh", "user@host"])).not.toThrow();
+    expect(() => assertKnownAttachCommand(["attach", "direct", "host"])).not.toThrow();
+    expect(() => assertKnownAttachCommand([])).not.toThrow();
+  });
+
+  describe("direct attach", () => {
+    it("parses host, port, scheme, and classifies the host", () => {
+      expect(parseDirectAttachCommand([])).toBeNull();
+      expect(parseDirectAttachCommand(["attach", "ssh", "user@host"])).toBeNull();
+
+      expect(parseDirectAttachCommand(["attach", "direct", "100.101.102.103:4000"])).toMatchObject({
+        scheme: "ws",
+        host: "100.101.102.103",
+        port: 4000,
+        hostClass: "private", // Tailscale CGNAT range
+        hostKind: "ip",
+      });
+
+      expect(parseDirectAttachCommand(["attach", "direct", "wss://vps.example.com"])).toMatchObject(
+        {
+          scheme: "wss",
+          host: "vps.example.com",
+          port: 3773, // default remote port
+          hostClass: "public",
+          hostKind: "name",
+        },
+      );
+
+      expect(parseDirectAttachCommand(["attach", "direct", "[fd7a:1::2]:5000"])).toMatchObject({
+        host: "fd7a:1::2",
+        port: 5000,
+        hostClass: "private", // fc00::/7 ULA (Tailscale)
+      });
+
+      expect(parseDirectAttachCommand(["attach", "direct", "127.0.0.1"])).toMatchObject({
+        hostClass: "loopback",
+      });
+      expect(parseDirectAttachCommand(["attach", "direct", "8.8.8.8"])).toMatchObject({
+        hostClass: "public",
+        hostKind: "ip",
+      });
+
+      // Non-decimal / empty octets are not IPv4 literals: treated as public names,
+      // never misclassified into a private/loopback range.
+      for (const host of ["10e0.0.0.1", "0x0a.0.0.1", "10..0.1"]) {
+        expect(parseDirectAttachCommand(["attach", "direct", `${host}:3773`])).toMatchObject({
+          host,
+          hostClass: "public",
+          hostKind: "name",
+        });
+      }
+    });
+
+    it("classifies host ranges", () => {
+      const cases: Array<[string, "loopback" | "private" | "public"]> = [
+        ["127.0.0.1", "loopback"],
+        ["10.1.2.3", "private"],
+        ["172.16.0.1", "private"],
+        ["172.31.255.255", "private"],
+        ["172.15.0.1", "public"], // just outside 172.16/12
+        ["172.32.0.1", "public"],
+        ["192.168.1.1", "private"],
+        ["169.254.1.1", "private"],
+        ["100.64.0.1", "private"], // Tailscale CGNAT
+        ["100.128.0.1", "public"], // just outside 100.64/10
+        ["8.8.8.8", "public"],
+        ["::1", "loopback"],
+        ["fe80::1", "private"],
+        ["fc00::1", "private"],
+        ["fd7a:115c:a1e0::1", "private"], // Tailscale ULA
+        ["2606:4700::1111", "public"],
+      ];
+      for (const [host, hostClass] of cases) {
+        expect(describeDirectHost(host).hostClass, host).toBe(hostClass);
+      }
+    });
+
+    it("rejects malformed direct targets", () => {
+      expect(() => parseDirectAttachCommand(["attach", "direct"])).toThrow("attach direct");
+      expect(() => parseDirectAttachCommand(["attach", "direct", "-x"])).toThrow("Invalid direct");
+      for (const port of ["0", "99999", "1e3", "0x1000", "3773.0", "abc"]) {
+        expect(() => parseDirectAttachCommand(["attach", "direct", `host:${port}`])).toThrow(
+          "Invalid direct port",
+        );
+      }
+      // Injection / smuggling attempts must not slip through as a different authority.
+      for (const target of [
+        "[::1]evil", // trailing garbage after bracketed host
+        "127.0.0.1@8.8.8.8", // userinfo hiding a public host
+        "ws://127.0.0.1@8.8.8.8",
+        "host/path",
+        "host?token=x",
+        "host#frag",
+        "host\\evil",
+        "[fd-not-an-ip:thing]", // malformed IPv6 literal
+      ]) {
+        expect(() => parseDirectAttachCommand(["attach", "direct", target])).toThrow(
+          "Invalid direct",
+        );
+      }
+    });
+
+    it("requires a token for every non-loopback bind, but not for loopback", () => {
+      const loopback = parseDirectAttachCommand(["attach", "direct", "127.0.0.1:3773"])!;
+      expect(buildDirectAttachServerConnection(loopback, null).wsUrl).toBe("ws://127.0.0.1:3773/");
+
+      const priv = parseDirectAttachCommand(["attach", "direct", "192.168.1.10:3773"])!;
+      expect(() => buildDirectAttachServerConnection(priv, null)).toThrow(
+        "requires an application token",
+      );
+      expect(buildDirectAttachServerConnection(priv, "s3cret").wsUrl).toBe(
+        "ws://192.168.1.10:3773/?token=s3cret",
+      );
+    });
+
+    it("rejects plain ws:// to a public IP, but only warns for an unknown hostname", () => {
+      const publicIp = parseDirectAttachCommand(["attach", "direct", "203.0.113.5:3773"])!;
+      expect(() => buildDirectAttachServerConnection(publicIp, "tok")).toThrow(
+        "Refusing plain ws://",
+      );
+
+      const publicName = parseDirectAttachCommand(["attach", "direct", "vps.example.com:3773"])!;
+      const warnings: string[] = [];
+      const conn = buildDirectAttachServerConnection(publicName, "tok", {
+        warn: (message) => warnings.push(message),
+      });
+      expect(conn.wsUrl).toBe("ws://vps.example.com:3773/?token=tok");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("unencrypted");
+
+      // wss:// to the same public host is accepted without a warning.
+      const secure = parseDirectAttachCommand(["attach", "direct", "wss://203.0.113.5:3773"])!;
+      const secureWarnings: string[] = [];
+      const secureConn = buildDirectAttachServerConnection(secure, "tok", {
+        warn: (message) => secureWarnings.push(message),
+      });
+      expect(secureConn.wsUrl).toBe("wss://203.0.113.5:3773/?token=tok");
+      expect(secureWarnings).toHaveLength(0);
+    });
   });
 });

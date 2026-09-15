@@ -5,6 +5,14 @@ const stopMarker = process.env.TERMWEAVE_TEST_STOP_MARKER;
 if (!stopMarker) throw new Error("TERMWEAVE_TEST_STOP_MARKER is required.");
 
 mock.module(import.meta.resolve("../tuiCli.ts"), () => ({
+  assertKnownAttachCommand: () => undefined,
+  parseDirectAttachCommand: () => null,
+  buildDirectAttachServerConnection: () => ({
+    host: "127.0.0.1",
+    port: 41000,
+    authToken: null,
+    wsUrl: "ws://127.0.0.1:41000/",
+  }),
   buildSshAttachServerConnection: () => ({
     host: "127.0.0.1",
     port: 41000,
