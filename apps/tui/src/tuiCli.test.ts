@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertKnownAttachCommand,
   buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
   describeDirectHost,
@@ -199,6 +200,14 @@ describe("TUI CLI", () => {
     expect(() => parseSshAttachCommand(["attach", "ssh", "-V"])).toThrow("Invalid SSH target");
     // `attach direct ...` is not the SSH parser's concern; it returns null.
     expect(parseSshAttachCommand(["attach", "direct", "host"])).toBeNull();
+  });
+
+  it("rejects an unknown attach mode instead of silently starting a local server", () => {
+    expect(() => assertKnownAttachCommand(["attach", "diret", "host"])).toThrow("attach");
+    expect(() => assertKnownAttachCommand(["attach"])).toThrow("attach");
+    expect(() => assertKnownAttachCommand(["attach", "ssh", "user@host"])).not.toThrow();
+    expect(() => assertKnownAttachCommand(["attach", "direct", "host"])).not.toThrow();
+    expect(() => assertKnownAttachCommand([])).not.toThrow();
   });
 
   describe("direct attach", () => {

@@ -17,6 +17,7 @@ import { normalizeTuiThemeId, resolveTerminalThemeMode, resolveTuiTheme } from "
 import { App } from "./ui";
 import { resolveServerAuthToken } from "./serverSupervisor";
 import {
+  assertKnownAttachCommand,
   buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
   parseDirectAttachCommand,
@@ -95,6 +96,7 @@ process.on("SIGINT", onSigint);
 process.on("SIGTERM", onSigterm);
 process.once("exit", stopSshAttach);
 const cliArgs = process.argv.slice(2);
+assertKnownAttachCommand(cliArgs);
 const directTarget = parseDirectAttachCommand(cliArgs);
 if (!directTarget) {
   sshAttach = await startSshAttach(cliArgs, { signal: sshStartup.signal }).catch(
