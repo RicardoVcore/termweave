@@ -9,7 +9,7 @@ No browser or Electron process runs on VPS.
 
 ## Direct install
 
-Requirements: Linux, Node.js 24.10+, Bun 1.3.9+, Git, and native build tools for
+Requirements: Linux, Node.js 24.13+, Bun 1.3.9+, Git, and native build tools for
 `node-pty` (`gcc`, `g++`, `make`, and Python). Node.js must be at `/usr/bin/node`
 for the systemd unit below (or set `TERMWEAVE_NODE_BIN` when running the
 verification script).
@@ -93,23 +93,41 @@ sudo ufw enable
 Swap `100.64.0.0/10` for your LAN/VPN CIDR (for example `192.168.1.0/24`) if you
 attach over that instead.
 
-`nftables` equivalent. This creates the table and chain (a bare VPS has neither),
-keeps established traffic, and allows the Termweave port only from the tailnet:
+`nftables` equivalent. Loaded with `nft -f` so it is atomic and idempotent (the
+`table {}` / `delete table` preamble makes a rerun replace the table cleanly
+instead of duplicating rules). `tcp dport 22` matches SSH over both IPv4 and
+IPv6 in the `inet` family; `icmpv6` is allowed so IPv6 neighbour discovery keeps
+working on a dual-stack VPS:
 
 ```bash
-sudo nft add table inet termweave
-sudo nft add chain inet termweave input '{ type filter hook input priority 0; policy drop; }'
-sudo nft add rule inet termweave input ct state established,related accept
-sudo nft add rule inet termweave input iif lo accept
-sudo nft add rule inet termweave input tcp dport 22 accept
-sudo nft add rule inet termweave input ip saddr 100.64.0.0/10 tcp dport 3773 accept
+sudo nft -f - <<'EOF'
+table inet termweave { }
+delete table inet termweave
+table inet termweave {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+    meta l4proto ipv6-icmp accept
+    tcp dport 22 accept
+    ip  saddr 100.64.0.0/10        tcp dport 3773 accept
+    ip6 saddr fd7a:115c:a1e0::/48  tcp dport 3773 accept
+  }
+}
+EOF
 ```
 
-Persist across reboot with `sudo nft list ruleset | sudo tee /etc/nftables.conf`
-and `sudo systemctl enable nftables`. Note the `policy drop` above filters *all*
-input, so keep the SSH and loopback rules; adapt if you already manage
-`inet filter`. Re-running the `add rule` lines appends duplicates - to start
-clean, `sudo nft delete table inet termweave` first, then re-add.
+Swap the `saddr` CIDRs for your own tailnet/LAN ranges. Persist across reboot
+(the redirect, not a `tee` pipe, so an `nft` failure is not masked) and enable
+the service:
+
+```bash
+sudo sh -c 'nft list ruleset > /etc/nftables.conf'
+sudo systemctl enable nftables
+```
+
+The `policy drop` filters *all* input, so keep the SSH, loopback, and icmpv6
+rules; adapt if you already manage another table.
 
 ## Operations
 
@@ -129,14 +147,15 @@ sudo journalctl -u termweave-server -f          # follow
 sudo journalctl -u termweave-server --since today
 ```
 
-Backup. Stop first for a consistent SQLite snapshot; the service is started
-again right after `tar` whether or not it succeeded, and a failure is reported:
+Backup. Stop first for a consistent SQLite snapshot; abort if the stop fails
+(so a live DB is never archived), restart afterwards whatever `tar` did, and
+report both `tar` and restart failures:
 
 ```bash
 sudo install -d -m 700 /var/backups/termweave
-sudo systemctl stop termweave-server
+sudo systemctl stop termweave-server || { echo "stop failed, not backing up a live DB"; exit 1; }
 sudo tar czf "/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz" -C /var/lib termweave; rc=$?
-sudo systemctl start termweave-server
+sudo systemctl start termweave-server || echo "WARNING: service did not restart"
 [ "$rc" -eq 0 ] && echo "backup ok" || echo "BACKUP FAILED (rc=$rc)"
 ```
 
@@ -145,26 +164,26 @@ a good build; if the build fails the service stays stopped - fix it or roll back
 before starting:
 
 ```bash
-sudo systemctl stop termweave-server
-sudo -u termweave bash -euc '
-  cd /opt/termweave &&
-  git fetch origin &&
-  git checkout <new-commit-or-tag> &&
-  bun install --frozen-lockfile &&
-  bun run build
-' && sudo systemctl start termweave-server && sudo bash /opt/termweave/deploy/verify-server.sh
+sudo systemctl stop termweave-server &&
+  sudo -u termweave bash -euc '
+    cd /opt/termweave &&
+    git fetch origin &&
+    git checkout <new-commit-or-tag> &&
+    bun install --frozen-lockfile &&
+    bun run build
+  ' && sudo systemctl start termweave-server && sudo bash /opt/termweave/deploy/verify-server.sh
 ```
 
 Roll back to the previous commit and rebuild, same fail-fast chaining:
 
 ```bash
-sudo systemctl stop termweave-server
-sudo -u termweave bash -euc '
-  cd /opt/termweave &&
-  git checkout <previous-commit> &&
-  bun install --frozen-lockfile &&
-  bun run build
-' && sudo systemctl start termweave-server
+sudo systemctl stop termweave-server &&
+  sudo -u termweave bash -euc '
+    cd /opt/termweave &&
+    git checkout <previous-commit> &&
+    bun install --frozen-lockfile &&
+    bun run build
+  ' && sudo systemctl start termweave-server
 ```
 
 Restore state from a backup **only** when a schema/data migration left the old

@@ -20,7 +20,7 @@ NODE_BIN="${TERMWEAVE_NODE_BIN:-/usr/bin/node}"
 UNIT_FILE="/etc/systemd/system/${SERVICE}.service"
 SERVER_ENTRY="${INSTALL_DIR}/apps/server/dist/index.mjs"
 MIN_NODE_MAJOR=24
-MIN_NODE_MINOR=10 # repo runtime engine: node >=24.10
+MIN_NODE_MINOR=13 # repo engines: root build ^24.13.1, server runtime >=24.10
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash deploy/verify-server.sh" >&2
