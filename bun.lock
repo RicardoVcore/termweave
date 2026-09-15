@@ -1,6 +1,5 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@t3tools/monorepo",
@@ -71,6 +70,7 @@
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
         "@types/react": "^19.0.0",
+        "termweave-server": "workspace:*",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
