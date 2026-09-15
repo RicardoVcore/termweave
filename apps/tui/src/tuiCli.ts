@@ -23,13 +23,13 @@ interface SshAttachDependencies {
   readonly clearTimeoutImpl?: typeof clearTimeout;
 }
 
-// Reject an `attach` invocation whose mode is neither `ssh` nor `direct` (e.g. a
-// typo like `attach diret`), which would otherwise fall through to a local
-// server start with no feedback.
+// The only recognized invocations are a bare local start (no args) and
+// `attach ssh|direct ...`. Reject anything else (a bogus command or an unknown
+// attach mode like `attach diret`) instead of silently starting a local server.
 export function assertKnownAttachCommand(args: readonly string[]): void {
-  if (args[0] === "attach" && args[1] !== "ssh" && args[1] !== "direct") {
-    throw new Error(USAGE);
-  }
+  if (args.length === 0) return;
+  if (args[0] === "attach" && (args[1] === "ssh" || args[1] === "direct")) return;
+  throw new Error(USAGE);
 }
 
 export function parseSshAttachCommand(args: readonly string[]): SshConnectionProfile | null {

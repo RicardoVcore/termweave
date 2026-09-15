@@ -115,7 +115,7 @@ Security rules enforced by the client:
 - **Plain `ws://` to a public IP is refused.** Use `wss://` (put TLS - a reverse
   proxy such as Caddy/nginx - in front of the server), or reach the host over
   Tailscale / a private network, or use `termweave attach ssh`.
-- A `ws://` connection to an unresolved public *hostname* is allowed with a
+- A `ws://` connection to an unresolved public _hostname_ is allowed with a
   loud warning, since it may be a Tailscale MagicDNS or LAN name whose network
   encrypts the traffic. Prefer `wss://` when the network does not.
 
