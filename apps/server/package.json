@@ -16,7 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "node scripts/cli.ts build",
+    "build": "bun scripts/cli.ts build",
     "start": "node dist/index.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run"
