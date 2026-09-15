@@ -236,6 +236,16 @@ describe("TUI CLI", () => {
         hostClass: "public",
         hostKind: "ip",
       });
+
+      // Non-decimal / empty octets are not IPv4 literals: treated as public names,
+      // never misclassified into a private/loopback range.
+      for (const host of ["10e0.0.0.1", "0x0a.0.0.1", "10..0.1"]) {
+        expect(parseDirectAttachCommand(["attach", "direct", `${host}:3773`])).toMatchObject({
+          host,
+          hostClass: "public",
+          hostKind: "name",
+        });
+      }
     });
 
     it("rejects malformed direct targets", () => {

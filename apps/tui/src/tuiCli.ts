@@ -176,11 +176,8 @@ export interface DirectAttachTarget {
 }
 
 function classifyIpv4(host: string): DirectHostClass | null {
-  const parts = host.split(".");
-  if (parts.length !== 4) return null;
-  const octets = parts.map((part) => Number(part));
-  if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
-  const [a, b] = octets as [number, number, number, number];
+  if (isIP(host) !== 4) return null; // only real dotted-decimal IPv4 literals
+  const [a, b] = host.split(".").map((part) => Number(part)) as [number, number, number, number];
   if (a === 127) return "loopback";
   if (a === 10) return "private";
   if (a === 172 && b >= 16 && b <= 31) return "private";
