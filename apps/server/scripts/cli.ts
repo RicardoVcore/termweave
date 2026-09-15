@@ -56,7 +56,6 @@ const buildCmd = Command.make(
           shell: process.platform === "win32",
         })`bun tsdown`,
       );
-
     }),
 ).pipe(Command.withDescription("Build the Termweave server package."));
 

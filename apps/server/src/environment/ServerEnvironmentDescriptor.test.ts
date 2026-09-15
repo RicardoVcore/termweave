@@ -14,9 +14,7 @@ function makeTempDir(prefix: string) {
 }
 
 function makeServerConfig(baseDir: string): ServerConfigShape {
-  const derived = Effect.runSync(
-    deriveServerPaths(baseDir).pipe(Effect.provide(NodePath.layer)),
-  );
+  const derived = Effect.runSync(deriveServerPaths(baseDir).pipe(Effect.provide(NodePath.layer)));
   return {
     ...derived,
     port: 0,
