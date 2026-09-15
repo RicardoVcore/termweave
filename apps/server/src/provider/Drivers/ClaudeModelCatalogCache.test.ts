@@ -27,4 +27,21 @@ describe("parseClaudeCatalogFile", () => {
     expect(parseClaudeCatalogFile("null")).toBeNull();
     expect(parseClaudeCatalogFile("{}")).toBeNull();
   });
+
+  it("skips malformed entries without discarding valid ones", () => {
+    const parsed = parseClaudeCatalogFile(
+      catalog([null, 7, "x", { id: "claude-sonnet-5", name: "Sonnet 5" }]),
+    );
+    expect(parsed?.models.map((m) => m.slug)).toEqual(["claude-sonnet-5"]);
+  });
+
+  it("treats fast_mode false as disabled", () => {
+    const parsed = parseClaudeCatalogFile(
+      catalog([
+        { id: "a", name: "A", fast_mode: false },
+        { id: "b", name: "B", fast_mode: {} },
+      ]),
+    );
+    expect(parsed?.models.map((m) => m.fastMode)).toEqual([false, true]);
+  });
 });

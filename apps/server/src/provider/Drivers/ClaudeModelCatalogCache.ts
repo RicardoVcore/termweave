@@ -54,6 +54,9 @@ export function parseClaudeCatalogFile(
   const seen = new Set<string>();
   const models: ClaudeCatalogModel[] = [];
   for (const model of rawModels) {
+    if (!model || typeof model !== "object") {
+      continue;
+    }
     const slug = typeof model.id === "string" ? model.id.trim() : "";
     if (!slug || seen.has(slug) || model.hidden === true) {
       continue;
@@ -63,7 +66,10 @@ export function parseClaudeCatalogFile(
       slug,
       name: typeof model.name === "string" && model.name.length > 0 ? model.name : slug,
       thinkingType: model.thinking?.type === "effort" ? "effort" : "none",
-      fastMode: model.fast_mode !== undefined && model.fast_mode !== null,
+      // `fast_mode` is a config object when supported, absent otherwise; a
+      // literal `false` means off.
+      fastMode:
+        model.fast_mode !== undefined && model.fast_mode !== null && model.fast_mode !== false,
     });
   }
   return { fetchedAt: typeof record.fetchedAt === "number" ? record.fetchedAt : 0, models };

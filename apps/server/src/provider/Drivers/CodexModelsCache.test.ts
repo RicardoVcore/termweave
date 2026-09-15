@@ -43,4 +43,11 @@ describe("parseCodexModelsCache", () => {
     expect(parseCodexModelsCache("null")).toEqual([]);
     expect(parseCodexModelsCache("{}")).toEqual([]);
   });
+
+  it("skips malformed entries without discarding valid ones", () => {
+    const raw = JSON.stringify({
+      models: [null, 42, "nope", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }],
+    });
+    expect(parseCodexModelsCache(raw).map((m) => m.slug)).toEqual(["gpt-5.6-sol"]);
+  });
 });

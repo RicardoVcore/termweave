@@ -93,6 +93,9 @@ export function parseCodexModelsCache(raw: string): ReadonlyArray<ServerProvider
   const seen = new Set<string>();
   const result: ServerProviderModel[] = [];
   for (const model of models) {
+    if (!model || typeof model !== "object") {
+      continue;
+    }
     const slug = typeof model.slug === "string" ? model.slug.trim() : "";
     if (!slug || seen.has(slug) || model.visibility === "hide") {
       continue;
