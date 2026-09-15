@@ -149,14 +149,20 @@ sudo journalctl -u termweave-server --since today
 
 Backup. Stop first for a consistent SQLite snapshot; abort if the stop fails
 (so a live DB is never archived), restart afterwards whatever `tar` did, and
-report both `tar` and restart failures:
+fail (non-zero exit) if either `tar` or the restart failed. The archive contains
+`userdata/secrets/`, so it is locked to `600` (the `700` backup dir already
+keeps it root-only):
 
 ```bash
 sudo install -d -m 700 /var/backups/termweave
 sudo systemctl stop termweave-server || { echo "stop failed, not backing up a live DB"; exit 1; }
-sudo tar czf "/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz" -C /var/lib termweave; rc=$?
-sudo systemctl start termweave-server || echo "WARNING: service did not restart"
-[ "$rc" -eq 0 ] && echo "backup ok" || echo "BACKUP FAILED (rc=$rc)"
+backup="/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz"
+sudo tar czf "$backup" -C /var/lib termweave; rc=$?
+sudo chmod 600 "$backup" 2>/dev/null
+sudo systemctl start termweave-server; start_rc=$?
+[ "$rc" -eq 0 ] && echo "backup ok: $backup" || echo "BACKUP FAILED (rc=$rc)"
+[ "$start_rc" -eq 0 ] || { echo "WARNING: service did not restart"; exit 1; }
+[ "$rc" -eq 0 ]
 ```
 
 Update. Each step must succeed before the next, so the service only restarts on
@@ -191,8 +197,8 @@ code incompatible with the current state (a plain code rollback does not need
 it). This overwrites `/var/lib/termweave` - destructive:
 
 ```bash
-sudo systemctl stop termweave-server
-sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib &&
+sudo systemctl stop termweave-server &&
+  sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib &&
   sudo chown -R termweave:termweave /var/lib/termweave &&
   sudo systemctl start termweave-server
 ```

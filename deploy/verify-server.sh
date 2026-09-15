@@ -19,8 +19,10 @@ INSTALL_DIR="${TERMWEAVE_INSTALL_DIR:-/opt/termweave}"
 NODE_BIN="${TERMWEAVE_NODE_BIN:-/usr/bin/node}"
 UNIT_FILE="/etc/systemd/system/${SERVICE}.service"
 SERVER_ENTRY="${INSTALL_DIR}/apps/server/dist/index.mjs"
-MIN_NODE_MAJOR=24
-MIN_NODE_MINOR=13 # repo engines: root build ^24.13.1, server runtime >=24.10
+# Build engine (root package.json) requires >=24.13.1; server runtime allows
+# >=24.10. Require the stricter floor here. No upper bound: a newer runtime
+# (25.x) still satisfies the server engine.
+MIN_NODE_VERSION=24.13.1
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash deploy/verify-server.sh" >&2
@@ -35,17 +37,14 @@ bad() {
   fail=1
 }
 
-# The Node binary systemd uses, and its version (require >= MIN_NODE_MAJOR.MIN_NODE_MINOR).
+# The Node binary systemd uses, and its version (require >= MIN_NODE_VERSION).
 if [ -x "${NODE_BIN}" ]; then
   node_ver="$("${NODE_BIN}" -p 'process.versions.node' 2>/dev/null || echo 0.0.0)"
-  node_major="${node_ver%%.*}"
-  node_minor="${node_ver#*.}"
-  node_minor="${node_minor%%.*}"
-  if [ "${node_major}" -gt "${MIN_NODE_MAJOR}" ] 2>/dev/null ||
-    { [ "${node_major}" -eq "${MIN_NODE_MAJOR}" ] && [ "${node_minor}" -ge "${MIN_NODE_MINOR}" ]; } 2>/dev/null; then
+  # >= floor iff the floor sorts first among the two (version sort).
+  if [ "$(printf '%s\n%s\n' "${MIN_NODE_VERSION}" "${node_ver}" | sort -V | head -1)" = "${MIN_NODE_VERSION}" ]; then
     pass "Node ${node_ver} at ${NODE_BIN}"
   else
-    bad "Node ${node_ver} at ${NODE_BIN} is older than required ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}"
+    bad "Node ${node_ver} at ${NODE_BIN} is older than required ${MIN_NODE_VERSION}"
   fi
 else
   bad "${NODE_BIN} not found or not executable (systemd ExecStart uses it)"
