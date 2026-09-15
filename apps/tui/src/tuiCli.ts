@@ -214,8 +214,9 @@ export function describeDirectHost(host: string): {
 }
 
 function parseDirectPort(value: string): number {
-  const port = Number(value.trim());
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  const trimmed = value.trim();
+  const port = Number(trimmed);
+  if (!/^\d+$/u.test(trimmed) || !Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error(`Invalid direct port. ${DIRECT_USAGE}`);
   }
   return port;

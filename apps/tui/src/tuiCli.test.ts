@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
+  describeDirectHost,
   parseDirectAttachCommand,
   parseSshAttachCommand,
   sshTunnelInputFromProfile,
@@ -248,15 +249,38 @@ describe("TUI CLI", () => {
       }
     });
 
+    it("classifies host ranges", () => {
+      const cases: Array<[string, "loopback" | "private" | "public"]> = [
+        ["127.0.0.1", "loopback"],
+        ["10.1.2.3", "private"],
+        ["172.16.0.1", "private"],
+        ["172.31.255.255", "private"],
+        ["172.15.0.1", "public"], // just outside 172.16/12
+        ["172.32.0.1", "public"],
+        ["192.168.1.1", "private"],
+        ["169.254.1.1", "private"],
+        ["100.64.0.1", "private"], // Tailscale CGNAT
+        ["100.128.0.1", "public"], // just outside 100.64/10
+        ["8.8.8.8", "public"],
+        ["::1", "loopback"],
+        ["fe80::1", "private"],
+        ["fc00::1", "private"],
+        ["fd7a:115c:a1e0::1", "private"], // Tailscale ULA
+        ["2606:4700::1111", "public"],
+      ];
+      for (const [host, hostClass] of cases) {
+        expect(describeDirectHost(host).hostClass, host).toBe(hostClass);
+      }
+    });
+
     it("rejects malformed direct targets", () => {
       expect(() => parseDirectAttachCommand(["attach", "direct"])).toThrow("attach direct");
       expect(() => parseDirectAttachCommand(["attach", "direct", "-x"])).toThrow("Invalid direct");
-      expect(() => parseDirectAttachCommand(["attach", "direct", "host:0"])).toThrow(
-        "Invalid direct port",
-      );
-      expect(() => parseDirectAttachCommand(["attach", "direct", "host:99999"])).toThrow(
-        "Invalid direct port",
-      );
+      for (const port of ["0", "99999", "1e3", "0x1000", "3773.0", "abc"]) {
+        expect(() => parseDirectAttachCommand(["attach", "direct", `host:${port}`])).toThrow(
+          "Invalid direct port",
+        );
+      }
       // Injection / smuggling attempts must not slip through as a different authority.
       for (const target of [
         "[::1]evil", // trailing garbage after bracketed host
