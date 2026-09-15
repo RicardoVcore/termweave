@@ -19,10 +19,11 @@ INSTALL_DIR="${TERMWEAVE_INSTALL_DIR:-/opt/termweave}"
 NODE_BIN="${TERMWEAVE_NODE_BIN:-/usr/bin/node}"
 UNIT_FILE="/etc/systemd/system/${SERVICE}.service"
 SERVER_ENTRY="${INSTALL_DIR}/apps/server/dist/index.mjs"
-# Build engine (root package.json) requires >=24.13.1; server runtime allows
-# >=24.10. Require the stricter floor here. No upper bound: a newer runtime
-# (25.x) still satisfies the server engine.
+# The VPS both builds and runs. The build (root package.json) requires
+# ^24.13.1, i.e. >=24.13.1 and <25; the server runtime allows >=24.10. The
+# intersection both accept is [24.13.1, 25), so enforce that range.
 MIN_NODE_VERSION=24.13.1
+NODE_MAJOR_EXCL_MAX=25
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash deploy/verify-server.sh" >&2
@@ -37,14 +38,17 @@ bad() {
   fail=1
 }
 
-# The Node binary systemd uses, and its version (require >= MIN_NODE_VERSION).
+# The Node binary systemd uses, and its version (require MIN_NODE_VERSION <= v < NODE_MAJOR_EXCL_MAX).
 if [ -x "${NODE_BIN}" ]; then
   node_ver="$("${NODE_BIN}" -p 'process.versions.node' 2>/dev/null || echo 0.0.0)"
+  node_major="${node_ver%%.*}"
   # >= floor iff the floor sorts first among the two (version sort).
-  if [ "$(printf '%s\n%s\n' "${MIN_NODE_VERSION}" "${node_ver}" | sort -V | head -1)" = "${MIN_NODE_VERSION}" ]; then
+  above_floor=false
+  [ "$(printf '%s\n%s\n' "${MIN_NODE_VERSION}" "${node_ver}" | sort -V | head -1)" = "${MIN_NODE_VERSION}" ] && above_floor=true
+  if [ "${above_floor}" = true ] && [ "${node_major}" -lt "${NODE_MAJOR_EXCL_MAX}" ] 2>/dev/null; then
     pass "Node ${node_ver} at ${NODE_BIN}"
   else
-    bad "Node ${node_ver} at ${NODE_BIN} is older than required ${MIN_NODE_VERSION}"
+    bad "Node ${node_ver} at ${NODE_BIN} outside required [${MIN_NODE_VERSION}, ${NODE_MAJOR_EXCL_MAX})"
   fi
 else
   bad "${NODE_BIN} not found or not executable (systemd ExecStart uses it)"
@@ -121,6 +125,8 @@ if command -v systemctl >/dev/null 2>&1; then
   check_prop User "${SERVICE_USER}" eq
   check_prop Group "${SERVICE_USER}" eq
   check_prop WorkingDirectory "${INSTALL_DIR}" eq
+  # ExecStart must run the same Node binary this script validated, on the server entry.
+  check_prop ExecStart "${NODE_BIN}" contains
   check_prop ExecStart "${SERVER_ENTRY}" contains
 
   if systemctl is-active --quiet "${SERVICE}"; then

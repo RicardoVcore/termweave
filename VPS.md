@@ -9,13 +9,18 @@ No browser or Electron process runs on VPS.
 
 ## Direct install
 
-Requirements: Linux, Node.js 24.13.1+, Bun 1.3.9+, Git, and native build tools for
-`node-pty` (`gcc`, `g++`, `make`, and Python). Node.js must be at `/usr/bin/node`
-for the systemd unit below (or set `TERMWEAVE_NODE_BIN` when running the
-verification script).
+Requirements: Linux, Node.js 24.13.x (>= 24.13.1, < 25 - the range both the
+root build engine `^24.13.1` and the server runtime accept), Bun 1.3.9+, Git,
+and native build tools for `node-pty` (`gcc`, `g++`, `make`, and Python).
+Node.js must be at `/usr/bin/node` for the systemd unit below (or set
+`TERMWEAVE_NODE_BIN` when running the verification script). Install Bun on a
+system-wide path so the `termweave` service account can also run it during
+updates:
 
 ```bash
 sudo apt install git build-essential python3
+curl -fsSL https://bun.sh/install | bash          # installs to ~/.bun
+sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
 sudo mkdir -p /opt/termweave
 sudo chown "$USER" /opt/termweave
 git clone https://github.com/RicardoVcore/termweave /opt/termweave
@@ -167,11 +172,12 @@ sudo systemctl start termweave-server; start_rc=$?
 
 Update. Each step must succeed before the next, so the service only restarts on
 a good build; if the build fails the service stays stopped - fix it or roll back
-before starting:
+before starting. The `termweave` account has no `~/.bun`, so this needs Bun on a
+system-wide path (see Direct install) and sets `HOME`/`PATH` explicitly:
 
 ```bash
 sudo systemctl stop termweave-server &&
-  sudo -u termweave bash -euc '
+  sudo -u termweave env PATH=/usr/local/bin:/usr/bin HOME=/var/lib/termweave bash -euc '
     cd /opt/termweave &&
     git fetch origin &&
     git checkout <new-commit-or-tag> &&
@@ -184,7 +190,7 @@ Roll back to the previous commit and rebuild, same fail-fast chaining:
 
 ```bash
 sudo systemctl stop termweave-server &&
-  sudo -u termweave bash -euc '
+  sudo -u termweave env PATH=/usr/local/bin:/usr/bin HOME=/var/lib/termweave bash -euc '
     cd /opt/termweave &&
     git checkout <previous-commit> &&
     bun install --frozen-lockfile &&
@@ -194,17 +200,26 @@ sudo systemctl stop termweave-server &&
 
 Restore state from a backup **only** when a schema/data migration left the old
 code incompatible with the current state (a plain code rollback does not need
-it). This overwrites `/var/lib/termweave` - destructive:
+it). Extract into a staging directory and swap it in, so no stale files from the
+current deployment (for example SQLite WAL/sidecar files) survive the restore.
+The previous state is kept at `/var/lib/termweave.old`:
 
 ```bash
 sudo systemctl stop termweave-server &&
-  sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib &&
+  sudo rm -rf /var/lib/termweave.restore &&
+  sudo mkdir -p /var/lib/termweave.restore &&
+  sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib/termweave.restore &&
+  sudo test -f /var/lib/termweave.restore/termweave/userdata/state.sqlite &&
+  sudo rm -rf /var/lib/termweave.old &&
+  sudo mv /var/lib/termweave /var/lib/termweave.old &&
+  sudo mv /var/lib/termweave.restore/termweave /var/lib/termweave &&
   sudo chown -R termweave:termweave /var/lib/termweave &&
   sudo systemctl start termweave-server
 ```
 
-If the extraction fails the service is left stopped (not restarted onto broken
-state); re-extract from a good backup before starting.
+Any step failing stops the chain before the swap, so the live directory is only
+replaced once a validated copy is in place. Remove `/var/lib/termweave.old` once
+the restored service is confirmed healthy.
 
 Always back up before an update so this restore is available if a migration is
 involved.
