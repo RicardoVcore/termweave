@@ -25,17 +25,18 @@ describe("parseCodexModelsCache", () => {
     const models = parseCodexModelsCache(raw);
 
     expect(models.map((m) => m.slug)).toEqual(["gpt-5.6-sol"]);
-    const [model] = models;
+    const model = models[0]!;
     expect(model.name).toBe("GPT-5.6-Sol");
     expect(model.isCustom).toBe(false);
-    const reasoning = model.capabilities?.optionDescriptors.find((o) => o.id === "reasoningEffort");
+    const descriptors = model.capabilities?.optionDescriptors ?? [];
+    const reasoning = descriptors.find((o) => o.id === "reasoningEffort");
     expect(reasoning?.type).toBe("select");
     // unknown "ultra" filtered out, only low/high remain
     expect(reasoning && "options" in reasoning ? reasoning.options.map((o) => o.id) : []).toEqual([
       "low",
       "high",
     ]);
-    expect(model.capabilities?.optionDescriptors.some((o) => o.id === "fastMode")).toBe(true);
+    expect(descriptors.some((o) => o.id === "fastMode")).toBe(true);
   });
 
   it("returns empty on malformed payloads", () => {

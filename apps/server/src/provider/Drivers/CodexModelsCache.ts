@@ -11,6 +11,7 @@ import path from "node:path";
 import type { ModelCapabilities, ServerProviderModel } from "@termweave/contracts";
 import { createModelCapabilities } from "@termweave/shared/model";
 
+import { buildBooleanOptionDescriptor, buildSelectOptionDescriptor } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 
 const MODELS_CACHE_FILENAME = "models_cache.json";
@@ -49,12 +50,16 @@ function mapCapabilities(model: RawModel): ModelCapabilities {
   const reasoningOptions = levels
     .map((level) => (typeof level?.effort === "string" ? level.effort : null))
     .filter((effort): effort is string => effort !== null && effort in REASONING_EFFORT_LABELS)
-    .map((effort) =>
-      effort === defaultEffort
-        ? { id: effort, label: REASONING_EFFORT_LABELS[effort], isDefault: true }
-        : { id: effort, label: REASONING_EFFORT_LABELS[effort] },
-    );
-  const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
+    .map((effort) => {
+      const option: { value: string; label: string; isDefault?: boolean } = {
+        value: effort,
+        label: REASONING_EFFORT_LABELS[effort]!,
+      };
+      if (effort === defaultEffort) {
+        option.isDefault = true;
+      }
+      return option;
+    });
   const speedTiers = Array.isArray(model.additional_speed_tiers)
     ? (model.additional_speed_tiers as ReadonlyArray<unknown>)
     : [];
@@ -64,17 +69,15 @@ function mapCapabilities(model: RawModel): ModelCapabilities {
     optionDescriptors: [
       ...(reasoningOptions.length > 0
         ? [
-            {
+            buildSelectOptionDescriptor({
               id: "reasoningEffort",
               label: "Reasoning",
-              type: "select" as const,
               options: reasoningOptions,
-              ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
-            },
+            }),
           ]
         : []),
       ...(supportsFastMode
-        ? [{ id: "fastMode", label: "Fast Mode", type: "boolean" as const }]
+        ? [buildBooleanOptionDescriptor({ id: "fastMode", label: "Fast Mode" })]
         : []),
     ],
   });
@@ -118,4 +121,4 @@ export const loadCodexModelsFromCache = (
     const cachePath = path.join(home, MODELS_CACHE_FILENAME);
     const raw = yield* Effect.tryPromise(() => readFile(cachePath, "utf8"));
     return parseCodexModelsCache(raw);
-  }).pipe(Effect.catchAll(() => Effect.succeed([] as ReadonlyArray<ServerProviderModel>)));
+  }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<ServerProviderModel>)));
