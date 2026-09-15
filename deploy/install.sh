@@ -44,27 +44,50 @@ command -v "${SUDO:-true}" >/dev/null 2>&1 || {
 is_loopback() { case "$1" in 127.* | ::1 | localhost) return 0 ;; *) return 1 ;; esac; }
 
 # Guard privileged paths that get `install -d`, recursive chown, or become a
-# service home. Canonicalize first (realpath -m, no existence required) so
-# tricks like `/etc/..` cannot slip a system root past the checks, then require
-# an absolute path that is a subdirectory, never a system root itself. Prints
+# service home. Require an absolute input, then canonicalize it (realpath -m,
+# no existence required) so tricks like `/etc/..` cannot slip a system root
+# past the checks. Existing directories must look like a previous Termweave
+# target so a typo cannot hand a system directory to chown. Prints
 # the canonical path on success.
 require_safe_dir() {
-  local name="$1" canon
-  canon="$(realpath -m -- "$2")"
-  case "$canon" in
+  local name="$1" path="$2" kind="$3" canon owner
+  case "$path" in
     /*) ;;
-    *) echo "$name must be an absolute path, got: $2" >&2; exit 1 ;;
+    *) echo "$name must be an absolute path, got: $path" >&2; exit 1 ;;
   esac
+  canon="$(realpath -m -- "$path")"
   case "$canon" in
     / | /bin | /boot | /dev | /etc | /home | /lib | /lib64 | /proc | /root | /run | /sbin | /srv | /sys | /usr | /var | /opt)
-      echo "$name must be a dedicated subdirectory, refusing system root: $2 -> $canon" >&2
+      echo "$name must be a dedicated subdirectory, refusing system root: $path -> $canon" >&2
       exit 1
       ;;
   esac
+  if [ -e "$canon" ]; then
+    [ -d "$canon" ] || {
+      echo "$name must be a directory, got: $canon" >&2
+      exit 1
+    }
+    case "$kind" in
+      install)
+        $SUDO test -d "$canon/.git" && $SUDO test -f "$canon/deploy/install.sh" || {
+          echo "$name is an existing non-Termweave directory, refusing: $canon" >&2
+          exit 1
+        }
+        ;;
+      data)
+        owner="$($SUDO stat -c '%U' -- "$canon")"
+        [ "$owner" = "$SERVICE_USER" ] || $SUDO test -f "$canon/userdata/state.sqlite" || {
+          echo "$name is an existing non-Termweave data directory, refusing: $canon" >&2
+          exit 1
+        }
+        ;;
+      *) echo "unknown privileged path kind: $kind" >&2; exit 1 ;;
+    esac
+  fi
   printf '%s\n' "$canon"
 }
-INSTALL_DIR="$(require_safe_dir TERMWEAVE_INSTALL_DIR "$INSTALL_DIR")"
-DATA_DIR="$(require_safe_dir TERMWEAVE_DATA_DIR "$DATA_DIR")"
+INSTALL_DIR="$(require_safe_dir TERMWEAVE_INSTALL_DIR "$INSTALL_DIR" install)"
+DATA_DIR="$(require_safe_dir TERMWEAVE_DATA_DIR "$DATA_DIR" data)"
 
 # The invoking (non-service) user that owns the checkout during git + build.
 BUILD_USER="$(id -un)"
