@@ -426,7 +426,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         if (instanceInfo && !instanceInfo.enabled) {
           return yield* toValidationError(
             "ProviderService.startSession",
-            `Provider instance '${requestedInstanceId}' is disabled in T1 Code settings.`,
+            `Provider instance '${requestedInstanceId}' is disabled in Termweave settings.`,
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));

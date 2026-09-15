@@ -34,6 +34,12 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome";
+import {
+  loadClaudeModelCatalog,
+  type ClaudeCatalogModel,
+} from "../Drivers/ClaudeModelCatalogCache";
+import { expandHomePath } from "../../pathExpansion";
+import { homedir } from "node:os";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
 
@@ -213,6 +219,57 @@ function getBuiltInClaudeModelsForVersion(
     }
     return true;
   });
+}
+
+// Generic reasoning ladder for catalog models we don't ship built-in; the
+// cache only tells us a model supports effort-style thinking, not its exact
+// ladder, so we expose a safe common subset.
+const GENERIC_CLAUDE_EFFORT_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High", isDefault: true },
+  { value: "ultrathink", label: "Ultrathink" },
+] as const;
+
+const resolveClaudeHomeDir = (claudeSettings: ClaudeSettings): string => {
+  const homePath = claudeSettings.homePath.trim();
+  return homePath.length > 0 ? expandHomePath(homePath) : homedir();
+};
+
+function claudeCatalogModelCapabilities(entry: ClaudeCatalogModel): ModelCapabilities {
+  // Keep the richer, hand-tuned descriptors for models we ship built-in.
+  const builtIn = BUILT_IN_MODELS.find((model) => model.slug === entry.slug);
+  if (builtIn) {
+    return builtIn.capabilities ?? DEFAULT_CLAUDE_MODEL_CAPABILITIES;
+  }
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(entry.thinkingType === "effort"
+        ? [
+            buildSelectOptionDescriptor({
+              id: "effort",
+              label: "Reasoning",
+              options: [...GENERIC_CLAUDE_EFFORT_OPTIONS],
+              promptInjectedValues: ["ultrathink"],
+            }),
+          ]
+        : []),
+      ...(entry.fastMode
+        ? [buildBooleanOptionDescriptor({ id: "fastMode", label: "Fast Mode" })]
+        : []),
+    ],
+  });
+}
+
+function claudeCatalogModels(
+  entries: ReadonlyArray<ClaudeCatalogModel>,
+): ReadonlyArray<ServerProviderModel> {
+  return entries.map((entry) => ({
+    slug: entry.slug,
+    name: entry.name,
+    isCustom: false,
+    capabilities: claudeCatalogModelCapabilities(entry),
+  }));
 }
 
 function formatClaudeOpus48UpgradeMessage(version: string | null): string {
@@ -537,8 +594,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ChildProcessSpawner.ChildProcessSpawner | Path.Path
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  // Prefer claude's own on-disk catalog; it tracks the real current models.
+  // Version gating below only applies to our built-in fallback list.
+  const catalogModels = yield* loadClaudeModelCatalog(resolveClaudeHomeDir(claudeSettings));
+  const catalogBaseModels = catalogModels.length > 0 ? claudeCatalogModels(catalogModels) : null;
   const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    catalogBaseModels ?? BUILT_IN_MODELS,
     PROVIDER,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
@@ -625,16 +686,20 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
+    catalogBaseModels ?? getBuiltInClaudeModelsForVersion(parsedVersion),
     PROVIDER,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const versionUpgradeMessage = supportsClaudeOpus48(parsedVersion)
+  // The built-in list's version gating (and its upgrade nudge) is moot once
+  // the live catalog drives the models.
+  const versionUpgradeMessage = catalogBaseModels
     ? undefined
-    : supportsClaudeOpus47(parsedVersion)
-      ? formatClaudeOpus48UpgradeMessage(parsedVersion)
-      : formatClaudeOpus47UpgradeMessage(parsedVersion);
+    : supportsClaudeOpus48(parsedVersion)
+      ? undefined
+      : supportsClaudeOpus47(parsedVersion)
+        ? formatClaudeOpus48UpgradeMessage(parsedVersion)
+        : formatClaudeOpus47UpgradeMessage(parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
@@ -690,8 +755,9 @@ export const makePendingClaudeProvider = (
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
+    const catalogModels = yield* loadClaudeModelCatalog(resolveClaudeHomeDir(claudeSettings));
     const models = providerModelsFromSettings(
-      BUILT_IN_MODELS,
+      catalogModels.length > 0 ? claudeCatalogModels(catalogModels) : BUILT_IN_MODELS,
       PROVIDER,
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,

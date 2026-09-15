@@ -570,6 +570,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (detail) {
       entry.detail = detail;
     }
+  } else if (payload && typeof payload.message === "string" && payload.message.length > 0) {
+    // runtime.error / runtime.warning carry their text in `message`, not `detail`.
+    entry.detail = payload.message;
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
