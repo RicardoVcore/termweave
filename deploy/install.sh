@@ -4,8 +4,8 @@
 # service user + data dir + env, the systemd unit, then verify-server.sh.
 #
 # Debian/Ubuntu (apt) only - matches VPS.md.
-# ponytail: apt + NodeSource only; other distros install Node/Bun themselves
-#           and re-run with TERMWEAVE_SKIP_RUNTIME=1.
+# ponytail: apt + NodeSource only; other distros install git/build tools/Node/Bun
+#           themselves and re-run with TERMWEAVE_SKIP_RUNTIME=1.
 #
 # Idempotent: safe to re-run (skips what already exists, pulls instead of clones).
 # Run as a normal user with sudo, or as root.
@@ -19,7 +19,7 @@
 #   TERMWEAVE_HOST        bind address      (default: 127.0.0.1)
 #   TERMWEAVE_PORT        bind port         (default: 3773)
 #   TERMWEAVE_AUTH_TOKEN  app token         (default: generated for non-loopback binds)
-#   TERMWEAVE_SKIP_RUNTIME=1  do not touch Node/Bun (bring your own)
+#   TERMWEAVE_SKIP_RUNTIME=1  skip all apt (build deps + Node/Bun); bring your own
 set -euo pipefail
 
 REPO="${TERMWEAVE_REPO:-https://github.com/RicardoVcore/termweave}"
@@ -43,6 +43,29 @@ command -v "${SUDO:-true}" >/dev/null 2>&1 || {
 
 is_loopback() { case "$1" in 127.* | ::1 | localhost) return 0 ;; *) return 1 ;; esac; }
 
+# Guard privileged paths that get `install -d`, recursive chown, or become a
+# service home. Must be absolute and not a system root - a typo like `/` would
+# otherwise reassign ownership of the whole filesystem.
+require_safe_dir() {
+  local name="$1" path="$2"
+  case "$path" in
+    /*) ;;
+    *) echo "$name must be an absolute path, got: $path" >&2; exit 1 ;;
+  esac
+  case "$path" in
+    / | /bin | /boot | /dev | /etc | /home | /lib | /lib64 | /proc | /root | /run | /sbin | /srv | /sys | /usr | /var | /opt)
+      echo "$name must be a dedicated subdirectory, refusing system root: $path" >&2
+      exit 1
+      ;;
+  esac
+}
+require_safe_dir TERMWEAVE_INSTALL_DIR "$INSTALL_DIR"
+require_safe_dir TERMWEAVE_DATA_DIR "$DATA_DIR"
+
+# The invoking (non-service) user that owns the checkout during git + build.
+BUILD_USER="$(id -un)"
+BUILD_GROUP="$(id -gn)"
+
 node_ok() {
   command -v /usr/bin/node >/dev/null 2>&1 || return 1
   local v
@@ -53,8 +76,12 @@ node_ok() {
 }
 
 log "build dependencies"
-$SUDO apt-get update -y
-$SUDO apt-get install -y git curl build-essential python3 openssl
+if [ "${TERMWEAVE_SKIP_RUNTIME:-0}" != 1 ]; then
+  $SUDO apt-get update -y
+  $SUDO apt-get install -y git curl build-essential python3 openssl
+else
+  log "TERMWEAVE_SKIP_RUNTIME=1 - skipping apt; bring your own git/build tools/Node/Bun"
+fi
 
 if [ "${TERMWEAVE_SKIP_RUNTIME:-0}" != 1 ]; then
   if node_ok; then
@@ -88,6 +115,10 @@ $SUDO install -d -m 750 /etc/termweave
 
 log "clone or update the repository at ${INSTALL_DIR}"
 if [ -d "$INSTALL_DIR/.git" ]; then
+  # Reconcile ownership to root before Git: a prior run handed the checkout to
+  # the service user, and `sudo git` as root on a foreign-owned repo trips
+  # `fatal: detected dubious ownership`.
+  $SUDO chown -R root:root "$INSTALL_DIR"
   $SUDO git -C "$INSTALL_DIR" fetch origin
   $SUDO git -C "$INSTALL_DIR" checkout "$BRANCH"
   $SUDO git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
@@ -96,7 +127,7 @@ else
 fi
 
 log "install dependencies and build"
-$SUDO chown -R "$(id -un)":"$(id -gn)" "$INSTALL_DIR" # build as the invoking user
+$SUDO chown -R "$BUILD_USER":"$BUILD_GROUP" "$INSTALL_DIR" # build as the invoking user
 (cd "$INSTALL_DIR" && "$BUN" install --frozen-lockfile && "$BUN" run build)
 
 log "service environment (/etc/termweave/server.env)"
@@ -132,7 +163,10 @@ $SUDO sed \
   "$INSTALL_DIR/deploy/systemd/termweave-server.service" |
   $SUDO tee /etc/systemd/system/termweave-server.service >/dev/null
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable --now termweave-server
+$SUDO systemctl enable termweave-server
+# restart, not `enable --now`: an already-active service keeps running old code,
+# host, or token otherwise, and verify would pass against the stale process.
+$SUDO systemctl restart termweave-server
 
 log "verify"
 $SUDO env TERMWEAVE_USER="$SERVICE_USER" TERMWEAVE_INSTALL_DIR="$INSTALL_DIR" \
