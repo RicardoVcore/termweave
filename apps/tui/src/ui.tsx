@@ -2818,6 +2818,7 @@ function resolveModelMenuModel(
   if (legacyProvider) {
     return (
       resolveSelectableModel(legacyProvider, value, options) ??
+      options[0]?.slug ??
       DEFAULT_MODEL_BY_PROVIDER[legacyProvider]
     );
   }
@@ -5470,8 +5471,21 @@ export function App({
   );
   const isModelSearchActive = modelSearchQuery.trim().length > 0;
   const visibleModelSearchResults = isModelSearchActive ? modelSearchResults : [];
-  const draftProviderModelOptions =
-    providerModelOptionsByInstance.get(draftProviderInstanceId) ?? [];
+  const draftProviderModelOptions = useMemo(
+    () => providerModelOptionsByInstance.get(draftProviderInstanceId) ?? [],
+    [providerModelOptionsByInstance, draftProviderInstanceId],
+  );
+  useEffect(() => {
+    // The persisted/default model can be absent from the live (cache-backed)
+    // catalog - e.g. a hard-coded default that the account no longer serves.
+    // Snap to the first available model so new turns don't dispatch a dead one.
+    if (
+      draftProviderModelOptions.length > 0 &&
+      !draftProviderModelOptions.some((option) => option.slug === draftModel)
+    ) {
+      setDraftModel(draftProviderModelOptions[0]!.slug);
+    }
+  }, [draftProviderModelOptions, draftModel]);
   const draftModelCapabilities = useMemo(
     () =>
       providerSnapshots
@@ -6691,7 +6705,7 @@ export function App({
 
   const requestAppExit = useCallback(() => {
     setConfirmDialog({
-      title: "Quit T1 Code?",
+      title: "Quit Termweave?",
       body: "Press Ctrl-C again or Enter to quit. Press Escape to stay in the session.",
       confirmLabel: "Quit",
       escapeBehavior: "cancel",
