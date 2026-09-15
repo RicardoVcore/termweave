@@ -108,7 +108,8 @@ sudo nft add rule inet termweave input ip saddr 100.64.0.0/10 tcp dport 3773 acc
 Persist across reboot with `sudo nft list ruleset | sudo tee /etc/nftables.conf`
 and `sudo systemctl enable nftables`. Note the `policy drop` above filters *all*
 input, so keep the SSH and loopback rules; adapt if you already manage
-`inet filter`.
+`inet filter`. Re-running the `add rule` lines appends duplicates - to start
+clean, `sudo nft delete table inet termweave` first, then re-add.
 
 ## Operations
 
@@ -128,18 +129,16 @@ sudo journalctl -u termweave-server -f          # follow
 sudo journalctl -u termweave-server --since today
 ```
 
-Backup. Stop first for a consistent SQLite snapshot; the `trap` restarts the
-service even if `tar` fails:
+Backup. Stop first for a consistent SQLite snapshot; the service is started
+again right after `tar` whether or not it succeeded, and a failure is reported:
 
 ```bash
 sudo install -d -m 700 /var/backups/termweave
 sudo systemctl stop termweave-server
-trap 'sudo systemctl start termweave-server' EXIT
-sudo tar czf "/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz" -C /var/lib termweave
+sudo tar czf "/var/backups/termweave/state-$(date +%Y%m%d-%H%M%S).tar.gz" -C /var/lib termweave; rc=$?
+sudo systemctl start termweave-server
+[ "$rc" -eq 0 ] && echo "backup ok" || echo "BACKUP FAILED (rc=$rc)"
 ```
-
-(The `trap` fires when the shell/session ends; in a script use `trap ... EXIT`
-around the `tar`.)
 
 Update. Each step must succeed before the next, so the service only restarts on
 a good build; if the build fails the service stays stopped - fix it or roll back
@@ -174,10 +173,13 @@ it). This overwrites `/var/lib/termweave` - destructive:
 
 ```bash
 sudo systemctl stop termweave-server
-sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib
-sudo chown -R termweave:termweave /var/lib/termweave
-sudo systemctl start termweave-server
+sudo tar xzf /var/backups/termweave/state-<stamp>.tar.gz -C /var/lib &&
+  sudo chown -R termweave:termweave /var/lib/termweave &&
+  sudo systemctl start termweave-server
 ```
+
+If the extraction fails the service is left stopped (not restarted onto broken
+state); re-extract from a good backup before starting.
 
 Always back up before an update so this restore is available if a migration is
 involved.

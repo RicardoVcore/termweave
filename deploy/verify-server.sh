@@ -19,7 +19,8 @@ INSTALL_DIR="${TERMWEAVE_INSTALL_DIR:-/opt/termweave}"
 NODE_BIN="${TERMWEAVE_NODE_BIN:-/usr/bin/node}"
 UNIT_FILE="/etc/systemd/system/${SERVICE}.service"
 SERVER_ENTRY="${INSTALL_DIR}/apps/server/dist/index.mjs"
-MIN_NODE_MAJOR=24 # repo engines: root node ^24.13.1, server >=24.10
+MIN_NODE_MAJOR=24
+MIN_NODE_MINOR=10 # repo runtime engine: node >=24.10
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root: sudo bash deploy/verify-server.sh" >&2
@@ -34,13 +35,17 @@ bad() {
   fail=1
 }
 
-# The Node binary systemd uses, and its version.
+# The Node binary systemd uses, and its version (require >= MIN_NODE_MAJOR.MIN_NODE_MINOR).
 if [ -x "${NODE_BIN}" ]; then
-  node_major="$("${NODE_BIN}" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  if [ "${node_major}" -ge "${MIN_NODE_MAJOR}" ] 2>/dev/null; then
-    pass "Node ${node_major}.x at ${NODE_BIN}"
+  node_ver="$("${NODE_BIN}" -p 'process.versions.node' 2>/dev/null || echo 0.0.0)"
+  node_major="${node_ver%%.*}"
+  node_minor="${node_ver#*.}"
+  node_minor="${node_minor%%.*}"
+  if [ "${node_major}" -gt "${MIN_NODE_MAJOR}" ] 2>/dev/null ||
+    { [ "${node_major}" -eq "${MIN_NODE_MAJOR}" ] && [ "${node_minor}" -ge "${MIN_NODE_MINOR}" ]; } 2>/dev/null; then
+    pass "Node ${node_ver} at ${NODE_BIN}"
   else
-    bad "Node at ${NODE_BIN} is ${node_major}.x, older than required ${MIN_NODE_MAJOR}.x"
+    bad "Node ${node_ver} at ${NODE_BIN} is older than required ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}"
   fi
 else
   bad "${NODE_BIN} not found or not executable (systemd ExecStart uses it)"
@@ -65,6 +70,17 @@ else
   bad "service user ${SERVICE_USER} does not exist"
 fi
 
+# Drop to the service user without assuming sudo is installed (minimal boxes).
+writable_by_user() { # writable_by_user <user> <path>
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$1" -- test -w "$2"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u "$1" test -w "$2"
+  else
+    return 3
+  fi
+}
+
 if [ -d "${DATA_DIR}" ]; then
   owner="$(stat -c '%U' "${DATA_DIR}" 2>/dev/null || echo '?')"
   if [ "${owner}" = "${SERVICE_USER}" ]; then
@@ -72,10 +88,13 @@ if [ -d "${DATA_DIR}" ]; then
   else
     bad "data dir ${DATA_DIR} owned by ${owner}, expected ${SERVICE_USER}"
   fi
-  if id "${SERVICE_USER}" >/dev/null 2>&1 && sudo -u "${SERVICE_USER}" test -w "${DATA_DIR}"; then
-    pass "data dir writable by ${SERVICE_USER}"
-  else
-    bad "data dir ${DATA_DIR} not writable by ${SERVICE_USER}"
+  if id "${SERVICE_USER}" >/dev/null 2>&1; then
+    writable_by_user "${SERVICE_USER}" "${DATA_DIR}"
+    case "$?" in
+    0) pass "data dir writable by ${SERVICE_USER}" ;;
+    3) warn "no runuser/sudo to test writability as ${SERVICE_USER}" ;;
+    *) bad "data dir ${DATA_DIR} not writable by ${SERVICE_USER}" ;;
+    esac
   fi
 else
   bad "data dir ${DATA_DIR} does not exist"
@@ -90,18 +109,20 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   check_prop() {
-    # check_prop <property> <expected-substring>
+    # check_prop <property> <expected> <mode: eq|contains>
     local actual
     actual="$(systemctl show -p "$1" --value "${SERVICE}" 2>/dev/null)"
-    case "${actual}" in
-    *"$2"*) pass "unit ${1}=${actual}" ;;
-    *) bad "unit ${1}='${actual}', expected to contain '$2'" ;;
-    esac
+    if { [ "$3" = eq ] && [ "${actual}" = "$2" ]; } ||
+      { [ "$3" = contains ] && case "${actual}" in *"$2"*) true ;; *) false ;; esac; }; then
+      pass "unit ${1}=${actual}"
+    else
+      bad "unit ${1}='${actual}', expected $([ "$3" = eq ] && echo "exactly" || echo "to contain") '$2'"
+    fi
   }
-  check_prop User "${SERVICE_USER}"
-  check_prop Group "${SERVICE_USER}"
-  check_prop WorkingDirectory "${INSTALL_DIR}"
-  check_prop ExecStart "${SERVER_ENTRY}"
+  check_prop User "${SERVICE_USER}" eq
+  check_prop Group "${SERVICE_USER}" eq
+  check_prop WorkingDirectory "${INSTALL_DIR}" eq
+  check_prop ExecStart "${SERVER_ENTRY}" contains
 
   if systemctl is-active --quiet "${SERVICE}"; then
     pass "service ${SERVICE} is active"
