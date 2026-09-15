@@ -134,11 +134,11 @@ $SUDO sed \
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now termweave-server
 
+log "verify"
+$SUDO env TERMWEAVE_USER="$SERVICE_USER" TERMWEAVE_INSTALL_DIR="$INSTALL_DIR" \
+  T3CODE_HOME="$DATA_DIR" bash "$INSTALL_DIR/deploy/verify-server.sh" # exit status propagates
+
 log "done - logs: ${SUDO:+sudo }journalctl -u termweave-server -f"
 if ! is_loopback "$HOST"; then
   echo "Non-loopback bind (${HOST}): restrict the port at the firewall (see VPS.md)."
 fi
-
-log "verify"
-$SUDO env TERMWEAVE_USER="$SERVICE_USER" TERMWEAVE_INSTALL_DIR="$INSTALL_DIR" \
-  T3CODE_HOME="$DATA_DIR" bash "$INSTALL_DIR/deploy/verify-server.sh" # exit status propagates
