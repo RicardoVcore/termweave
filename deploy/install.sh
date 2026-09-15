@@ -44,23 +44,27 @@ command -v "${SUDO:-true}" >/dev/null 2>&1 || {
 is_loopback() { case "$1" in 127.* | ::1 | localhost) return 0 ;; *) return 1 ;; esac; }
 
 # Guard privileged paths that get `install -d`, recursive chown, or become a
-# service home. Must be absolute and not a system root - a typo like `/` would
-# otherwise reassign ownership of the whole filesystem.
+# service home. Canonicalize first (realpath -m, no existence required) so
+# tricks like `/etc/..` cannot slip a system root past the checks, then require
+# an absolute path that is a subdirectory, never a system root itself. Prints
+# the canonical path on success.
 require_safe_dir() {
-  local name="$1" path="$2"
-  case "$path" in
+  local name="$1" canon
+  canon="$(realpath -m -- "$2")"
+  case "$canon" in
     /*) ;;
-    *) echo "$name must be an absolute path, got: $path" >&2; exit 1 ;;
+    *) echo "$name must be an absolute path, got: $2" >&2; exit 1 ;;
   esac
-  case "$path" in
+  case "$canon" in
     / | /bin | /boot | /dev | /etc | /home | /lib | /lib64 | /proc | /root | /run | /sbin | /srv | /sys | /usr | /var | /opt)
-      echo "$name must be a dedicated subdirectory, refusing system root: $path" >&2
+      echo "$name must be a dedicated subdirectory, refusing system root: $2 -> $canon" >&2
       exit 1
       ;;
   esac
+  printf '%s\n' "$canon"
 }
-require_safe_dir TERMWEAVE_INSTALL_DIR "$INSTALL_DIR"
-require_safe_dir TERMWEAVE_DATA_DIR "$DATA_DIR"
+INSTALL_DIR="$(require_safe_dir TERMWEAVE_INSTALL_DIR "$INSTALL_DIR")"
+DATA_DIR="$(require_safe_dir TERMWEAVE_DATA_DIR "$DATA_DIR")"
 
 # The invoking (non-service) user that owns the checkout during git + build.
 BUILD_USER="$(id -un)"
