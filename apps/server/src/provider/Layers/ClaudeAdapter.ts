@@ -2777,13 +2777,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const thinkingSupported = descriptors.some(
         (descriptor) => descriptor.type === "boolean" && descriptor.id === "thinking",
       );
+      const selectedFastMode = getModelSelectionBooleanOptionValue(modelSelection, "fastMode");
+      const selectedThinking = getModelSelectionBooleanOptionValue(modelSelection, "thinking");
       const fastMode =
-        (getModelSelectionBooleanOptionValue(modelSelection, "fastMode") ??
-          input.modelOptions?.claudeAgent?.fastMode) === true && fastModeSupported;
-      const thinking = thinkingSupported
-        ? (getModelSelectionBooleanOptionValue(modelSelection, "thinking") ??
-          input.modelOptions?.claudeAgent?.thinking)
-        : undefined;
+        (selectedFastMode ?? input.modelOptions?.claudeAgent?.fastMode) === true &&
+        (fastModeSupported || selectedFastMode !== undefined);
+      const thinking =
+        thinkingSupported || selectedThinking !== undefined
+          ? (selectedThinking ?? input.modelOptions?.claudeAgent?.thinking)
+          : undefined;
       const ultracode = isClaudeUltracodeEffort(effort);
       const effectiveEffort = getEffectiveClaudeAgentEffort(
         effort,

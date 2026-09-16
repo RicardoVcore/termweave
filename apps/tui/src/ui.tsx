@@ -196,6 +196,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "./keybindings";
+import { buildModelMenuRows, menuWindow } from "./modelMenuNavigation";
 import { createT1Logger } from "./log";
 import {
   deriveProviderInstanceEntries,
@@ -2761,6 +2762,7 @@ type ModelMenuOption = {
   readonly name: string;
   readonly shortName?: string;
   readonly subProvider?: string;
+  readonly isLegacy?: boolean;
   readonly isCustom: boolean;
 };
 type ModelSearchMenuItem = {
@@ -4234,6 +4236,7 @@ export function App({
     useState<ProviderInstanceId>(DEFAULT_CODEX_INSTANCE_ID);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
   const [modelMenuIndex, setModelMenuIndex] = useState(0);
+  const [legacyModelsExpanded, setLegacyModelsExpanded] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
@@ -5483,7 +5486,14 @@ export function App({
     }
     return optionsByInstance;
   }, [appSettings, modelMenuEntries, rawProviderModelOptionsByInstance]);
-  const modelOptions = providerModelOptionsByInstance.get(modelMenuInstanceId) ?? [];
+  const preferredModelOptions = providerModelOptionsByInstance.get(modelMenuInstanceId) ?? [];
+  const currentModelOptions = preferredModelOptions.filter((option) => !option.isLegacy);
+  const legacyModelOptions = preferredModelOptions.filter((option) => option.isLegacy);
+  const modelMenuRows = buildModelMenuRows(
+    currentModelOptions,
+    legacyModelOptions,
+    legacyModelsExpanded,
+  );
   const modelSearchItems = useMemo<ReadonlyArray<ModelSearchMenuItem>>(() => {
     const favoriteKeys = new Set(
       appSettings.favorites.map((favorite) => `${favorite.provider}:${favorite.model}`),
@@ -8160,13 +8170,21 @@ export function App({
           applyDraftProviderModel(selectedSearchResult.instanceId, selectedSearchResult.slug);
           return;
         }
-        const selected = modelOptions[modelPickerJumpIndex];
-        if (!isModelSearchActive && selected) {
-          applyDraftProviderModel(modelMenuInstanceId, selected.slug);
+        const selectedRow = modelMenuRows[modelPickerJumpIndex];
+        if (!isModelSearchActive && selectedRow?.kind === "model") {
+          applyDraftProviderModel(modelMenuInstanceId, selectedRow.option.slug);
+          return;
+        }
+        if (!isModelSearchActive && selectedRow?.kind === "legacyHeader") {
+          setLegacyModelsExpanded((current) => !current);
+          setModelMenuIndex(modelPickerJumpIndex);
           return;
         }
         setModelSubmenuOpen(true);
-        setModelMenuIndex(Math.min(Math.max(modelOptions.length - 1, 0), modelPickerJumpIndex));
+        const jumpRowCount = isModelSearchActive
+          ? visibleModelSearchResults.length
+          : modelMenuRows.length;
+        setModelMenuIndex(Math.min(Math.max(jumpRowCount - 1, 0), modelPickerJumpIndex));
         return;
       }
       const printableSequence =
@@ -8233,7 +8251,7 @@ export function App({
         }
         const visibleModelCount = isModelSearchActive
           ? visibleModelSearchResults.length
-          : modelOptions.length;
+          : modelMenuRows.length;
         setModelMenuIndex((current) => Math.min(Math.max(visibleModelCount - 1, 0), current + 1));
         return;
       }
@@ -8254,9 +8272,11 @@ export function App({
           applyDraftProviderModel(selectedSearchResult.instanceId, selectedSearchResult.slug);
           return;
         }
-        const selected = modelOptions[modelMenuIndex];
-        if (!isModelSearchActive && selected) {
-          applyDraftProviderModel(modelMenuInstanceId, selected.slug);
+        const selectedRow = modelMenuRows[modelMenuIndex];
+        if (!isModelSearchActive && selectedRow?.kind === "model") {
+          applyDraftProviderModel(modelMenuInstanceId, selectedRow.option.slug);
+        } else if (!isModelSearchActive && selectedRow?.kind === "legacyHeader") {
+          setLegacyModelsExpanded((current) => !current);
         }
         return;
       }
@@ -10511,16 +10531,24 @@ export function App({
 
   function focusModelProvider(nextInstanceId: ProviderInstanceId, openSubmenu: boolean = true) {
     const nextOptions = providerModelOptionsByInstance.get(nextInstanceId) ?? [];
+    const nextCurrentOptions = nextOptions.filter((option) => !option.isLegacy);
+    const nextLegacyOptions = nextOptions.filter((option) => option.isLegacy);
+    const selectedCurrentIndex =
+      nextInstanceId === draftProviderInstanceId
+        ? nextCurrentOptions.findIndex((option) => option.slug === draftModel)
+        : -1;
+    const selectedLegacyIndex =
+      nextInstanceId === draftProviderInstanceId
+        ? nextLegacyOptions.findIndex((option) => option.slug === draftModel)
+        : -1;
     setModelSearchQuery("");
     setModelMenuInstanceId(nextInstanceId);
     setModelSubmenuOpen(openSubmenu);
+    setLegacyModelsExpanded(selectedLegacyIndex >= 0);
     setModelMenuIndex(
-      Math.max(
-        nextInstanceId === draftProviderInstanceId
-          ? nextOptions.findIndex((option) => option.slug === draftModel)
-          : 0,
-        0,
-      ),
+      selectedLegacyIndex >= 0
+        ? nextCurrentOptions.length + 1 + selectedLegacyIndex
+        : Math.max(selectedCurrentIndex, 0),
     );
   }
 
@@ -11734,8 +11762,14 @@ export function App({
 
   const modelVisibleOptionCount = isModelSearchActive
     ? visibleModelSearchResults.length
-    : modelOptions.length;
+    : modelMenuRows.length;
   const modelMenuHeight = Math.min(Math.max(modelVisibleOptionCount, 1), 8);
+  const visibleModelSearchWindow = menuWindow(
+    visibleModelSearchResults,
+    modelMenuIndex,
+    modelMenuHeight,
+  );
+  const visibleModelMenuWindow = menuWindow(modelMenuRows, modelMenuIndex, modelMenuHeight);
   const modelProvidersHeight =
     2 +
     modelMenuEntries.length +
@@ -16818,9 +16852,9 @@ export function App({
               />
               {isModelSearchActive ? (
                 visibleModelSearchResults.length > 0 ? (
-                  visibleModelSearchResults
-                    .slice(0, modelMenuHeight)
-                    .map((item, index) => (
+                  visibleModelSearchWindow.rows.map((item, localIndex) => {
+                    const index = visibleModelSearchWindow.startIndex + localIndex;
+                    return (
                       <PopupRow
                         key={`model-search:${item.instanceId}:${item.slug}`}
                         icon={
@@ -16834,14 +16868,32 @@ export function App({
                         onHover={() => setModelMenuIndex(index)}
                         onPress={() => applyDraftProviderModel(item.instanceId, item.slug)}
                       />
-                    ))
+                    );
+                  })
                 ) : (
                   <text content="No matching models." style={{ fg: PALETTE.muted }} />
                 )
               ) : (
-                modelOptions
-                  .slice(0, modelMenuHeight)
-                  .map((option, index) => (
+                visibleModelMenuWindow.rows.map((row, localIndex) => {
+                  const index = visibleModelMenuWindow.startIndex + localIndex;
+                  if (row.kind === "legacyHeader") {
+                    return (
+                      <PopupRow
+                        key={`${modelMenuInstanceId}:legacy-header`}
+                        icon={legacyModelsExpanded ? "⌄" : "›"}
+                        label="Legacy models"
+                        trailingLabel={String(legacyModelOptions.length)}
+                        active={index === modelMenuIndex}
+                        onHover={() => setModelMenuIndex(index)}
+                        onPress={() => {
+                          setModelMenuIndex(index);
+                          setLegacyModelsExpanded((current) => !current);
+                        }}
+                      />
+                    );
+                  }
+                  const option = row.option;
+                  return (
                     <PopupRow
                       key={`${modelMenuInstanceId}:${option.slug}`}
                       icon={
@@ -16855,7 +16907,8 @@ export function App({
                       onHover={() => setModelMenuIndex(index)}
                       onPress={() => applyDraftProviderModel(modelMenuInstanceId, option.slug)}
                     />
-                  ))
+                  );
+                })
               )}
             </box>
           ) : null}

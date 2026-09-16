@@ -142,6 +142,9 @@ function parseCodexModelListResponse(
   return response.data.map((model) => ({
     slug: model.model,
     name: toDisplayName(model),
+    ...(model.description ? { description: model.description } : {}),
+    ...(model.isDefault ? { isDefault: true } : {}),
+    ...(model.hidden ? { isLegacy: true } : {}),
     isCustom: false,
     capabilities: mapCodexModelCapabilities(model),
   }));
@@ -172,6 +175,22 @@ function appendCustomCodexModels(
     });
   }
   return customEntries.length === 0 ? models : [...models, ...customEntries];
+}
+
+export function resolveCodexProviderModels(
+  cacheModels: ReadonlyArray<ServerProviderModel>,
+  liveModels: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  if (liveModels.length === 0) return cacheModels;
+
+  const seen = new Set(liveModels.map((model) => model.slug.trim().toLowerCase()));
+  const cachedLegacyModels = cacheModels.filter((model) => {
+    const key = model.slug.trim().toLowerCase();
+    if (!model.isLegacy || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return cachedLegacyModels.length > 0 ? [...liveModels, ...cachedLegacyModels] : liveModels;
 }
 
 function parseCodexSkillsListResponse(
@@ -210,17 +229,17 @@ function parseCodexSkillsListResponse(
   });
 }
 
-const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
+export const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   client: CodexClient.CodexAppServerClientShape,
 ) {
   const models: ServerProviderModel[] = [];
   let cursor: string | null | undefined = undefined;
 
   do {
-    const response: CodexSchema.V2ModelListResponse = yield* client.request(
-      "model/list",
-      cursor ? { cursor } : {},
-    );
+    const response: CodexSchema.V2ModelListResponse = yield* client.request("model/list", {
+      includeHidden: true,
+      ...(cursor ? { cursor } : {}),
+    });
     models.push(...parseCodexModelListResponse(response));
     cursor = response.nextCursor;
   } while (cursor);
@@ -308,11 +327,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     { concurrency: "unbounded" },
   );
 
-  // Prefer codex's own on-disk catalog: it is the fresh, account-correct model
-  // list (the app-server RPC is often stale or empty). Fall back to whatever
-  // the RPC returned only when the cache is unavailable.
-  const cacheModels = yield* loadCodexModelsFromCache(input.homePath);
-  const resolvedModels = cacheModels.length > 0 ? cacheModels : liveModels;
+  // Live model/list is authoritative for current models. The cache remains a
+  // fallback for older CLIs and can enrich the live response with hidden legacy entries.
+  const cacheModels = yield* loadCodexModelsFromCache(input.homePath, input.environment);
+  const resolvedModels = resolveCodexProviderModels(cacheModels, liveModels);
 
   return {
     account: accountResponse,
@@ -428,7 +446,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   // Seed models from codex's on-disk catalog so the picker shows the real,
   // current models even when the probe is disabled, fails, or times out.
-  const cacheModels = yield* loadCodexModelsFromCache(codexSettings.homePath);
+  const cacheModels = yield* loadCodexModelsFromCache(codexSettings.homePath, environment);
   const emptyModels =
     cacheModels.length > 0
       ? appendCustomCodexModels(cacheModels, codexSettings.customModels)

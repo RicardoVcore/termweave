@@ -16,6 +16,7 @@ const CLAUDE_CODE_SURFACE = "cc";
 export type ClaudeCatalogModel = {
   readonly slug: string;
   readonly name: string;
+  readonly hidden: boolean;
   readonly thinkingType: "effort" | "none";
   readonly fastMode: boolean;
 };
@@ -58,13 +59,14 @@ export function parseClaudeCatalogFile(
       continue;
     }
     const slug = typeof model.id === "string" ? model.id.trim() : "";
-    if (!slug || seen.has(slug) || model.hidden === true) {
+    if (!slug || seen.has(slug)) {
       continue;
     }
     seen.add(slug);
     models.push({
       slug,
       name: typeof model.name === "string" && model.name.length > 0 ? model.name : slug,
+      hidden: model.hidden === true,
       thinkingType: model.thinking?.type === "effort" ? "effort" : "none",
       // `fast_mode` is a config object when supported, absent otherwise; a
       // literal `false` means off.

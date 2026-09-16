@@ -1656,6 +1656,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
@@ -1694,6 +1695,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [
@@ -1862,6 +1864,7 @@ describe("WebSocket Server", () => {
     ) as KeybindingsConfig;
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
@@ -1917,6 +1920,7 @@ describe("WebSocket Server", () => {
     expect(configResponse.error).toBeUndefined();
     expect(configResponse.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],

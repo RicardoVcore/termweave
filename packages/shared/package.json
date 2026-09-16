@@ -55,6 +55,10 @@
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
+    },
+    "./pathExpansion": {
+      "types": "./src/pathExpansion.ts",
+      "import": "./src/pathExpansion.ts"
     }
   },
   "scripts": {

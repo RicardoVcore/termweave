@@ -161,6 +161,7 @@ describe("providerInstances", () => {
             name: "Claude Opus 4.6",
             shortName: "Opus 4.6",
             subProvider: "GitHub Copilot",
+            isLegacy: true,
           },
         ],
       }),
@@ -174,6 +175,7 @@ describe("providerInstances", () => {
         name: "Claude Opus 4.6",
         shortName: "Opus 4.6",
         subProvider: "GitHub Copilot",
+        isLegacy: true,
         isCustom: false,
       },
     ]);

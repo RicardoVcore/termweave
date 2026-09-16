@@ -958,10 +958,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.serverDiscoverSourceControl:
         return yield* sourceControlDiscovery.discover({ cwd });
 
-      case WS_METHODS.serverGetAdvertisedEndpoints:
+      case WS_METHODS.serverGetAdvertisedEndpoints: {
+        const address = httpServer.address();
+        const advertisedPort =
+          typeof address === "object" && address !== null ? address.port : port;
         return {
-          endpoints: buildCoreAdvertisedEndpoints({ host, port }),
+          endpoints: buildCoreAdvertisedEndpoints({ host, port: advertisedPort }),
         };
+      }
 
       case WS_METHODS.sourceControlLookupRepository: {
         const body = stripRequestTag(request.body);

@@ -31,8 +31,7 @@ describe("AdvertisedEndpoints", () => {
         source: "server",
         status: "available",
         isDefault: true,
-        description:
-          "Current Termweave backend endpoint for local browsers and attachable TUI sessions.",
+        description: "Current Termweave backend endpoint for attachable TUI sessions.",
       },
     ]);
   });

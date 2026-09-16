@@ -16,6 +16,7 @@ import {
 } from "@termweave/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@termweave/shared/git";
 import {
+  getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
 } from "@termweave/shared/model";
@@ -138,9 +139,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     const thinking =
-      thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined;
+      getModelSelectionBooleanOptionValue(modelSelection, "thinking") ??
+      (thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined);
     const fastMode =
-      fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
+      getModelSelectionBooleanOptionValue(modelSelection, "fastMode") ??
+      (fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined);
     const settings = {
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),

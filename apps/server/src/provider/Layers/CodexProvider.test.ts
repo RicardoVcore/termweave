@@ -2,11 +2,14 @@ import { assert, describe, it } from "@effect/vitest";
 import { CodexSettings } from "@termweave/contracts";
 import { Effect, Layer, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
+  requestAllCodexModels,
+  resolveCodexProviderModels,
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider";
 
@@ -45,6 +48,74 @@ const authenticatedSnapshot: CodexAppServerProviderSnapshot = {
 };
 
 describe("CodexProvider", () => {
+  it("uses live current models and enriches them with cached legacy models", () => {
+    const capabilities = authenticatedSnapshot.models[0]!.capabilities;
+    const models = resolveCodexProviderModels(
+      [
+        {
+          slug: "gpt-stale",
+          name: "GPT Stale",
+          isCustom: false,
+          capabilities,
+        },
+        {
+          slug: "gpt-legacy",
+          name: "GPT Legacy",
+          isLegacy: true,
+          isCustom: false,
+          capabilities,
+        },
+      ],
+      [
+        {
+          slug: "gpt-current",
+          name: "GPT Current",
+          isCustom: false,
+          capabilities,
+        },
+      ],
+    );
+
+    assert.deepEqual(
+      models.map((model) => model.slug),
+      ["gpt-current", "gpt-legacy"],
+    );
+  });
+
+  it.effect("requests and preserves hidden app-server models", () =>
+    Effect.gen(function* () {
+      const requests: Array<unknown> = [];
+      const client = {
+        request: (_method: string, params: unknown) =>
+          Effect.sync(() => {
+            requests.push(params);
+            return {
+              data: [
+                {
+                  id: "gpt-legacy",
+                  model: "gpt-legacy",
+                  displayName: "GPT Legacy",
+                  description: "Previous generation",
+                  hidden: true,
+                  isDefault: false,
+                  supportedReasoningEfforts: [],
+                  defaultReasoningEffort: "medium",
+                },
+              ],
+              nextCursor: null,
+            };
+          }),
+      } as unknown as CodexClient.CodexAppServerClientShape;
+
+      const models = yield* requestAllCodexModels(client);
+
+      assert.deepEqual(requests, [{ includeHidden: true }]);
+      assert.equal(models[0]?.slug, "gpt-legacy");
+      assert.equal(models[0]?.isLegacy, true);
+      assert.equal(models[0]?.description, "Previous generation");
+    }),
+  );
+
   it.effect("builds pending disabled snapshots", () =>
     Effect.gen(function* () {
       const snapshot = yield* makePendingCodexProvider(
