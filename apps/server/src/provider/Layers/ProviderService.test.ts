@@ -1171,7 +1171,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
     }),
   );
 
-  it.effect("returns ProviderValidationError for invalid input payloads", () =>
+  it.effect("returns ProviderUnsupportedError for unknown provider instances", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
 
@@ -1187,12 +1187,11 @@ validation.layer("ProviderServiceLive validation", (it) => {
       if (failure._tag !== "Failure") {
         return;
       }
-      assert.equal(failure.failure._tag, "ProviderValidationError");
-      if (failure.failure._tag !== "ProviderValidationError") {
+      assert.equal(failure.failure._tag, "ProviderUnsupportedError");
+      if (failure.failure._tag !== "ProviderUnsupportedError") {
         return;
       }
-      assert.equal(failure.failure.operation, "ProviderService.startSession");
-      assert.equal(failure.failure.issue.includes("invalid-provider"), true);
+      assert.equal(failure.failure.provider, "invalid-provider");
     }),
   );
 

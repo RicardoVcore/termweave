@@ -128,16 +128,16 @@ describe("AcpSessionRuntime", () => {
         "ContentDelta",
         "AssistantItemCompleted",
         "ToolCallUpdated",
-        "ToolCallUpdated",
         "AssistantItemStarted",
         "ContentDelta",
+        "AssistantItemCompleted",
       ]);
 
       const firstStarted = notes[0];
       const firstDelta = notes[1];
       const firstCompleted = notes[2];
-      const secondStarted = notes[5];
-      const secondDelta = notes[6];
+      const secondStarted = notes[4];
+      const secondDelta = notes[5];
       expect(firstStarted?._tag).toBe("AssistantItemStarted");
       expect(firstCompleted?._tag).toBe("AssistantItemCompleted");
       expect(secondStarted?._tag).toBe("AssistantItemStarted");

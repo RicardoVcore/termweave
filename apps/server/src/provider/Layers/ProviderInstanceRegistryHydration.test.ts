@@ -51,23 +51,23 @@ describe("ProviderInstanceRegistryHydration", () => {
   });
 
   it.effect(
-    "hydrates registered legacy providers and shadows missing drivers",
+    "hydrates all default provider instances",
     () =>
       Effect.gen(function* () {
         const registry = yield* ProviderInstanceRegistry;
         const instances = yield* registry.listInstances;
         assert.deepEqual(
           instances.map((instance) => instance.instanceId),
-          ["codex", "claudeAgent"],
+          ["codex", "claudeAgent", "cursor", "opencode"],
         );
         const unavailable = yield* registry.listUnavailable;
         assert.deepEqual(
           unavailable.map((provider) => provider.instanceId),
-          ["cursor", "opencode"],
+          [],
         );
         assert.deepEqual(
           unavailable.map((provider) => provider.driver),
-          ["cursor", "opencode"],
+          [],
         );
         assert.ok(
           unavailable.every(

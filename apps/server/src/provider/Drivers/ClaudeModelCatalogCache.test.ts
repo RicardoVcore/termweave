@@ -6,7 +6,7 @@ const catalog = (models: unknown, surface = "cc", fetchedAt = 1) =>
   JSON.stringify({ fetchedAt, catalog: { surface, config: { models } } });
 
 describe("parseClaudeCatalogFile", () => {
-  it("maps cc-surface models and drops hidden ones", () => {
+  it("maps cc-surface models and preserves hidden status", () => {
     const parsed = parseClaudeCatalogFile(
       catalog([
         { id: "claude-opus-5", name: "Opus 5", thinking: { type: "effort" }, fast_mode: {} },
@@ -17,8 +17,27 @@ describe("parseClaudeCatalogFile", () => {
 
     expect(parsed?.fetchedAt).toBe(1);
     expect(parsed?.models).toEqual([
-      { slug: "claude-opus-5", name: "Opus 5", thinkingType: "effort", fastMode: true },
-      { slug: "claude-haiku-4-5", name: "Haiku 4.5", thinkingType: "none", fastMode: false },
+      {
+        slug: "claude-opus-5",
+        name: "Opus 5",
+        hidden: false,
+        thinkingType: "effort",
+        fastMode: true,
+      },
+      {
+        slug: "claude-haiku-4-5",
+        name: "Haiku 4.5",
+        hidden: false,
+        thinkingType: "none",
+        fastMode: false,
+      },
+      {
+        slug: "claude-internal",
+        name: "Internal",
+        hidden: true,
+        thinkingType: "none",
+        fastMode: false,
+      },
     ]);
   });
 
