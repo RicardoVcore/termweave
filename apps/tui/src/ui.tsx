@@ -169,6 +169,13 @@ import { resolveTuiPaths } from "./config";
 import { resolveComposerPrimaryAction } from "./composerAction";
 import { parseStandaloneComposerModeCommand } from "./composerCommands";
 import { isCommandPaletteProjectPathQuery } from "./commandPaletteProjects";
+import {
+  createQueuedMessage,
+  type QueuedMessage,
+  moveQueuedMessage,
+  queueMessagesForThread,
+  removeQueuedMessage,
+} from "./messageQueue";
 import { expandUserPath, normalizeWorkspaceRoot } from "./workspacePaths";
 import { clampSlashCommandMenuIndex, resolveTuiSlashCommandMenu } from "./composerSlashMenu";
 import { formatReasoningEffortLabel, truncateToolbarLabel } from "./composerControlLabels";
@@ -4163,6 +4170,7 @@ export function App({
   const sendInFlightRef = useRef(false);
   const interruptInFlightRef = useRef(false);
   const [pendingSends, setPendingSends] = useState<PendingSendPreview[]>([]);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [sendAnimationTick, setSendAnimationTick] = useState(0);
   const [sidebarPulseTick, setSidebarPulseTick] = useState(0);
   const [projectPathDraft, setProjectPathDraft] = useState("");
@@ -5347,6 +5355,9 @@ export function App({
         .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
     : [];
   const showAssistantTyping = activeThreadIsRunning || activePendingSends.length > 0;
+  const activeQueuedMessages = activeThreadId
+    ? queueMessagesForThread(queuedMessages, activeThreadId)
+    : [];
   const latestProposedPlan = activeThread
     ? findLatestProposedPlan(activeThread.proposedPlans, activeThread.latestTurn?.turnId ?? null)
     : null;
@@ -8583,6 +8594,41 @@ export function App({
     ) {
       scheduleTimelineScrollStateSync();
     }
+    if (key.meta && (key.name === "up" || key.name === "down") && activeThreadId) {
+      const threadQueue = queueMessagesForThread(queuedMessages, activeThreadId);
+      if (threadQueue.length === 0) {
+        return;
+      }
+      const queueIndex = threadQueue.length > 1 ? Math.min(1, threadQueue.length - 1) : 0;
+      const target = threadQueue[queueIndex];
+      if (!target) {
+        return;
+      }
+      key.preventDefault();
+      setQueuedMessages((current) => {
+        const next = moveQueuedMessage(current, target.messageId, key.name === "up" ? -1 : 1);
+        return next;
+      });
+      return;
+    }
+    if (key.ctrl && key.name === "d" && activeThreadId) {
+      const threadQueue = queueMessagesForThread(queuedMessages, activeThreadId);
+      if (threadQueue.length === 0) {
+        return;
+      }
+      key.preventDefault();
+      const target = threadQueue[threadQueue.length - 1];
+      if (!target) {
+        return;
+      }
+      setQueuedMessages((current) => removeQueuedMessage(current, target.messageId));
+      setStatus("Queued message cancelled");
+      logger.log("composer.queuedCancelled", {
+        threadId: activeThreadId,
+        messageId: target.messageId,
+      });
+      return;
+    }
     if (!key.ctrl && key.name === "v" && showFullDiffView && focusArea === "diff") {
       setDiffView((current) => (current === "unified" ? "split" : "unified"));
     }
@@ -10335,6 +10381,45 @@ export function App({
       if (!trimmed && pendingAttachments.length === 0) {
         return;
       }
+      if (activeThread && activeThreadIsRunning) {
+        const queuedMessage = createQueuedMessage({
+          threadId: activeThread.id,
+          messageId: newMessageId(),
+          text: trimmed,
+          mentions: composerMentions.map(cloneComposerMention),
+          attachments: pendingAttachments,
+          createdAt: nowIso(),
+          dispatch: {
+            provider: draftProvider,
+            model: draftModel,
+            interactionMode: draftInteractionMode,
+            runtimeMode: draftRuntimeMode,
+            assistantDeliveryMode: assistantStreamingEnabled ? "streaming" : "buffered",
+          },
+        });
+        setQueuedMessages((current) => [...current, queuedMessage]);
+        setSelectedProjectId(projectId);
+        setSelectedThreadId(activeThread.id);
+        resetComposerTextarea("");
+        setComposerMentions([]);
+        setComposerAttachments([]);
+        const activeDraftKey = activeThreadId ?? activeThread.id;
+        setComposerDraftsByThreadId((current) => {
+          if (!current[activeDraftKey]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[activeDraftKey];
+          return next;
+        });
+        setStatus("Message queued");
+        logger.log("composer.queued", {
+          threadId: activeThread.id,
+          messageId: queuedMessage.messageId,
+          length: trimmed.length,
+        });
+        return;
+      }
       const submissionAttachments = pendingAttachments.map((attachment) => ({
         type: "image" as const,
         name: attachment.name,
@@ -10479,10 +10564,81 @@ export function App({
       });
       setStatus("Prompt sent");
       logger.log("composer.sent", { threadId, length: trimmed.length });
+      scrollTimelineToBottom();
     } finally {
       sendInFlightRef.current = false;
     }
   }
+
+  // Pump the queue: when the thread settles with queued messages left, dispatch
+  // the head. Re-dispatch on dependency change is guarded by messageId tracking.
+  const queuedHeadPumpRef = useRef<string | null>(null);
+  useEffect(() => {
+    const threadId = activeThreadId;
+    if (!threadId) {
+      return;
+    }
+    if (activeThreadIsRunning) {
+      queuedHeadPumpRef.current = null;
+      return;
+    }
+    const queue = queueMessagesForThread(queuedMessages, threadId);
+    const head = queue[0];
+    if (!head || queuedHeadPumpRef.current === head.messageId) {
+      return;
+    }
+    queuedHeadPumpRef.current = head.messageId;
+    setQueuedMessages((current) => current.filter((entry) => entry.messageId !== head.messageId));
+    setPendingSends((current) => [
+      ...current,
+      {
+        threadId,
+        messageId: head.messageId,
+        text: head.text,
+        mentions: [...head.mentions] as PendingSendPreview["mentions"],
+        attachments: [...head.attachments] as PendingSendPreview["attachments"],
+        createdAt: head.createdAt,
+        visibleUntil: Date.now() + SEND_PLACEHOLDER_MIN_DURATION_MS,
+      },
+    ]);
+    void dispatch({
+      type: "thread.turn.start",
+      commandId: newCommandId(),
+      threadId: threadId as never,
+      message: {
+        messageId: head.messageId,
+        role: "user",
+        text: head.text,
+        attachments: head.attachments.map((attachment) => ({
+          type: "image" as const,
+          name: attachment.name,
+          mimeType: "image/png",
+          sizeBytes: 0,
+          dataUrl: "",
+        })),
+      },
+      ...(head.dispatch.provider !== undefined ? { provider: head.dispatch.provider } : {}),
+      ...(head.dispatch.model !== undefined ? { model: head.dispatch.model } : {}),
+      ...(head.dispatch.interactionMode !== undefined
+        ? { interactionMode: head.dispatch.interactionMode }
+        : {}),
+      ...(head.dispatch.runtimeMode !== undefined
+        ? { runtimeMode: head.dispatch.runtimeMode }
+        : {}),
+      assistantDeliveryMode: head.dispatch.assistantDeliveryMode ?? "buffered",
+      createdAt: head.createdAt,
+    } as never).catch((error: unknown) => {
+      setQueuedMessages((current) => [...current, head]);
+      setStatus("Queued message failed to send");
+      logger.log("composer.queuedSendFailed", {
+        threadId,
+        messageId: head.messageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    logger.log("composer.queuedDispatched", { threadId, messageId: head.messageId });
+    scrollTimelineToBottom();
+  }, [activeThreadId, activeThreadIsRunning, queuedMessages, scrollTimelineToBottom]);
 
   async function interruptActiveTurn() {
     if (!activeThread || !activeThreadIsRunning || interruptInFlightRef.current) {
@@ -15620,7 +15776,10 @@ export function App({
                                 alignSelf: "flex-end",
                               }}
                             >
-                              <MessageMentions mentions={entry.mentions} align="flex-end" />
+                              <MessageMentions
+                                mentions={entry.mentions as readonly ComposerMention[]}
+                                align="flex-end"
+                              />
                               <MessageAttachments
                                 attachments={entry.attachments}
                                 align="flex-end"
@@ -15649,6 +15808,69 @@ export function App({
                       );
                     })(),
                   )}
+
+                  {activeQueuedMessages.map((entry, index) => {
+                    const queuedBody = stripMentionTokensFromText(entry.text).body;
+                    const isQueueHead = index === 0;
+                    return (
+                      <box
+                        key={`queued-message-${entry.messageId}`}
+                        style={{
+                          width: "100%",
+                          marginTop: 1,
+                          marginBottom: 1,
+                          flexDirection: "column",
+                          alignItems: "flex-end",
+                        }}
+                      >
+                        <box
+                          style={{
+                            width: userMessageBubbleWidth,
+                            flexDirection: "column",
+                            flexShrink: 1,
+                            alignItems: "flex-end",
+                          }}
+                        >
+                          <text
+                            content={
+                              isQueueHead ? "Queued - next" : `Queued - position ${index + 1}`
+                            }
+                            style={{ fg: PALETTE.subtle }}
+                          />
+                          <box
+                            style={{
+                              width: "auto",
+                              maxWidth: "100%",
+                              minWidth: 0,
+                              paddingLeft: 1,
+                              paddingRight: 1,
+                              flexDirection: "column",
+                              flexShrink: 1,
+                              alignSelf: "flex-end",
+                            }}
+                          >
+                            <MessageMentions
+                              mentions={entry.mentions as readonly ComposerMention[]}
+                              align="flex-end"
+                            />
+                            {queuedBody.length > 0 ? (
+                              <MessageMarkdown
+                                content={queuedBody}
+                                fillWidth={false}
+                                onCopyCodeBlock={(value) => {
+                                  void copyToClipboard(value, "Code copied");
+                                }}
+                              />
+                            ) : null}
+                          </box>
+                          <text
+                            content="Alt+↑/↓ move · Ctrl+D cancel"
+                            style={{ fg: PALETTE.subtle }}
+                          />
+                        </box>
+                      </box>
+                    );
+                  })}
 
                   {showAssistantTyping ? (
                     <box
