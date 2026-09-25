@@ -10638,6 +10638,7 @@ export function App({
     });
     logger.log("composer.queuedDispatched", { threadId, messageId: head.messageId });
     scrollTimelineToBottom();
+    // eslint-disable-next-line eslint-plugin-react-hooks(exhaustive-deps) -- dispatch/logger are stable component scope; ref guard prevents re-pump
   }, [activeThreadId, activeThreadIsRunning, queuedMessages, scrollTimelineToBottom]);
 
   async function interruptActiveTurn() {
