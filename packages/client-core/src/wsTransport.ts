@@ -11,6 +11,13 @@ import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
 
+/** A queued outbound envelope. `id` links the payload to its pending request so
+ *  a timed-out request can be dropped before the socket reopens. */
+interface QueuedEnvelope {
+  readonly id: string | null;
+  readonly encoded: string;
+}
+
 interface PendingRequest {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -99,7 +106,7 @@ export class WsTransport {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Map<string, Set<(message: WsPush) => void>>();
   private readonly latestPushByChannel = new Map<string, WsPush>();
-  private readonly outboundQueue: string[] = [];
+  private readonly outboundQueue: QueuedEnvelope[] = [];
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
@@ -154,6 +161,7 @@ export class WsTransport {
           ? null
           : setTimeout(() => {
               this.pending.delete(id);
+              this.dropQueued(id);
               reject(new Error(`Request timed out: ${method}`));
             }, timeoutMs);
 
@@ -163,7 +171,7 @@ export class WsTransport {
         timeout,
       });
 
-      this.send(encoded);
+      this.send(encoded, id);
     });
   }
 
@@ -373,9 +381,18 @@ export class WsTransport {
     pending.resolve(message.result);
   }
 
-  private send(encoded: string) {
+  /** Remove a queued payload by request id so a timed-out request is never
+   *  sent after the caller already received a timeout. */
+  private dropQueued(id: string) {
+    const index = this.outboundQueue.findIndex((entry) => entry.id === id);
+    if (index >= 0) {
+      this.outboundQueue.splice(index, 1);
+    }
+  }
+
+  private send(encoded: string, id: string | null = null) {
     if (this.ws?.readyState !== 1) {
-      this.outboundQueue.push(encoded);
+      this.outboundQueue.push({ id, encoded });
       return;
     }
     try {
@@ -394,7 +411,7 @@ export class WsTransport {
       if (!next) {
         continue;
       }
-      this.ws.send(next);
+      this.ws.send(next.encoded);
     }
   }
 
