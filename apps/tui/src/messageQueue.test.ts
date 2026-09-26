@@ -14,8 +14,8 @@ import {
   queuedSendRetryBackoffMs,
   requeueDispatchingHead,
   removeQueuedMessage,
+  resolveDispatchingTransition,
   resolveQueuePumpDecision,
-  shouldReleaseDispatchingEntry,
   takeQueuedHead,
 } from "./messageQueue";
 
@@ -175,33 +175,42 @@ describe("messageQueue", () => {
     });
   });
 
-  it("pump holds the dispatching barrier until the turn persists, then releases it", () => {
+  it("pump holds the dispatching barrier until the turn fully settles, not merely on persistence", () => {
     let queue = enqueueMessage([], makeMessage("m1"));
     queue = enqueueMessage(queue, makeMessage("m2"));
+    const dispatchedAt = 1_000;
+    queue = markQueuedHeadDispatching(queue, "m1", dispatchedAt);
 
-    // Accepted dispatch: entry stays dispatching, pump blocked.
-    queue = markQueuedHeadDispatching(queue, "m1");
-    expect(resolveQueuePumpDecision("thread-1", queue, false, {}, 1000).action).toBe(
-      "block-dispatching",
-    );
+    // Review case: the user message persisted but the provider turn has not
+    // started yet (startup delayed). The barrier MUST hold so the second
+    // prompt does not dispatch early.
+    const pendingTurn = resolveDispatchingTransition(queue[0]!, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: true,
+      now: dispatchedAt + 10_000,
+    });
+    expect(pendingTurn).toEqual({ kind: "in-flight", removeEntry: false });
 
-    // Turn lifecycle continues: user message persisted -> release the head.
-    const persisted = queue.map((entry) =>
-      entry.messageId === "m1" ? { ...entry, status: "dispatching" as const } : entry,
-    );
-    expect(shouldReleaseDispatchingEntry(persisted[0]!, true, 1000)).toBe(true);
+    // The turn settled: message persisted AND provider no longer running.
+    const settled = resolveDispatchingTransition(queue[0]!, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: false,
+      now: dispatchedAt + 10_000,
+    });
+    expect(settled).toEqual({ kind: "complete", removeEntry: true });
 
-    // The second queued prompt still cannot start while the head is in the
-    // queue (removal of the persisted head is the pump's own cleanup).
-    expect(resolveQueuePumpDecision("thread-1", queue, false, {}, 1000).action).toBe(
-      "block-dispatching",
-    );
+    // With the entry still in the queue the pump stays blocked.
+    expect(resolveQueuePumpDecision("thread-1", queue, false, {}, 10_000)).toEqual({
+      action: "block-dispatching",
+    });
   });
 
   it("never deletes an unsent prompt: retries use backoff, not removal", () => {
     let queue = enqueueMessage([], makeMessage("m1"));
     for (let attempt = 1; attempt <= 5; attempt++) {
-      queue = markQueuedHeadDispatching(queue, "m1");
+      queue = markQueuedHeadDispatching(queue, "m1", 1_000);
       // Failure: the entry returns to queued with backoff; nothing removes it.
       queue = requeueDispatchingHead(queue, "m1");
       const backoff = queuedSendRetryBackoffMs(attempt);
@@ -245,21 +254,52 @@ describe("messageQueue", () => {
     expect(decision).toEqual({ action: "dispatch", head: queueWithoutHead[0] });
   });
 
-  it("stuck-dispatch valve releases only after the deadline and keeps the prompt", () => {
+  it("stuck-dispatch valve is measured from dispatch start and requeues instead of deleting", () => {
     let queue = enqueueMessage([], makeMessage("m1"));
-    queue = markQueuedHeadDispatching(queue, "m1");
+    const queuedAt = 500;
+    const dispatchedAt = 60_000; // dispatched long after being queued
+    queue = markQueuedHeadDispatching(queue, "m1", dispatchedAt);
     const entry = queue[0]!;
-    const queuedAt = Date.parse(entry.createdAt);
 
-    // Within the deadline: keep holding the barrier.
-    expect(shouldReleaseDispatchingEntry(entry, false, queuedAt + 1000)).toBe(false);
-    // Past the deadline: release to queued (not delete).
-    expect(
-      shouldReleaseDispatchingEntry(entry, false, queuedAt + QUEUED_SEND_STUCK_DISPATCH_MS + 1),
-    ).toBe(true);
+    // A long-running turn that started more than the valve window after
+    // queueing must NOT expire the barrier - the valve is keyed off dispatch
+    // start, not queue time.
+    const duringLongTurn = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: true,
+      now: dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS - 1,
+    });
+    expect(duringLongTurn).toEqual({ kind: "in-flight", removeEntry: false });
 
-    // A persisted message releases immediately regardless of deadline.
-    expect(shouldReleaseDispatchingEntry(entry, true, queuedAt + 1000)).toBe(true);
+    // Valve expiry requeues (removeEntry: false), it never deletes.
+    const lost = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: false,
+      turnRunning: false,
+      now: dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS,
+    });
+    expect(lost).toEqual({ kind: "lost", removeEntry: false });
+
+    // Before the valve, with nothing persisted, the barrier holds.
+    const inFlight = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: false,
+      turnRunning: false,
+      now: dispatchedAt + 1_000,
+    });
+    expect(inFlight).toEqual({ kind: "in-flight", removeEntry: false });
+
+    // Queue-time age is irrelevant: a prompt queued during a 2-minute turn is
+    // still recoverable after the turn ends (no deletion, just requeue).
+    const afterLongQueueAge = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: false,
+      turnRunning: false,
+      now: queuedAt + 200_000,
+    });
+    expect(afterLongQueueAge.kind).toBe("lost");
+    expect(afterLongQueueAge.removeEntry).toBe(false);
   });
 
   it("reports the retry cap constant used for status messaging", () => {

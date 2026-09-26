@@ -179,8 +179,8 @@ import {
   queuedSendRetryBackoffMs,
   requeueDispatchingHead,
   removeQueuedMessage,
+  resolveDispatchingTransition,
   resolveQueuePumpDecision,
-  shouldReleaseDispatchingEntry,
 } from "./messageQueue";
 import { expandUserPath, normalizeWorkspaceRoot } from "./workspacePaths";
 import { clampSlashCommandMenuIndex, resolveTuiSlashCommandMenu } from "./composerSlashMenu";
@@ -6457,21 +6457,43 @@ export function App({
           return !assistantReplyStarted || Date.now() < entry.visibleUntil;
         }),
       );
-      // A dispatching queue entry whose user message persisted in the read
-      // model is done server-side; release it so the "Sending" label cannot
-      // linger if the pump's success path was missed (e.g. remount).
-      // Safety valve: a dispatching entry stuck far longer than a normal
-      // dispatch could take (lost push) is released back to queued so the
-      // queue cannot deadlock. Never deletes an unsent prompt.
+      // Drive dispatching entries through the turn lifecycle:
+      // - complete (user message persisted AND turn not running): remove the
+      //   entry - the queued prompt is delivered and its turn is done.
+      // - lost (valve expired since dispatch start without persistence):
+      //   requeue for another attempt, never delete.
+      // - in-flight: keep holding the barrier.
       setQueuedMessages((current) =>
-        current.filter((entry) => {
-          if (entry.status !== "dispatching") return true;
+        current.flatMap((entry) => {
+          if (entry.status !== "dispatching") {
+            return [entry];
+          }
           const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
-          if (!thread) return true;
-          const userMessagePersisted = thread.messages.some(
-            (message) => message.id === entry.messageId,
-          );
-          return !shouldReleaseDispatchingEntry(entry, userMessagePersisted, Date.now());
+          if (!thread) {
+            return [entry];
+          }
+          const dispatchedAt = entry.dispatchedAt ?? Date.now();
+          const transition = resolveDispatchingTransition(entry, {
+            dispatchedAt,
+            userMessagePersisted: thread.messages.some((message) => message.id === entry.messageId),
+            turnRunning: isThreadSessionActivelyWorking(thread.session),
+            now: Date.now(),
+          });
+          if (transition.kind === "complete") {
+            return [];
+          }
+          if (transition.kind === "lost") {
+            queuedSendAttemptsRef.current = {
+              ...queuedSendAttemptsRef.current,
+              [entry.messageId]: (queuedSendAttemptsRef.current[entry.messageId] ?? 0) + 1,
+            };
+            return [
+              requeueDispatchingHead(current, entry.messageId).find(
+                (candidate) => candidate.messageId === entry.messageId,
+              ) ?? entry,
+            ];
+          }
+          return [entry];
         }),
       );
     }, SEND_ANIMATION_INTERVAL_MS);
@@ -10594,18 +10616,19 @@ export function App({
   }
 
   // Pump the queue: when the thread settles with queued messages left, mark
-  // the head dispatching and dispatch it. While a dispatch is in flight (its
-  // entry still "dispatching") the pump returns early. The barrier holds
-  // through the turn lifecycle: after the command is accepted the entry stays
-  // dispatching until the turn's user message shows up in the read model (or
-  // the session starts running), so a delayed running-state push can never
-  // let two thread.turn.start commands leave together. On dispatch failure the
-  // entry returns to "queued" and the pump retries with backoff up to
-  // QUEUED_SEND_MAX_ATTEMPTS, then pauses for QUEUED_SEND_RETRY_BACKOFF_MS
-  // before trying again - the prompt is never deleted.
+  // the head dispatching and dispatch it. The dispatching barrier holds
+  // through the full turn lifecycle: an entry stays dispatching until the
+  // turn has settled (user message persisted AND the provider turn is no
+  // longer running), so a message that lands before the provider starts
+  // still blocks the next dispatch. Failures requeue with exponential
+  // backoff plus a wakeup timer at the deadline - the prompt is never
+  // deleted. A dispatch stuck far longer than any turn could take (valve
+  // measured from dispatch start) is requeued as lost instead of blocking
+  // the queue forever.
   const queuedHeadPumpRef = useRef<string | null>(null);
   const queuedSendAttemptsRef = useRef<Record<string, number>>({});
   const queuedSendNextRetryAtRef = useRef<Record<string, number>>({});
+  const queuedBackoffWakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const threadId = activeThreadId;
     if (!threadId) {
@@ -10618,11 +10641,32 @@ export function App({
       queuedSendNextRetryAtRef.current,
       Date.now(),
     );
+    if (decision.action === "block-backoff") {
+      queuedHeadPumpRef.current = null;
+      // Schedule a pump pass at the deadline so the retry is not stranded
+      // waiting for an unrelated state change to re-run this effect.
+      const retryInMs = Math.max(decision.retryInMs, 0);
+      if (queuedBackoffWakeTimerRef.current !== null) {
+        clearTimeout(queuedBackoffWakeTimerRef.current);
+      }
+      queuedBackoffWakeTimerRef.current = setTimeout(() => {
+        queuedBackoffWakeTimerRef.current = null;
+        setQueuedMessages((current) => [...current]);
+      }, retryInMs + 1);
+      return () => {
+        if (queuedBackoffWakeTimerRef.current !== null) {
+          clearTimeout(queuedBackoffWakeTimerRef.current);
+          queuedBackoffWakeTimerRef.current = null;
+        }
+      };
+    }
+    // A backoff timer armed by a previous pass is stale once the pump can act.
+    if (queuedBackoffWakeTimerRef.current !== null) {
+      clearTimeout(queuedBackoffWakeTimerRef.current);
+      queuedBackoffWakeTimerRef.current = null;
+    }
     if (decision.action !== "dispatch") {
-      // idle / block-dispatching / block-backoff: nothing to start now. The
-      // dispatching barrier holds through the turn lifecycle - the entry is
-      // cleared only once the turn's user message persists in the read model
-      // (or the stuck-dispatch valve releases it).
+      queuedHeadPumpRef.current = null;
       return;
     }
     const head = decision.head;

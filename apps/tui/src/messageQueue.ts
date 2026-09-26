@@ -33,6 +33,10 @@ export interface QueuedMessage {
   readonly attachments: ReadonlyArray<QueuedMessageAttachment>;
   readonly createdAt: string;
   status: QueuedMessageStatus;
+  /** Wall-clock millis when this entry's dispatch command was sent; set by
+   *  the pump when it marks the entry dispatching. The stuck-dispatch valve
+   *  is measured from this, not from queue time. */
+  dispatchedAt: number | null;
   /** Dispatch settings captured when the message was queued. */
   readonly dispatch: QueuedMessageDispatch;
 }
@@ -69,6 +73,7 @@ export function createQueuedMessage(input: {
     attachments: [...(input.attachments ?? [])],
     createdAt: input.createdAt,
     status: "queued",
+    dispatchedAt: null,
     dispatch: { ...input.dispatch },
   };
 }
@@ -127,14 +132,18 @@ export function takeQueuedHead(
   return { next: head, remaining: queue.slice(1) };
 }
 
-/** Mark the head as dispatching. The entry stays queued until its turn
- *  settles, which blocks the pump from firing the next prompt too early. */
+/** Mark the head as dispatching and stamp when the dispatch started. The
+ *  entry stays in the queue until its turn settles, which blocks the pump
+ *  from firing the next prompt too early. */
 export function markQueuedHeadDispatching(
   queue: ReadonlyArray<QueuedMessage>,
   messageId: string,
+  now: number = Date.now(),
 ): QueuedMessage[] {
   return queue.map((entry) =>
-    entry.messageId === messageId ? { ...entry, status: "dispatching" as const } : entry,
+    entry.messageId === messageId
+      ? { ...entry, status: "dispatching" as const, dispatchedAt: now }
+      : entry,
   );
 }
 
@@ -144,7 +153,9 @@ export function requeueDispatchingHead(
   messageId: string,
 ): QueuedMessage[] {
   return queue.map((entry) =>
-    entry.messageId === messageId ? { ...entry, status: "queued" as const } : entry,
+    entry.messageId === messageId
+      ? { ...entry, status: "queued" as const, dispatchedAt: null }
+      : entry,
   );
 }
 
@@ -165,6 +176,10 @@ export function describeQueueCount(count: number): string {
 /** Tunables for the queue pump, mirroring the constants in ui.tsx. */
 export const QUEUED_SEND_MAX_ATTEMPTS = 3;
 export const QUEUED_SEND_RETRY_BACKOFF_MS = 2_000;
+/** Safety valve: how long a dispatch may stay "dispatching" after the
+ *  dispatch started before it is considered lost and requeued. Measured from
+ *  dispatch start, not from when the message was queued - a long-running turn
+ *  must not expire its own barrier. */
 export const QUEUED_SEND_STUCK_DISPATCH_MS = 120_000;
 
 export type QueuePumpDecision =
@@ -195,9 +210,10 @@ export function resolveQueuePumpDecision(
   }
   const threadQueue = queueMessagesForThread(queue, threadId);
   if (threadQueue.some((entry) => entry.status === "dispatching")) {
-    // The barrier holds through the turn lifecycle: a dispatching entry is
-    // only cleared once the turn's user message persists in the read model
-    // (or the stuck-dispatch safety valve fires).
+    // The barrier holds until the dispatching turn fully settles - the
+    // caller passes a queue whose dispatching entries were already released
+    // by the turn-lifecycle tracker below. Seeing one here means the turn is
+    // still in flight.
     return { action: "block-dispatching" };
   }
   const head = threadQueue.find((entry) => entry.status === "queued");
@@ -216,16 +232,38 @@ export function queuedSendRetryBackoffMs(attempts: number): number {
   return QUEUED_SEND_RETRY_BACKOFF_MS * 2 ** (Math.max(attempts, 1) - 1);
 }
 
-/** Whether a dispatching entry should be released back to the queue: it is
- *  done once its user message persisted, or rescued by the stuck-dispatch
- *  valve when a push was lost. Never deletes an unsent prompt. */
-export function shouldReleaseDispatchingEntry(
+/**
+ * Lifecycle state for a dispatching entry, derived from what the TUI observes.
+ * `dispatchedAt` is when the dispatch command was sent (wall clock) - the
+ * stuck valve is measured from this, never from queue time.
+ */
+export type DispatchingLifecycleInput = {
+  readonly dispatchedAt: number;
+  readonly userMessagePersisted: boolean;
+  readonly turnRunning: boolean;
+  readonly now: number;
+};
+
+/**
+ * Transition a dispatching entry based on observed lifecycle state:
+ * - released (turn settled): remove the entry, it is done
+ * - lost (valve expired without persistence): requeue for another attempt
+ * - in flight (otherwise): keep holding the barrier
+ */
+export type DispatchingTransition =
+  | { readonly kind: "complete"; readonly removeEntry: true }
+  | { readonly kind: "lost"; readonly removeEntry: false }
+  | { readonly kind: "in-flight"; readonly removeEntry: false };
+
+export function resolveDispatchingTransition(
   entry: QueuedMessage,
-  userMessagePersisted: boolean,
-  now: number,
-): boolean {
-  if (!userMessagePersisted) {
-    return Date.parse(entry.createdAt) + QUEUED_SEND_STUCK_DISPATCH_MS <= now;
+  input: DispatchingLifecycleInput,
+): DispatchingTransition {
+  if (input.userMessagePersisted && !input.turnRunning) {
+    return { kind: "complete", removeEntry: true };
   }
-  return true;
+  if (input.dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS <= input.now) {
+    return { kind: "lost", removeEntry: false };
+  }
+  return { kind: "in-flight", removeEntry: false };
 }
