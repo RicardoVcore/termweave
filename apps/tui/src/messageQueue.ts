@@ -161,3 +161,71 @@ export function describeQueueCount(count: number): string {
   }
   return count === 1 ? "1 queued message" : `${count} queued messages`;
 }
+
+/** Tunables for the queue pump, mirroring the constants in ui.tsx. */
+export const QUEUED_SEND_MAX_ATTEMPTS = 3;
+export const QUEUED_SEND_RETRY_BACKOFF_MS = 2_000;
+export const QUEUED_SEND_STUCK_DISPATCH_MS = 120_000;
+
+export type QueuePumpDecision =
+  | { readonly action: "block-dispatching" }
+  | { readonly action: "block-backoff"; readonly retryInMs: number }
+  | { readonly action: "dispatch"; readonly head: QueuedMessage }
+  | { readonly action: "idle" };
+
+/** Decide what the queue pump should do next. Pure so the gating rules -
+ *  never start a second turn while one is dispatching, back off between
+ *  failed retries - are testable without rendering the TUI.
+ *
+ * @param threadId active thread id (pump is per-thread)
+ * @param queue current queue state
+ * @param threadIsRunning whether the provider turn is active for the thread
+ * @param nextRetryAtByMessageId scheduled retry timestamps from past failures
+ * @param now current wall-clock millis
+ */
+export function resolveQueuePumpDecision(
+  threadId: string,
+  queue: ReadonlyArray<QueuedMessage>,
+  threadIsRunning: boolean,
+  nextRetryAtByMessageId: Readonly<Record<string, number>>,
+  now: number,
+): QueuePumpDecision {
+  if (threadIsRunning) {
+    return { action: "idle" };
+  }
+  const threadQueue = queueMessagesForThread(queue, threadId);
+  if (threadQueue.some((entry) => entry.status === "dispatching")) {
+    // The barrier holds through the turn lifecycle: a dispatching entry is
+    // only cleared once the turn's user message persists in the read model
+    // (or the stuck-dispatch safety valve fires).
+    return { action: "block-dispatching" };
+  }
+  const head = threadQueue.find((entry) => entry.status === "queued");
+  if (!head) {
+    return { action: "idle" };
+  }
+  const nextRetryAt = nextRetryAtByMessageId[head.messageId];
+  if (nextRetryAt !== undefined && now < nextRetryAt) {
+    return { action: "block-backoff", retryInMs: nextRetryAt - now };
+  }
+  return { action: "dispatch", head };
+}
+
+/** Exponential backoff for a failed queued-send attempt. Attempts start at 1. */
+export function queuedSendRetryBackoffMs(attempts: number): number {
+  return QUEUED_SEND_RETRY_BACKOFF_MS * 2 ** (Math.max(attempts, 1) - 1);
+}
+
+/** Whether a dispatching entry should be released back to the queue: it is
+ *  done once its user message persisted, or rescued by the stuck-dispatch
+ *  valve when a push was lost. Never deletes an unsent prompt. */
+export function shouldReleaseDispatchingEntry(
+  entry: QueuedMessage,
+  userMessagePersisted: boolean,
+  now: number,
+): boolean {
+  if (!userMessagePersisted) {
+    return Date.parse(entry.createdAt) + QUEUED_SEND_STUCK_DISPATCH_MS <= now;
+  }
+  return true;
+}

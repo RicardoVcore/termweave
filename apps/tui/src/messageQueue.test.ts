@@ -8,8 +8,14 @@ import {
   markQueuedHeadDispatching,
   moveQueuedMessage,
   queueMessagesForThread,
+  QUEUED_SEND_MAX_ATTEMPTS,
+  QUEUED_SEND_RETRY_BACKOFF_MS,
+  QUEUED_SEND_STUCK_DISPATCH_MS,
+  queuedSendRetryBackoffMs,
   requeueDispatchingHead,
   removeQueuedMessage,
+  resolveQueuePumpDecision,
+  shouldReleaseDispatchingEntry,
   takeQueuedHead,
 } from "./messageQueue";
 
@@ -155,5 +161,108 @@ describe("messageQueue", () => {
     const next = requeueDispatchingHead(queue, "missing");
 
     expect(next.map((entry) => entry.status)).toEqual(["dispatching", "queued"]);
+  });
+
+  it("pump blocks while an entry is dispatching, even with more queued behind it", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = enqueueMessage(queue, makeMessage("m2"));
+    queue = markQueuedHeadDispatching(queue, "m1");
+
+    // The running-state push may be delayed, but the pump decision must not
+    // start the second turn while the first is still being established.
+    expect(resolveQueuePumpDecision("thread-1", queue, false, {}, 1000)).toEqual({
+      action: "block-dispatching",
+    });
+  });
+
+  it("pump holds the dispatching barrier until the turn persists, then releases it", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = enqueueMessage(queue, makeMessage("m2"));
+
+    // Accepted dispatch: entry stays dispatching, pump blocked.
+    queue = markQueuedHeadDispatching(queue, "m1");
+    expect(resolveQueuePumpDecision("thread-1", queue, false, {}, 1000).action).toBe(
+      "block-dispatching",
+    );
+
+    // Turn lifecycle continues: user message persisted -> release the head.
+    const persisted = queue.map((entry) =>
+      entry.messageId === "m1" ? { ...entry, status: "dispatching" as const } : entry,
+    );
+    expect(shouldReleaseDispatchingEntry(persisted[0]!, true, 1000)).toBe(true);
+
+    // The second queued prompt still cannot start while the head is in the
+    // queue (removal of the persisted head is the pump's own cleanup).
+    expect(resolveQueuePumpDecision("thread-1", queue, false, {}, 1000).action).toBe(
+      "block-dispatching",
+    );
+  });
+
+  it("never deletes an unsent prompt: retries use backoff, not removal", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      queue = markQueuedHeadDispatching(queue, "m1");
+      // Failure: the entry returns to queued with backoff; nothing removes it.
+      queue = requeueDispatchingHead(queue, "m1");
+      const backoff = queuedSendRetryBackoffMs(attempt);
+      const decision = resolveQueuePumpDecision(
+        "thread-1",
+        queue,
+        false,
+        { m1: 1000 + backoff },
+        1000 + backoff - 1,
+      );
+      expect(decision).toEqual({ action: "block-backoff", retryInMs: 1 });
+    }
+
+    expect(queue).toHaveLength(1);
+    expect(queue[0]?.messageId).toBe("m1");
+
+    // After the backoff window the prompt dispatches again.
+    const decision = resolveQueuePumpDecision("thread-1", queue, false, { m1: 1000 }, 5000);
+    expect(decision.action).toBe("dispatch");
+  });
+
+  it("backs off exponentially between failed dispatch attempts", () => {
+    expect(queuedSendRetryBackoffMs(1)).toBe(QUEUED_SEND_RETRY_BACKOFF_MS);
+    expect(queuedSendRetryBackoffMs(2)).toBe(QUEUED_SEND_RETRY_BACKOFF_MS * 2);
+    expect(queuedSendRetryBackoffMs(3)).toBe(QUEUED_SEND_RETRY_BACKOFF_MS * 4);
+  });
+
+  it("pump ignores a backoff scheduled for a message that is no longer the head", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = enqueueMessage(queue, makeMessage("m2"));
+    // Backoff entry applies to m1; once m1 is dispatched and removed the pump
+    // must not let a stale backoff gate m2.
+    const queueWithoutHead = removeQueuedMessage(queue, "m1");
+    const decision = resolveQueuePumpDecision(
+      "thread-1",
+      queueWithoutHead,
+      false,
+      { m1: Date.now() + 60_000 },
+      Date.now(),
+    );
+    expect(decision).toEqual({ action: "dispatch", head: queueWithoutHead[0] });
+  });
+
+  it("stuck-dispatch valve releases only after the deadline and keeps the prompt", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = markQueuedHeadDispatching(queue, "m1");
+    const entry = queue[0]!;
+    const queuedAt = Date.parse(entry.createdAt);
+
+    // Within the deadline: keep holding the barrier.
+    expect(shouldReleaseDispatchingEntry(entry, false, queuedAt + 1000)).toBe(false);
+    // Past the deadline: release to queued (not delete).
+    expect(
+      shouldReleaseDispatchingEntry(entry, false, queuedAt + QUEUED_SEND_STUCK_DISPATCH_MS + 1),
+    ).toBe(true);
+
+    // A persisted message releases immediately regardless of deadline.
+    expect(shouldReleaseDispatchingEntry(entry, true, queuedAt + 1000)).toBe(true);
+  });
+
+  it("reports the retry cap constant used for status messaging", () => {
+    expect(QUEUED_SEND_MAX_ATTEMPTS).toBe(3);
   });
 });

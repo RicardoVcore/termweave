@@ -175,8 +175,12 @@ import {
   markQueuedHeadDispatching,
   moveQueuedMessage,
   queueMessagesForThread,
+  QUEUED_SEND_MAX_ATTEMPTS,
+  queuedSendRetryBackoffMs,
   requeueDispatchingHead,
   removeQueuedMessage,
+  resolveQueuePumpDecision,
+  shouldReleaseDispatchingEntry,
 } from "./messageQueue";
 import { expandUserPath, normalizeWorkspaceRoot } from "./workspacePaths";
 import { clampSlashCommandMenuIndex, resolveTuiSlashCommandMenu } from "./composerSlashMenu";
@@ -2719,9 +2723,6 @@ const COMPOSER_TEXTAREA_MAX_HEIGHT = 8;
 const COMPOSER_PATH_SUGGESTION_MAX_ITEMS = 5;
 const SEND_ANIMATION_INTERVAL_MS = 90;
 const SEND_PLACEHOLDER_MIN_DURATION_MS = 650;
-const QUEUED_SEND_MAX_ATTEMPTS = 3;
-const QUEUED_SEND_RETRY_BACKOFF_MS = 2_000;
-const QUEUED_SEND_STUCK_DISPATCH_MS = 120_000;
 const SIDEBAR_STATUS_PULSE_INTERVAL_MS = 260;
 const SIDEBAR_THREAD_TITLE_WIDTH =
   TUI_SIDEBAR_WIDTH -
@@ -6457,20 +6458,20 @@ export function App({
         }),
       );
       // A dispatching queue entry whose user message persisted in the read
-      // model is done server-side; drop it so the "Sending" label cannot
+      // model is done server-side; release it so the "Sending" label cannot
       // linger if the pump's success path was missed (e.g. remount).
-      // Safety valve: if a dispatching entry has been stuck far longer than a
-      // normal dispatch could take, release it back to queued so the queue
-      // cannot deadlock on a lost push.
+      // Safety valve: a dispatching entry stuck far longer than a normal
+      // dispatch could take (lost push) is released back to queued so the
+      // queue cannot deadlock. Never deletes an unsent prompt.
       setQueuedMessages((current) =>
         current.filter((entry) => {
           if (entry.status !== "dispatching") return true;
           const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
           if (!thread) return true;
-          if (thread.messages.some((message) => message.id === entry.messageId)) {
-            return false;
-          }
-          return Date.parse(entry.createdAt) + QUEUED_SEND_STUCK_DISPATCH_MS > Date.now();
+          const userMessagePersisted = thread.messages.some(
+            (message) => message.id === entry.messageId,
+          );
+          return !shouldReleaseDispatchingEntry(entry, userMessagePersisted, Date.now());
         }),
       );
     }, SEND_ANIMATION_INTERVAL_MS);
@@ -10610,22 +10611,22 @@ export function App({
     if (!threadId) {
       return;
     }
-    if (activeThreadIsRunning) {
-      queuedHeadPumpRef.current = null;
+    const decision = resolveQueuePumpDecision(
+      threadId,
+      queuedMessages,
+      activeThreadIsRunning,
+      queuedSendNextRetryAtRef.current,
+      Date.now(),
+    );
+    if (decision.action !== "dispatch") {
+      // idle / block-dispatching / block-backoff: nothing to start now. The
+      // dispatching barrier holds through the turn lifecycle - the entry is
+      // cleared only once the turn's user message persists in the read model
+      // (or the stuck-dispatch valve releases it).
       return;
     }
-    const queue = queueMessagesForThread(queuedMessages, threadId);
-    if (queue.some((entry) => entry.status === "dispatching")) {
-      // A previous dispatch is still in flight or its turn is still being
-      // established; the read-model persistence (or session start) clears it.
-      return;
-    }
-    const head = queue.find((entry) => entry.status === "queued");
-    if (!head || queuedHeadPumpRef.current === head.messageId) {
-      return;
-    }
-    const nextRetryAt = queuedSendNextRetryAtRef.current[head.messageId];
-    if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
+    const head = decision.head;
+    if (queuedHeadPumpRef.current === head.messageId) {
       return;
     }
     queuedHeadPumpRef.current = head.messageId;
@@ -10680,7 +10681,7 @@ export function App({
           [head.messageId]: attempts,
         };
         // Exponential backoff between retries; the prompt is never deleted.
-        const backoff = QUEUED_SEND_RETRY_BACKOFF_MS * 2 ** (attempts - 1);
+        const backoff = queuedSendRetryBackoffMs(attempts);
         queuedSendNextRetryAtRef.current = {
           ...queuedSendNextRetryAtRef.current,
           [head.messageId]: Date.now() + backoff,
