@@ -14290,10 +14290,13 @@ export function App({
                                       <text
                                         content="●"
                                         style={{
-                                          fg: sourceControlStatusColor({
-                                            status: item.status,
-                                            implemented: item.implemented,
-                                          }),
+                                          fg: sourceControlStatusColor(
+                                            {
+                                              status: item.status,
+                                              implemented: item.implemented,
+                                            },
+                                            PALETTE,
+                                          ),
                                           marginRight: 1,
                                         }}
                                       />
@@ -14414,10 +14417,13 @@ export function App({
                                       <text
                                         content="●"
                                         style={{
-                                          fg: sourceControlStatusColor({
-                                            status: item.status,
-                                            auth: item.auth,
-                                          }),
+                                          fg: sourceControlStatusColor(
+                                            {
+                                              status: item.status,
+                                              auth: item.auth,
+                                            },
+                                            PALETTE,
+                                          ),
                                           marginRight: 1,
                                         }}
                                       />

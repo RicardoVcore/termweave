@@ -8,7 +8,7 @@ import type {
   SourceControlProviderDiscoveryItem,
   VcsDiscoveryItem,
 } from "@termweave/contracts";
-import type { TuiColor } from "./theme";
+import type { TuiColor, TuiPalette } from "./theme";
 
 export function authStatusLabel(auth: SourceControlProviderAuth): string {
   switch (auth.status) {
@@ -21,15 +21,21 @@ export function authStatusLabel(auth: SourceControlProviderAuth): string {
   }
 }
 
-export function sourceControlStatusColor(input: {
-  readonly status: "available" | "missing";
-  readonly implemented?: boolean;
-  readonly auth?: SourceControlProviderAuth;
-}): TuiColor {
-  if (input.implemented === false) return "subtle";
-  if (input.status !== "available") return "warning";
-  if (input.auth && input.auth.status !== "authenticated") return "warning";
-  return "success";
+/** Status dot color for a discovery item. Palette keys like "subtle" are not
+ *  valid OpenTUI colors on their own, so resolve through the active palette
+ *  (which holds concrete hex values) before rendering. */
+export function sourceControlStatusColor(
+  input: {
+    readonly status: "available" | "missing";
+    readonly implemented?: boolean;
+    readonly auth?: SourceControlProviderAuth;
+  },
+  palette: TuiPalette,
+): TuiColor {
+  if (input.implemented === false) return palette.subtle;
+  if (input.status !== "available") return palette.warning;
+  if (input.auth && input.auth.status !== "authenticated") return palette.warning;
+  return palette.success;
 }
 
 export function vcsSummary(item: VcsDiscoveryItem): string {
