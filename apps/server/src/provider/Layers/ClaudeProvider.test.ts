@@ -59,6 +59,27 @@ describe("ClaudeProvider", () => {
     assert.equal(models[0]?.name, "Sonnet 4.7");
   });
 
+  it("preserves a bare SDK alias when no version can be verified", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "sonnet",
+          displayName: "Sonnet",
+          description: "Bare alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+    );
+
+    assert.equal(models[0]?.slug, "sonnet");
+    assert.equal(models[0]?.name, "Sonnet");
+  });
+
   it("preserves the SDK alias when a stale cached model disagrees with the SDK version", () => {
     const models = resolveClaudeProviderModels(
       [
