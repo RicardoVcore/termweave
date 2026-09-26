@@ -59,6 +59,61 @@ describe("ClaudeProvider", () => {
     assert.equal(models[0]?.name, "Sonnet 4.7");
   });
 
+  it("preserves the SDK alias when a stale cached model disagrees with the SDK version", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "sonnet",
+          displayName: "Sonnet 4.8",
+          description: "SDK reports 4.8",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+      [
+        {
+          slug: "claude-sonnet-4-7",
+          name: "Claude Sonnet 4.7",
+          isCustom: false,
+        },
+      ],
+    );
+
+    assert.equal(models[0]?.slug, "sonnet");
+    assert.equal(models[0]?.name, "Sonnet 4.8");
+  });
+
+  it("maps the SDK alias when the cached model version matches the SDK displayName", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "sonnet",
+          displayName: "Sonnet 4.8",
+          description: "SDK reports 4.8",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+      [
+        {
+          slug: "claude-sonnet-4-8",
+          name: "Claude Sonnet 4.8",
+          isCustom: false,
+        },
+      ],
+    );
+
+    assert.equal(models[0]?.slug, "claude-sonnet-4-8");
+  });
+
   it("uses SDK models as current and retains built-ins as legacy", () => {
     const models = resolveClaudeProviderModels(
       [
