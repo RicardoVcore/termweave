@@ -2719,6 +2719,7 @@ const COMPOSER_TEXTAREA_MAX_HEIGHT = 8;
 const COMPOSER_PATH_SUGGESTION_MAX_ITEMS = 5;
 const SEND_ANIMATION_INTERVAL_MS = 90;
 const SEND_PLACEHOLDER_MIN_DURATION_MS = 650;
+const QUEUED_SEND_MAX_ATTEMPTS = 3;
 const SIDEBAR_STATUS_PULSE_INTERVAL_MS = 260;
 const SIDEBAR_THREAD_TITLE_WIDTH =
   TUI_SIDEBAR_WIDTH -
@@ -6451,6 +6452,17 @@ export function App({
             return Date.parse(message.createdAt) >= Date.parse(entry.createdAt);
           });
           return !assistantReplyStarted || Date.now() < entry.visibleUntil;
+        }),
+      );
+      // A dispatching queue entry whose user message persisted in the read
+      // model is done server-side; drop it so the "Sending" label cannot
+      // linger if the pump's success path was missed (e.g. remount).
+      setQueuedMessages((current) =>
+        current.filter((entry) => {
+          if (entry.status !== "dispatching") return true;
+          const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
+          if (!thread) return true;
+          return !thread.messages.some((message) => message.id === entry.messageId);
         }),
       );
     }, SEND_ANIMATION_INTERVAL_MS);
@@ -10573,24 +10585,30 @@ export function App({
   }
 
   // Pump the queue: when the thread settles with queued messages left, mark
-  // the head dispatching and dispatch it. The entry stays in the queue (status
-  // "dispatching") until its turn settles, which blocks the pump from firing
-  // the next prompt while the first turn is still being established. On
-  // dispatch failure the guard clears and the entry returns to "queued" so it
-  // retries on the next pump pass.
+  // the head dispatching and dispatch it. While a dispatch is in flight (its
+  // entry still "dispatching") the pump returns early, so a delayed
+  // running-state push can never let two thread.turn.start commands leave
+  // together. When the dispatch promise resolves the entry is removed - the
+  // command is durably accepted server-side at that point. On failure the
+  // entry returns to "queued" and the pump retries up to
+  // QUEUED_SEND_MAX_ATTEMPTS before dropping it with a status message.
   const queuedHeadPumpRef = useRef<string | null>(null);
+  const queuedSendAttemptsRef = useRef<Record<string, number>>({});
   useEffect(() => {
     const threadId = activeThreadId;
     if (!threadId) {
       return;
     }
     if (activeThreadIsRunning) {
-      // A turn is active: a dispatching head belongs to that turn. Once the
-      // turn settles the head is gone (persisted), so clear the guard.
       queuedHeadPumpRef.current = null;
       return;
     }
     const queue = queueMessagesForThread(queuedMessages, threadId);
+    if (queue.some((entry) => entry.status === "dispatching")) {
+      // A previous dispatch is still in flight; its promise drives the next
+      // pump pass. Never start a second turn while that is unresolved.
+      return;
+    }
     const head = queue.find((entry) => entry.status === "queued");
     if (!head || queuedHeadPumpRef.current === head.messageId) {
       return;
@@ -10631,21 +10649,39 @@ export function App({
       createdAt: head.createdAt,
     } as never);
     dispatchPromise
+      .then(() => {
+        // The command was accepted and persisted; the queued entry is done.
+        queuedHeadPumpRef.current = null;
+        delete queuedSendAttemptsRef.current[head.messageId];
+        setQueuedMessages((current) => removeQueuedMessage(current, head.messageId));
+      })
       .catch((error: unknown) => {
         queuedHeadPumpRef.current = null;
+        const attempts = (queuedSendAttemptsRef.current[head.messageId] ?? 0) + 1;
+        queuedSendAttemptsRef.current = {
+          ...queuedSendAttemptsRef.current,
+          [head.messageId]: attempts,
+        };
+        if (attempts >= QUEUED_SEND_MAX_ATTEMPTS) {
+          delete queuedSendAttemptsRef.current[head.messageId];
+          setQueuedMessages((current) => removeQueuedMessage(current, head.messageId));
+          setStatus("Queued message failed to send");
+          logger.log("composer.queuedSendAbandoned", {
+            threadId,
+            messageId: head.messageId,
+            attempts,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
         setQueuedMessages((current) => requeueDispatchingHead(current, head.messageId));
         setStatus("Queued message failed to send");
         logger.log("composer.queuedSendFailed", {
           threadId,
           messageId: head.messageId,
+          attempts,
           error: error instanceof Error ? error.message : String(error),
         });
-      })
-      .finally(() => {
-        // The dispatch result is known; clear the pump guard so the next
-        // queue head can go out on the following pass once the thread is
-        // observed idle.
-        queuedHeadPumpRef.current = null;
       });
     logger.log("composer.queuedDispatched", { threadId, messageId: head.messageId });
     scrollTimelineToBottom();
