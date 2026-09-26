@@ -619,12 +619,11 @@ function resolveClaudeDiscoveredModelSlug(
 
   // An alias only maps to a canonical slug when that canonical model is
   // verified against the SDK: the resolved candidate's own display name must
-  // be version-compatible with the SDK's displayName. A bare alias ("Sonnet")
-  // is the SDK's current model and maps safely; a versioned name that
-  // disagrees with any candidate (for example a "Sonnet 4.8" SDK alias while
-  // the cache still lists 4.7, or an empty cache resolving to a built-in 4.6)
-  // preserves the SDK identifier so turns are not silently routed to an older
-  // release.
+  // be version-compatible with the SDK's displayName. When the version cannot
+  // be verified - a bare alias ("Sonnet") with nothing to check it against,
+  // or a versioned name that disagrees with every candidate - preserve the
+  // SDK identifier so turns follow whatever the SDK currently resolves the
+  // alias to instead of being silently pinned to an older release.
   const familySlug = findClaudeFamilyModelSlug(alias, cachedModels, version);
   if (!familySlug) {
     return value;
@@ -632,7 +631,8 @@ function resolveClaudeDiscoveredModelSlug(
   const displayName = model.displayName.trim().toLowerCase();
   const versionToken = displayName.match(/\b\d+(?:\.\d+)?\b/u)?.[0];
   if (!versionToken) {
-    return familySlug;
+    // No version to verify against: keep the SDK alias.
+    return value;
   }
   const candidateVersionToken = findClaudeModelDisplayName(familySlug, cachedModels, version)
     ?.toLowerCase()

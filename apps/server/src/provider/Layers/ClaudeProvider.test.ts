@@ -133,7 +133,7 @@ describe("ClaudeProvider", () => {
       "2.1.273",
     );
 
-    assert.equal(models[0]?.slug, "claude-sonnet-4-6");
+    assert.equal(models[0]?.slug, "sonnet");
     assert.equal(models[0]?.isLegacy, undefined);
     assert.equal(models[0]?.description, "Current Sonnet model");
     assert.equal(
