@@ -7,7 +7,7 @@
  * render order and status.
  */
 
-export type QueuedMessageStatus = "queued";
+export type QueuedMessageStatus = "queued" | "dispatching";
 
 /** Narrow structural types so the queue module stays decoupled from ui.tsx. */
 export type QueuedMessageMention = {
@@ -15,8 +15,14 @@ export type QueuedMessageMention = {
   path: string;
 };
 
+/** Attachment payload as queued; `dataUrl` must be preserved so the queued
+ *  send carries the same image data the composer attached. */
 export type QueuedMessageAttachment = {
+  readonly type: "image";
   readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly dataUrl: string;
 };
 
 export interface QueuedMessage {
@@ -119,6 +125,27 @@ export function takeQueuedHead(
     return null;
   }
   return { next: head, remaining: queue.slice(1) };
+}
+
+/** Mark the head as dispatching. The entry stays queued until its turn
+ *  settles, which blocks the pump from firing the next prompt too early. */
+export function markQueuedHeadDispatching(
+  queue: ReadonlyArray<QueuedMessage>,
+  messageId: string,
+): QueuedMessage[] {
+  return queue.map((entry) =>
+    entry.messageId === messageId ? { ...entry, status: "dispatching" as const } : entry,
+  );
+}
+
+/** Return a dispatching entry to queued state so it can be pumped again. */
+export function requeueDispatchingHead(
+  queue: ReadonlyArray<QueuedMessage>,
+  messageId: string,
+): QueuedMessage[] {
+  return queue.map((entry) =>
+    entry.messageId === messageId ? { ...entry, status: "queued" as const } : entry,
+  );
 }
 
 export function queueMessagesForThread(

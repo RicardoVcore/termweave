@@ -5,8 +5,10 @@ import {
   describeQueueCount,
   editQueuedMessage,
   enqueueMessage,
+  markQueuedHeadDispatching,
   moveQueuedMessage,
   queueMessagesForThread,
+  requeueDispatchingHead,
   removeQueuedMessage,
   takeQueuedHead,
 } from "./messageQueue";
@@ -96,5 +98,62 @@ describe("messageQueue", () => {
     expect(describeQueueCount(0)).toBe("No queued messages");
     expect(describeQueueCount(1)).toBe("1 queued message");
     expect(describeQueueCount(3)).toBe("3 queued messages");
+  });
+
+  it("preserves the full attachment payload through queue operations", () => {
+    const message = createQueuedMessage({
+      threadId: "thread-1",
+      messageId: "m1",
+      text: "with image",
+      attachments: [
+        {
+          type: "image",
+          name: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: 42,
+          dataUrl: "data:image/png;base64,QUJD",
+        },
+      ],
+      createdAt: "2026-03-25T10:00:00.000Z",
+    });
+
+    expect(message.attachments[0]).toEqual({
+      type: "image",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+      dataUrl: "data:image/png;base64,QUJD",
+    });
+  });
+
+  it("marks the head dispatching and blocks the pump from firing the next entry", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = enqueueMessage(queue, makeMessage("m2"));
+    queue = markQueuedHeadDispatching(queue, "m1");
+
+    expect(queue[0]?.status).toBe("dispatching");
+    expect(queue[1]?.status).toBe("queued");
+    expect(takeQueuedHead(queue.filter((entry) => entry.status === "queued"))?.next.messageId).toBe(
+      "m2",
+    );
+  });
+
+  it("requeues a dispatching entry back to queued for retry", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = enqueueMessage(queue, makeMessage("m2"));
+    queue = markQueuedHeadDispatching(queue, "m1");
+    queue = requeueDispatchingHead(queue, "m1");
+
+    expect(queue.map((entry) => entry.status)).toEqual(["queued", "queued"]);
+    expect(takeQueuedHead(queue)?.next.messageId).toBe("m1");
+  });
+
+  it("requeue leaves unrelated entries untouched", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    queue = enqueueMessage(queue, makeMessage("m2"));
+    queue = markQueuedHeadDispatching(queue, "m1");
+    const next = requeueDispatchingHead(queue, "missing");
+
+    expect(next.map((entry) => entry.status)).toEqual(["dispatching", "queued"]);
   });
 });

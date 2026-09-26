@@ -172,8 +172,10 @@ import { isCommandPaletteProjectPathQuery } from "./commandPaletteProjects";
 import {
   createQueuedMessage,
   type QueuedMessage,
+  markQueuedHeadDispatching,
   moveQueuedMessage,
   queueMessagesForThread,
+  requeueDispatchingHead,
   removeQueuedMessage,
 } from "./messageQueue";
 import { expandUserPath, normalizeWorkspaceRoot } from "./workspacePaths";
@@ -8601,7 +8603,7 @@ export function App({
       }
       const queueIndex = threadQueue.length > 1 ? Math.min(1, threadQueue.length - 1) : 0;
       const target = threadQueue[queueIndex];
-      if (!target) {
+      if (!target || target.status === "dispatching") {
         return;
       }
       key.preventDefault();
@@ -8616,11 +8618,11 @@ export function App({
       if (threadQueue.length === 0) {
         return;
       }
-      key.preventDefault();
       const target = threadQueue[threadQueue.length - 1];
-      if (!target) {
+      if (!target || target.status === "dispatching") {
         return;
       }
+      key.preventDefault();
       setQueuedMessages((current) => removeQueuedMessage(current, target.messageId));
       setStatus("Queued message cancelled");
       logger.log("composer.queuedCancelled", {
@@ -10570,8 +10572,12 @@ export function App({
     }
   }
 
-  // Pump the queue: when the thread settles with queued messages left, dispatch
-  // the head. Re-dispatch on dependency change is guarded by messageId tracking.
+  // Pump the queue: when the thread settles with queued messages left, mark
+  // the head dispatching and dispatch it. The entry stays in the queue (status
+  // "dispatching") until its turn settles, which blocks the pump from firing
+  // the next prompt while the first turn is still being established. On
+  // dispatch failure the guard clears and the entry returns to "queued" so it
+  // retries on the next pump pass.
   const queuedHeadPumpRef = useRef<string | null>(null);
   useEffect(() => {
     const threadId = activeThreadId;
@@ -10579,16 +10585,18 @@ export function App({
       return;
     }
     if (activeThreadIsRunning) {
+      // A turn is active: a dispatching head belongs to that turn. Once the
+      // turn settles the head is gone (persisted), so clear the guard.
       queuedHeadPumpRef.current = null;
       return;
     }
     const queue = queueMessagesForThread(queuedMessages, threadId);
-    const head = queue[0];
+    const head = queue.find((entry) => entry.status === "queued");
     if (!head || queuedHeadPumpRef.current === head.messageId) {
       return;
     }
     queuedHeadPumpRef.current = head.messageId;
-    setQueuedMessages((current) => current.filter((entry) => entry.messageId !== head.messageId));
+    setQueuedMessages((current) => markQueuedHeadDispatching(current, head.messageId));
     setPendingSends((current) => [
       ...current,
       {
@@ -10601,7 +10609,7 @@ export function App({
         visibleUntil: Date.now() + SEND_PLACEHOLDER_MIN_DURATION_MS,
       },
     ]);
-    void dispatch({
+    const dispatchPromise = dispatch({
       type: "thread.turn.start",
       commandId: newCommandId(),
       threadId: threadId as never,
@@ -10609,13 +10617,7 @@ export function App({
         messageId: head.messageId,
         role: "user",
         text: head.text,
-        attachments: head.attachments.map((attachment) => ({
-          type: "image" as const,
-          name: attachment.name,
-          mimeType: "image/png",
-          sizeBytes: 0,
-          dataUrl: "",
-        })),
+        attachments: head.attachments,
       },
       ...(head.dispatch.provider !== undefined ? { provider: head.dispatch.provider } : {}),
       ...(head.dispatch.model !== undefined ? { model: head.dispatch.model } : {}),
@@ -10627,15 +10629,24 @@ export function App({
         : {}),
       assistantDeliveryMode: head.dispatch.assistantDeliveryMode ?? "buffered",
       createdAt: head.createdAt,
-    } as never).catch((error: unknown) => {
-      setQueuedMessages((current) => [...current, head]);
-      setStatus("Queued message failed to send");
-      logger.log("composer.queuedSendFailed", {
-        threadId,
-        messageId: head.messageId,
-        error: error instanceof Error ? error.message : String(error),
+    } as never);
+    dispatchPromise
+      .catch((error: unknown) => {
+        queuedHeadPumpRef.current = null;
+        setQueuedMessages((current) => requeueDispatchingHead(current, head.messageId));
+        setStatus("Queued message failed to send");
+        logger.log("composer.queuedSendFailed", {
+          threadId,
+          messageId: head.messageId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        // The dispatch result is known; clear the pump guard so the next
+        // queue head can go out on the following pass once the thread is
+        // observed idle.
+        queuedHeadPumpRef.current = null;
       });
-    });
     logger.log("composer.queuedDispatched", { threadId, messageId: head.messageId });
     scrollTimelineToBottom();
     // eslint-disable-next-line eslint-plugin-react-hooks(exhaustive-deps) -- dispatch/logger are stable component scope; ref guard prevents re-pump
@@ -15812,7 +15823,12 @@ export function App({
 
                   {activeQueuedMessages.map((entry, index) => {
                     const queuedBody = stripMentionTokensFromText(entry.text).body;
-                    const isQueueHead = index === 0;
+                    const isDispatching = entry.status === "dispatching";
+                    const queueLabel = isDispatching
+                      ? "Sending"
+                      : index === 0
+                        ? "Queued - next"
+                        : `Queued - position ${index + 1}`;
                     return (
                       <box
                         key={`queued-message-${entry.messageId}`}
@@ -15832,12 +15848,7 @@ export function App({
                             alignItems: "flex-end",
                           }}
                         >
-                          <text
-                            content={
-                              isQueueHead ? "Queued - next" : `Queued - position ${index + 1}`
-                            }
-                            style={{ fg: PALETTE.subtle }}
-                          />
+                          <text content={queueLabel} style={{ fg: PALETTE.subtle }} />
                           <box
                             style={{
                               width: "auto",
@@ -15865,7 +15876,11 @@ export function App({
                             ) : null}
                           </box>
                           <text
-                            content="Alt+↑/↓ move · Ctrl+D cancel"
+                            content={
+                              isDispatching
+                                ? "Sending queued message..."
+                                : "Alt+↑/↓ move · Ctrl+D cancel"
+                            }
                             style={{ fg: PALETTE.subtle }}
                           />
                         </box>
