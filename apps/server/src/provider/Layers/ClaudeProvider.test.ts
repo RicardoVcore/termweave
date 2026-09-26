@@ -38,6 +38,27 @@ describe("ClaudeProvider", () => {
     );
   });
 
+  it("preserves the SDK identifier for a versioned alias that does not match a verified model", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "sonnet",
+          displayName: "Sonnet 4.7",
+          description: "Future Sonnet alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+    );
+
+    assert.equal(models[0]?.slug, "sonnet");
+    assert.equal(models[0]?.name, "Sonnet 4.7");
+  });
+
   it("uses SDK models as current and retains built-ins as legacy", () => {
     const models = resolveClaudeProviderModels(
       [

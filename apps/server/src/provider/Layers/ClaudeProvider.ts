@@ -617,7 +617,32 @@ function resolveClaudeDiscoveredModelSlug(
   }
   if (alias !== "opus" && alias !== "sonnet" && alias !== "haiku") return value;
 
-  return findClaudeFamilyModelSlug(alias, cachedModels, version) ?? value;
+  // An alias only maps to a canonical slug when that canonical model is
+  // verified: it comes from the on-disk cache, or the SDK's displayName is
+  // version-compatible with the built-in model it would resolve to. A bare
+  // alias ("Sonnet") is the SDK's current model and maps safely; a versioned
+  // name that does not match (for example a future "Sonnet 4.7" with an empty
+  // cache) preserves the SDK identifier so turns are not silently routed to
+  // an older release.
+  const familySlug = findClaudeFamilyModelSlug(alias, cachedModels, version);
+  if (!familySlug) {
+    return value;
+  }
+  const builtIn = getBuiltInClaudeModelsForVersion(version).find(
+    (candidate) =>
+      canonicalClaudeModelSlug(candidate.slug) === canonicalClaudeModelSlug(familySlug),
+  );
+  if (!builtIn) {
+    // Cache-backed slug: the catalog verified it, so trust it.
+    return familySlug;
+  }
+  const displayName = model.displayName.trim().toLowerCase();
+  const versionToken = displayName.match(/\b\d+(?:\.\d+)?\b/u)?.[0];
+  if (!versionToken) {
+    return familySlug;
+  }
+  const builtInVersionToken = builtIn.name.toLowerCase().match(/\b\d+(?:\.\d+)?\b/u)?.[0];
+  return versionToken === builtInVersionToken ? familySlug : value;
 }
 
 function findClaudeFamilyModelSlug(
