@@ -79,6 +79,7 @@ describe("ClaudeProvider", () => {
           slug: "claude-sonnet-4-7",
           name: "Claude Sonnet 4.7",
           isCustom: false,
+          capabilities: getClaudeModelCapabilities("claude-sonnet-4-7"),
         },
       ],
     );
@@ -107,6 +108,7 @@ describe("ClaudeProvider", () => {
           slug: "claude-sonnet-4-8",
           name: "Claude Sonnet 4.8",
           isCustom: false,
+          capabilities: getClaudeModelCapabilities("claude-sonnet-4-8"),
         },
       ],
     );
