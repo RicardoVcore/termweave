@@ -176,6 +176,7 @@ import {
   moveQueuedMessage,
   queueMessagesForThread,
   QUEUED_SEND_MAX_ATTEMPTS,
+  QUEUED_SEND_STUCK_DISPATCH_MS,
   queuedSendRetryBackoffMs,
   requeueDispatchingHead,
   removeQueuedMessage,
@@ -6457,27 +6458,28 @@ export function App({
           return !assistantReplyStarted || Date.now() < entry.visibleUntil;
         }),
       );
-      // Drive dispatching entries through the turn lifecycle:
-      // - complete (turn settled: user message persisted, turn ran and then
-      //   stopped): remove the entry - the queued prompt is delivered.
-      // - lost (valve expired since dispatch start with no evidence the turn
-      //   ran): requeue for another attempt, never delete.
-      // - in-flight (everything else, including a still-running turn past
-      //   the valve): keep holding the barrier.
-      setQueuedMessages((current) =>
-        current.flatMap((entry) => {
-          if (entry.status !== "dispatching") {
-            return [entry];
-          }
+    }, SEND_ANIMATION_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [allThreads, showAssistantTyping]);
+
+  // Reconcile dispatching entries on every read-model change, including the
+  // update that turns off the typing indicator. The deadline timer handles a
+  // dispatch that receives no further server update.
+  useEffect(() => {
+    const dispatching = queuedMessages.filter((entry) => entry.status === "dispatching");
+    if (dispatching.length === 0) return;
+
+    const reconcile = () => {
+      const now = Date.now();
+      setQueuedMessages((current) => {
+        let changed = false;
+        const next = current.flatMap((entry) => {
+          if (entry.status !== "dispatching") return [entry];
           const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
-          if (!thread) {
-            return [entry];
-          }
-          const dispatchedAt = entry.dispatchedAt ?? Date.now();
+          if (!thread) return [entry];
+
+          const dispatchedAt = entry.dispatchedAt ?? now;
           const turnRunning = isThreadSessionActivelyWorking(thread.session);
-          // Latch the observed-running state onto the entry: "not started
-          // yet" must stay distinguishable from "settled", so the barrier
-          // only releases after the turn ran and then stopped.
           const turnRunningSeen = entry.turnRunningSeen || turnRunning;
           const observedEntry =
             turnRunningSeen === entry.turnRunningSeen ? entry : { ...entry, turnRunningSeen };
@@ -6490,12 +6492,14 @@ export function App({
               (message) =>
                 message.role === "assistant" && Date.parse(message.createdAt) >= dispatchedAt,
             ),
-            now: Date.now(),
+            now,
           });
           if (transition.kind === "complete") {
+            changed = true;
             return [];
           }
           if (transition.kind === "lost") {
+            changed = true;
             queuedSendAttemptsRef.current = {
               ...queuedSendAttemptsRef.current,
               [entry.messageId]: (queuedSendAttemptsRef.current[entry.messageId] ?? 0) + 1,
@@ -6506,12 +6510,26 @@ export function App({
               ) ?? entry,
             ];
           }
+          if (observedEntry !== entry) changed = true;
           return [observedEntry];
-        }),
-      );
-    }, SEND_ANIMATION_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [allThreads, showAssistantTyping]);
+        });
+        return changed ? next : current;
+      });
+    };
+
+    reconcile();
+    const now = Date.now();
+    const nextDeadline = Math.min(
+      ...dispatching
+        .map((entry) => entry.dispatchedAt)
+        .filter((dispatchedAt): dispatchedAt is number => dispatchedAt !== null)
+        .map((dispatchedAt) => dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS)
+        .filter((deadline) => deadline > now),
+    );
+    if (!Number.isFinite(nextDeadline)) return;
+    const timer = setTimeout(reconcile, nextDeadline - now + 1);
+    return () => clearTimeout(timer);
+  }, [allThreads, queuedMessages]);
 
   useEffect(() => {
     if (!hasPulsingThreadStatus) return;
