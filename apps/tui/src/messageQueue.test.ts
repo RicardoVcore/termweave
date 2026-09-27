@@ -188,15 +188,20 @@ describe("messageQueue", () => {
       dispatchedAt,
       userMessagePersisted: true,
       turnRunning: true,
+      turnRunningSeen: false,
+      assistantReplyPersisted: false,
       now: dispatchedAt + 10_000,
     });
     expect(pendingTurn).toEqual({ kind: "in-flight", removeEntry: false });
 
-    // The turn settled: message persisted AND provider no longer running.
+    // The turn settled: message persisted, the turn ran (seen) and the
+    // provider is no longer running.
     const settled = resolveDispatchingTransition(queue[0]!, {
       dispatchedAt,
       userMessagePersisted: true,
       turnRunning: false,
+      turnRunningSeen: true,
+      assistantReplyPersisted: false,
       now: dispatchedAt + 10_000,
     });
     expect(settled).toEqual({ kind: "complete", removeEntry: true });
@@ -268,6 +273,8 @@ describe("messageQueue", () => {
       dispatchedAt,
       userMessagePersisted: true,
       turnRunning: true,
+      turnRunningSeen: true,
+      assistantReplyPersisted: false,
       now: dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS - 1,
     });
     expect(duringLongTurn).toEqual({ kind: "in-flight", removeEntry: false });
@@ -277,6 +284,8 @@ describe("messageQueue", () => {
       dispatchedAt,
       userMessagePersisted: false,
       turnRunning: false,
+      turnRunningSeen: false,
+      assistantReplyPersisted: false,
       now: dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS,
     });
     expect(lost).toEqual({ kind: "lost", removeEntry: false });
@@ -286,6 +295,8 @@ describe("messageQueue", () => {
       dispatchedAt,
       userMessagePersisted: false,
       turnRunning: false,
+      turnRunningSeen: false,
+      assistantReplyPersisted: false,
       now: dispatchedAt + 1_000,
     });
     expect(inFlight).toEqual({ kind: "in-flight", removeEntry: false });
@@ -296,10 +307,69 @@ describe("messageQueue", () => {
       dispatchedAt,
       userMessagePersisted: false,
       turnRunning: false,
+      turnRunningSeen: false,
+      assistantReplyPersisted: false,
       now: queuedAt + 200_000,
     });
     expect(afterLongQueueAge.kind).toBe("lost");
     expect(afterLongQueueAge.removeEntry).toBe(false);
+  });
+
+  it("distinguishes not-started from settled and never loses a running turn", () => {
+    let queue = enqueueMessage([], makeMessage("m1"));
+    const dispatchedAt = 1_000;
+    queue = markQueuedHeadDispatching(queue, "m1", dispatchedAt);
+    const entry = queue[0]!;
+
+    // Review hole 1: direct call returned `complete` for persisted=true,
+    // running=false while the provider has not started yet. With the
+    // observed-running latch false, the barrier MUST keep holding.
+    const notStarted = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: false,
+      turnRunningSeen: false,
+      assistantReplyPersisted: false,
+      now: dispatchedAt + 30_000,
+    });
+    expect(notStarted).toEqual({ kind: "in-flight", removeEntry: false });
+
+    // Review hole 2: direct call returned `lost` after 120s while the
+    // provider is still running, which would requeue a live turn. The valve
+    // is suppressed while running.
+    const runningPastValve = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: true,
+      turnRunningSeen: true,
+      assistantReplyPersisted: false,
+      now: dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS + 1,
+    });
+    expect(runningPastValve).toEqual({ kind: "in-flight", removeEntry: false });
+
+    // Once the turn was observed running and then stopped, the barrier
+    // releases even if the running observation landed after the valve.
+    const settledAfterValve = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: false,
+      turnRunningSeen: true,
+      assistantReplyPersisted: false,
+      now: dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS + 1,
+    });
+    expect(settledAfterValve).toEqual({ kind: "complete", removeEntry: true });
+
+    // A missed running push is recovered by the assistant reply evidence:
+    // turn ran (reply landed) and stopped -> settled.
+    const settledViaReply = resolveDispatchingTransition(entry, {
+      dispatchedAt,
+      userMessagePersisted: true,
+      turnRunning: false,
+      turnRunningSeen: false,
+      assistantReplyPersisted: true,
+      now: dispatchedAt + 2_000,
+    });
+    expect(settledViaReply).toEqual({ kind: "complete", removeEntry: true });
   });
 
   it("reports the retry cap constant used for status messaging", () => {

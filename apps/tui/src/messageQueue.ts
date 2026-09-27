@@ -37,6 +37,12 @@ export interface QueuedMessage {
    *  the pump when it marks the entry dispatching. The stuck-dispatch valve
    *  is measured from this, not from queue time. */
   dispatchedAt: number | null;
+  /** True once the provider turn for this dispatch was observed running.
+   *  Distinguishes "turn not started yet" from "turn settled": the dispatch
+   *  barrier may only release after the turn ran and then stopped, so a user
+   *  message that persists before the provider starts cannot let the next
+   *  queued prompt dispatch early. */
+  turnRunningSeen: boolean;
   /** Dispatch settings captured when the message was queued. */
   readonly dispatch: QueuedMessageDispatch;
 }
@@ -74,6 +80,7 @@ export function createQueuedMessage(input: {
     createdAt: input.createdAt,
     status: "queued",
     dispatchedAt: null,
+    turnRunningSeen: false,
     dispatch: { ...input.dispatch },
   };
 }
@@ -142,7 +149,12 @@ export function markQueuedHeadDispatching(
 ): QueuedMessage[] {
   return queue.map((entry) =>
     entry.messageId === messageId
-      ? { ...entry, status: "dispatching" as const, dispatchedAt: now }
+      ? {
+          ...entry,
+          status: "dispatching" as const,
+          dispatchedAt: now,
+          turnRunningSeen: false,
+        }
       : entry,
   );
 }
@@ -154,7 +166,7 @@ export function requeueDispatchingHead(
 ): QueuedMessage[] {
   return queue.map((entry) =>
     entry.messageId === messageId
-      ? { ...entry, status: "queued" as const, dispatchedAt: null }
+      ? { ...entry, status: "queued" as const, dispatchedAt: null, turnRunningSeen: false }
       : entry,
   );
 }
@@ -236,19 +248,29 @@ export function queuedSendRetryBackoffMs(attempts: number): number {
  * Lifecycle state for a dispatching entry, derived from what the TUI observes.
  * `dispatchedAt` is when the dispatch command was sent (wall clock) - the
  * stuck valve is measured from this, never from queue time.
+ * `turnRunningSeen` is the entry's observed-turn-running flag, already folded
+ * with the current `turnRunning` observation by the caller (once true it
+ * stays true for the attempt). `assistantReplyPersisted` is fallback evidence
+ * that the turn ran when a status push was missed between ticks.
  */
 export type DispatchingLifecycleInput = {
   readonly dispatchedAt: number;
   readonly userMessagePersisted: boolean;
   readonly turnRunning: boolean;
+  readonly turnRunningSeen: boolean;
+  readonly assistantReplyPersisted: boolean;
   readonly now: number;
 };
 
 /**
  * Transition a dispatching entry based on observed lifecycle state:
- * - released (turn settled): remove the entry, it is done
- * - lost (valve expired without persistence): requeue for another attempt
- * - in flight (otherwise): keep holding the barrier
+ * - complete (turn settled): the user message persisted, the turn ran
+ *   (observed running, or its assistant reply landed) and then stopped -
+ *   remove the entry.
+ * - lost (valve expired since dispatch start with no evidence the turn ever
+ *   ran): requeue for another attempt, never delete.
+ * - in flight (otherwise): keep holding the barrier. The valve is suppressed
+ *   while the provider turn is running - a long turn is in flight, not lost.
  */
 export type DispatchingTransition =
   | { readonly kind: "complete"; readonly removeEntry: true }
@@ -259,10 +281,14 @@ export function resolveDispatchingTransition(
   entry: QueuedMessage,
   input: DispatchingLifecycleInput,
 ): DispatchingTransition {
-  if (input.userMessagePersisted && !input.turnRunning) {
+  const turnHasRun = input.turnRunningSeen || input.assistantReplyPersisted;
+  if (input.userMessagePersisted && !input.turnRunning && turnHasRun) {
     return { kind: "complete", removeEntry: true };
   }
-  if (input.dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS <= input.now) {
+  if (input.turnRunning) {
+    return { kind: "in-flight", removeEntry: false };
+  }
+  if (input.dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS <= input.now && !turnHasRun) {
     return { kind: "lost", removeEntry: false };
   }
   return { kind: "in-flight", removeEntry: false };

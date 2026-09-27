@@ -6458,11 +6458,12 @@ export function App({
         }),
       );
       // Drive dispatching entries through the turn lifecycle:
-      // - complete (user message persisted AND turn not running): remove the
-      //   entry - the queued prompt is delivered and its turn is done.
-      // - lost (valve expired since dispatch start without persistence):
-      //   requeue for another attempt, never delete.
-      // - in-flight: keep holding the barrier.
+      // - complete (turn settled: user message persisted, turn ran and then
+      //   stopped): remove the entry - the queued prompt is delivered.
+      // - lost (valve expired since dispatch start with no evidence the turn
+      //   ran): requeue for another attempt, never delete.
+      // - in-flight (everything else, including a still-running turn past
+      //   the valve): keep holding the barrier.
       setQueuedMessages((current) =>
         current.flatMap((entry) => {
           if (entry.status !== "dispatching") {
@@ -6473,10 +6474,22 @@ export function App({
             return [entry];
           }
           const dispatchedAt = entry.dispatchedAt ?? Date.now();
-          const transition = resolveDispatchingTransition(entry, {
+          const turnRunning = isThreadSessionActivelyWorking(thread.session);
+          // Latch the observed-running state onto the entry: "not started
+          // yet" must stay distinguishable from "settled", so the barrier
+          // only releases after the turn ran and then stopped.
+          const turnRunningSeen = entry.turnRunningSeen || turnRunning;
+          const observedEntry =
+            turnRunningSeen === entry.turnRunningSeen ? entry : { ...entry, turnRunningSeen };
+          const transition = resolveDispatchingTransition(observedEntry, {
             dispatchedAt,
             userMessagePersisted: thread.messages.some((message) => message.id === entry.messageId),
-            turnRunning: isThreadSessionActivelyWorking(thread.session),
+            turnRunning,
+            turnRunningSeen,
+            assistantReplyPersisted: thread.messages.some(
+              (message) =>
+                message.role === "assistant" && Date.parse(message.createdAt) >= dispatchedAt,
+            ),
             now: Date.now(),
           });
           if (transition.kind === "complete") {
@@ -6493,7 +6506,7 @@ export function App({
               ) ?? entry,
             ];
           }
-          return [entry];
+          return [observedEntry];
         }),
       );
     }, SEND_ANIMATION_INTERVAL_MS);
