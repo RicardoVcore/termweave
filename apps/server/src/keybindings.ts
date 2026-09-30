@@ -523,9 +523,14 @@ export interface KeybindingsShape {
   readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
 
   /**
-   * Stream of keybindings config change events.
+   * Subscribe to keybindings config change events. The subscription is live as soon
+   * as this completes (unlike a lazy stream), so no event is missed after it.
    */
-  readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
+  readonly subscribeChanges: Effect.Effect<
+    PubSub.Subscription<KeybindingsChangeEvent>,
+    never,
+    Scope.Scope
+  >;
 
   /**
    * Upsert a keybinding rule and persist the resulting configuration.
@@ -883,9 +888,7 @@ const makeKeybindings = Effect.gen(function* () {
     syncDefaultKeybindingsOnStartup,
     loadConfigState: loadConfigStateFromCacheOrDisk,
     getSnapshot: loadConfigStateFromCacheOrDisk,
-    get streamChanges() {
-      return Stream.fromPubSub(changesPubSub);
-    },
+    subscribeChanges: PubSub.subscribe(changesPubSub),
     upsertKeybindingRule: (rule) =>
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {
