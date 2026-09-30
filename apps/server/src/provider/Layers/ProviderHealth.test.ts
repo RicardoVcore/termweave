@@ -1,6 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
-import { Duration, Effect, Fiber, FileSystem, Layer, Path, Ref, Sink, Stream } from "effect";
+import {
+  Duration,
+  Effect,
+  Deferred,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  Ref,
+  Sink,
+  Stream,
+} from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -304,16 +315,24 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
+    let zzProbeMarker: Deferred.Deferred<void> | null = null;
     it.effect("uses an extended timeout for the Codex auth probe", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome();
         const completed = yield* Ref.make(false);
+        const deferred = yield* Deferred.make<void>();
+        zzProbeMarker = deferred;
         const fiber = yield* checkCodexProviderStatus.pipe(
           Effect.tap(() => Ref.set(completed, true)),
           Effect.forkChild,
         );
 
-        yield* Effect.yieldNow;
+        // The version probe completes synchronously with the mocked spawner,
+        // but the auth-probe timeout timer only exists once the fiber reaches
+        // the second spawn. Wait on that marker before adjusting the clock so
+        // the test cannot race CI scheduling on wall time.
+        yield* Effect.timeoutOption(Deferred.await(deferred), Duration.seconds(5));
+
         yield* TestClock.adjust(Duration.millis(4_000));
         assert.strictEqual(yield* Ref.get(completed), false);
 
@@ -340,8 +359,15 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
                     mockHandle({ stdout: "codex 1.0.0\n", stderr: "", code: 0 }),
                   );
                 }
+                const marker = zzProbeMarker;
                 if (joined === "login status") {
-                  return Effect.succeed(hangingHandle());
+                  if (!marker) {
+                    return Effect.die(new Error("Auth probe requested before marker capture"));
+                  }
+                  return Effect.andThen(
+                    Deferred.succeed(marker, undefined),
+                    Effect.succeed(hangingHandle()),
+                  );
                 }
                 return Effect.die(new Error(`Unexpected args: ${joined}`));
               }),
