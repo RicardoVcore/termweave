@@ -4,8 +4,14 @@ import * as NPath from "node:path";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+
+export class FileWatchError extends Schema.TaggedErrorClass<FileWatchError>()("FileWatchError", {
+  path: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {}
 
 /**
  * Watch one file through its (existing) parent directory and emit a tick per change.
@@ -17,11 +23,11 @@ import * as Stream from "effect/Stream";
  */
 export const watchFileEagerly = (
   filePath: string,
-): Effect.Effect<Stream.Stream<void, Error>, Error, Scope.Scope> =>
+): Effect.Effect<Stream.Stream<void, FileWatchError>, FileWatchError, Scope.Scope> =>
   Effect.gen(function* () {
     const directory = NPath.dirname(filePath);
     const fileName = NPath.basename(filePath);
-    const queue = yield* Queue.unbounded<void, Error | Cause.Done>();
+    const queue = yield* Queue.unbounded<void, FileWatchError | Cause.Done>();
     yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
@@ -29,9 +35,14 @@ export const watchFileEagerly = (
             // Some platforms omit the filename; treat that as a possible change.
             if (changed === null || changed === fileName) Queue.offerUnsafe(queue, undefined);
           })
-            .on("error", (error) => Queue.failCauseUnsafe(queue, Cause.fail(error)))
+            .on("error", (cause) =>
+              Queue.failCauseUnsafe(
+                queue,
+                Cause.fail(new FileWatchError({ path: directory, cause })),
+              ),
+            )
             .on("close", () => Queue.endUnsafe(queue)),
-        catch: (cause) => new Error(`Failed to watch ${directory}`, { cause }),
+        catch: (cause) => new FileWatchError({ path: directory, cause }),
       }),
       (watcher) => Effect.sync(() => watcher.close()),
     );
