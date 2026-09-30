@@ -169,6 +169,20 @@ import { resolveTuiPaths } from "./config";
 import { resolveComposerPrimaryAction } from "./composerAction";
 import { parseStandaloneComposerModeCommand } from "./composerCommands";
 import { isCommandPaletteProjectPathQuery } from "./commandPaletteProjects";
+import {
+  createQueuedMessage,
+  type QueuedMessage,
+  markQueuedHeadDispatching,
+  moveQueuedMessage,
+  queueMessagesForThread,
+  QUEUED_SEND_MAX_ATTEMPTS,
+  QUEUED_SEND_STUCK_DISPATCH_MS,
+  queuedSendRetryBackoffMs,
+  requeueDispatchingHead,
+  removeQueuedMessage,
+  resolveDispatchingTransition,
+  resolveQueuePumpDecision,
+} from "./messageQueue";
 import { expandUserPath, normalizeWorkspaceRoot } from "./workspacePaths";
 import { clampSlashCommandMenuIndex, resolveTuiSlashCommandMenu } from "./composerSlashMenu";
 import { formatReasoningEffortLabel, truncateToolbarLabel } from "./composerControlLabels";
@@ -4163,6 +4177,7 @@ export function App({
   const sendInFlightRef = useRef(false);
   const interruptInFlightRef = useRef(false);
   const [pendingSends, setPendingSends] = useState<PendingSendPreview[]>([]);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [sendAnimationTick, setSendAnimationTick] = useState(0);
   const [sidebarPulseTick, setSidebarPulseTick] = useState(0);
   const [projectPathDraft, setProjectPathDraft] = useState("");
@@ -5347,6 +5362,9 @@ export function App({
         .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
     : [];
   const showAssistantTyping = activeThreadIsRunning || activePendingSends.length > 0;
+  const activeQueuedMessages = activeThreadId
+    ? queueMessagesForThread(queuedMessages, activeThreadId)
+    : [];
   const latestProposedPlan = activeThread
     ? findLatestProposedPlan(activeThread.proposedPlans, activeThread.latestTurn?.turnId ?? null)
     : null;
@@ -6443,6 +6461,75 @@ export function App({
     }, SEND_ANIMATION_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [allThreads, showAssistantTyping]);
+
+  // Reconcile dispatching entries on every read-model change, including the
+  // update that turns off the typing indicator. The deadline timer handles a
+  // dispatch that receives no further server update.
+  useEffect(() => {
+    const dispatching = queuedMessages.filter((entry) => entry.status === "dispatching");
+    if (dispatching.length === 0) return;
+
+    const reconcile = () => {
+      const now = Date.now();
+      setQueuedMessages((current) => {
+        let changed = false;
+        const next = current.flatMap((entry) => {
+          if (entry.status !== "dispatching") return [entry];
+          const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
+          if (!thread) return [entry];
+
+          const dispatchedAt = entry.dispatchedAt ?? now;
+          const turnRunning = isThreadSessionActivelyWorking(thread.session);
+          const turnRunningSeen = entry.turnRunningSeen || turnRunning;
+          const observedEntry =
+            turnRunningSeen === entry.turnRunningSeen ? entry : { ...entry, turnRunningSeen };
+          const transition = resolveDispatchingTransition(observedEntry, {
+            dispatchedAt,
+            userMessagePersisted: thread.messages.some((message) => message.id === entry.messageId),
+            turnRunning,
+            turnRunningSeen,
+            assistantReplyPersisted: thread.messages.some(
+              (message) =>
+                message.role === "assistant" && Date.parse(message.createdAt) >= dispatchedAt,
+            ),
+            now,
+          });
+          if (transition.kind === "complete") {
+            changed = true;
+            return [];
+          }
+          if (transition.kind === "lost") {
+            changed = true;
+            queuedSendAttemptsRef.current = {
+              ...queuedSendAttemptsRef.current,
+              [entry.messageId]: (queuedSendAttemptsRef.current[entry.messageId] ?? 0) + 1,
+            };
+            return [
+              requeueDispatchingHead(current, entry.messageId).find(
+                (candidate) => candidate.messageId === entry.messageId,
+              ) ?? entry,
+            ];
+          }
+          if (observedEntry !== entry) changed = true;
+          return [observedEntry];
+        });
+        return changed ? next : current;
+      });
+    };
+
+    reconcile();
+    const now = Date.now();
+    const nextDeadline = Math.min(
+      ...dispatching
+        .map((entry) => entry.dispatchedAt)
+        .filter((dispatchedAt): dispatchedAt is number => dispatchedAt !== null)
+        .map((dispatchedAt) => dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS)
+        .filter((deadline) => deadline > now),
+    );
+    if (!Number.isFinite(nextDeadline)) return;
+    const timer = setTimeout(reconcile, nextDeadline - now + 1);
+    return () => clearTimeout(timer);
+  }, [allThreads, queuedMessages]);
 
   useEffect(() => {
     if (!hasPulsingThreadStatus) return;
@@ -8583,6 +8670,41 @@ export function App({
     ) {
       scheduleTimelineScrollStateSync();
     }
+    if (key.meta && (key.name === "up" || key.name === "down") && activeThreadId) {
+      const threadQueue = queueMessagesForThread(queuedMessages, activeThreadId);
+      if (threadQueue.length === 0) {
+        return;
+      }
+      const queueIndex = threadQueue.length > 1 ? Math.min(1, threadQueue.length - 1) : 0;
+      const target = threadQueue[queueIndex];
+      if (!target || target.status === "dispatching") {
+        return;
+      }
+      key.preventDefault();
+      setQueuedMessages((current) => {
+        const next = moveQueuedMessage(current, target.messageId, key.name === "up" ? -1 : 1);
+        return next;
+      });
+      return;
+    }
+    if (key.ctrl && key.name === "d" && activeThreadId) {
+      const threadQueue = queueMessagesForThread(queuedMessages, activeThreadId);
+      if (threadQueue.length === 0) {
+        return;
+      }
+      const target = threadQueue[threadQueue.length - 1];
+      if (!target || target.status === "dispatching") {
+        return;
+      }
+      key.preventDefault();
+      setQueuedMessages((current) => removeQueuedMessage(current, target.messageId));
+      setStatus("Queued message cancelled");
+      logger.log("composer.queuedCancelled", {
+        threadId: activeThreadId,
+        messageId: target.messageId,
+      });
+      return;
+    }
     if (!key.ctrl && key.name === "v" && showFullDiffView && focusArea === "diff") {
       setDiffView((current) => (current === "unified" ? "split" : "unified"));
     }
@@ -10335,6 +10457,45 @@ export function App({
       if (!trimmed && pendingAttachments.length === 0) {
         return;
       }
+      if (activeThread && activeThreadIsRunning) {
+        const queuedMessage = createQueuedMessage({
+          threadId: activeThread.id,
+          messageId: newMessageId(),
+          text: trimmed,
+          mentions: composerMentions.map(cloneComposerMention),
+          attachments: pendingAttachments,
+          createdAt: nowIso(),
+          dispatch: {
+            provider: draftProvider,
+            model: draftModel,
+            interactionMode: draftInteractionMode,
+            runtimeMode: draftRuntimeMode,
+            assistantDeliveryMode: assistantStreamingEnabled ? "streaming" : "buffered",
+          },
+        });
+        setQueuedMessages((current) => [...current, queuedMessage]);
+        setSelectedProjectId(projectId);
+        setSelectedThreadId(activeThread.id);
+        resetComposerTextarea("");
+        setComposerMentions([]);
+        setComposerAttachments([]);
+        const activeDraftKey = activeThreadId ?? activeThread.id;
+        setComposerDraftsByThreadId((current) => {
+          if (!current[activeDraftKey]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[activeDraftKey];
+          return next;
+        });
+        setStatus("Message queued");
+        logger.log("composer.queued", {
+          threadId: activeThread.id,
+          messageId: queuedMessage.messageId,
+          length: trimmed.length,
+        });
+        return;
+      }
       const submissionAttachments = pendingAttachments.map((attachment) => ({
         type: "image" as const,
         name: attachment.name,
@@ -10479,10 +10640,145 @@ export function App({
       });
       setStatus("Prompt sent");
       logger.log("composer.sent", { threadId, length: trimmed.length });
+      scrollTimelineToBottom();
     } finally {
       sendInFlightRef.current = false;
     }
   }
+
+  // Pump the queue: when the thread settles with queued messages left, mark
+  // the head dispatching and dispatch it. The dispatching barrier holds
+  // through the full turn lifecycle: an entry stays dispatching until the
+  // turn has settled (user message persisted AND the provider turn is no
+  // longer running), so a message that lands before the provider starts
+  // still blocks the next dispatch. Failures requeue with exponential
+  // backoff plus a wakeup timer at the deadline - the prompt is never
+  // deleted. A dispatch stuck far longer than any turn could take (valve
+  // measured from dispatch start) is requeued as lost instead of blocking
+  // the queue forever.
+  const queuedHeadPumpRef = useRef<string | null>(null);
+  const queuedSendAttemptsRef = useRef<Record<string, number>>({});
+  const queuedSendNextRetryAtRef = useRef<Record<string, number>>({});
+  const queuedBackoffWakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const threadId = activeThreadId;
+    if (!threadId) {
+      return;
+    }
+    const decision = resolveQueuePumpDecision(
+      threadId,
+      queuedMessages,
+      activeThreadIsRunning,
+      queuedSendNextRetryAtRef.current,
+      Date.now(),
+    );
+    if (decision.action === "block-backoff") {
+      queuedHeadPumpRef.current = null;
+      // Schedule a pump pass at the deadline so the retry is not stranded
+      // waiting for an unrelated state change to re-run this effect.
+      const retryInMs = Math.max(decision.retryInMs, 0);
+      if (queuedBackoffWakeTimerRef.current !== null) {
+        clearTimeout(queuedBackoffWakeTimerRef.current);
+      }
+      queuedBackoffWakeTimerRef.current = setTimeout(() => {
+        queuedBackoffWakeTimerRef.current = null;
+        setQueuedMessages((current) => [...current]);
+      }, retryInMs + 1);
+      return () => {
+        if (queuedBackoffWakeTimerRef.current !== null) {
+          clearTimeout(queuedBackoffWakeTimerRef.current);
+          queuedBackoffWakeTimerRef.current = null;
+        }
+      };
+    }
+    // A backoff timer armed by a previous pass is stale once the pump can act.
+    if (queuedBackoffWakeTimerRef.current !== null) {
+      clearTimeout(queuedBackoffWakeTimerRef.current);
+      queuedBackoffWakeTimerRef.current = null;
+    }
+    if (decision.action !== "dispatch") {
+      queuedHeadPumpRef.current = null;
+      return;
+    }
+    const head = decision.head;
+    if (queuedHeadPumpRef.current === head.messageId) {
+      return;
+    }
+    queuedHeadPumpRef.current = head.messageId;
+    setQueuedMessages((current) => markQueuedHeadDispatching(current, head.messageId));
+    setPendingSends((current) => [
+      ...current,
+      {
+        threadId,
+        messageId: head.messageId,
+        text: head.text,
+        mentions: [...head.mentions] as PendingSendPreview["mentions"],
+        attachments: [...head.attachments] as PendingSendPreview["attachments"],
+        createdAt: head.createdAt,
+        visibleUntil: Date.now() + SEND_PLACEHOLDER_MIN_DURATION_MS,
+      },
+    ]);
+    const dispatchPromise = dispatch({
+      type: "thread.turn.start",
+      commandId: newCommandId(),
+      threadId: threadId as never,
+      message: {
+        messageId: head.messageId,
+        role: "user",
+        text: head.text,
+        attachments: head.attachments,
+      },
+      ...(head.dispatch.provider !== undefined ? { provider: head.dispatch.provider } : {}),
+      ...(head.dispatch.model !== undefined ? { model: head.dispatch.model } : {}),
+      ...(head.dispatch.interactionMode !== undefined
+        ? { interactionMode: head.dispatch.interactionMode }
+        : {}),
+      ...(head.dispatch.runtimeMode !== undefined
+        ? { runtimeMode: head.dispatch.runtimeMode }
+        : {}),
+      assistantDeliveryMode: head.dispatch.assistantDeliveryMode ?? "buffered",
+      createdAt: head.createdAt,
+    } as never);
+    dispatchPromise
+      .then(() => {
+        // The command is accepted; the entry stays dispatching as the
+        // two-starts barrier until the turn's user message persists in the
+        // read model, which the pruning interval below turns into removal.
+        queuedHeadPumpRef.current = null;
+        delete queuedSendAttemptsRef.current[head.messageId];
+        delete queuedSendNextRetryAtRef.current[head.messageId];
+      })
+      .catch((error: unknown) => {
+        queuedHeadPumpRef.current = null;
+        const attempts = (queuedSendAttemptsRef.current[head.messageId] ?? 0) + 1;
+        queuedSendAttemptsRef.current = {
+          ...queuedSendAttemptsRef.current,
+          [head.messageId]: attempts,
+        };
+        // Exponential backoff between retries; the prompt is never deleted.
+        const backoff = queuedSendRetryBackoffMs(attempts);
+        queuedSendNextRetryAtRef.current = {
+          ...queuedSendNextRetryAtRef.current,
+          [head.messageId]: Date.now() + backoff,
+        };
+        setQueuedMessages((current) => requeueDispatchingHead(current, head.messageId));
+        setStatus(
+          attempts >= QUEUED_SEND_MAX_ATTEMPTS
+            ? "Queued send keeps failing; retrying with backoff"
+            : "Queued message failed to send",
+        );
+        logger.log("composer.queuedSendFailed", {
+          threadId,
+          messageId: head.messageId,
+          attempts,
+          backoffMs: backoff,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    logger.log("composer.queuedDispatched", { threadId, messageId: head.messageId });
+    scrollTimelineToBottom();
+    // eslint-disable-next-line eslint-plugin-react-hooks(exhaustive-deps) -- dispatch/logger are stable component scope; ref guard prevents re-pump
+  }, [activeThreadId, activeThreadIsRunning, queuedMessages, scrollTimelineToBottom]);
 
   async function interruptActiveTurn() {
     if (!activeThread || !activeThreadIsRunning || interruptInFlightRef.current) {
@@ -15620,7 +15916,10 @@ export function App({
                                 alignSelf: "flex-end",
                               }}
                             >
-                              <MessageMentions mentions={entry.mentions} align="flex-end" />
+                              <MessageMentions
+                                mentions={entry.mentions as readonly ComposerMention[]}
+                                align="flex-end"
+                              />
                               <MessageAttachments
                                 attachments={entry.attachments}
                                 align="flex-end"
@@ -15649,6 +15948,73 @@ export function App({
                       );
                     })(),
                   )}
+
+                  {activeQueuedMessages.map((entry, index) => {
+                    const queuedBody = stripMentionTokensFromText(entry.text).body;
+                    const isDispatching = entry.status === "dispatching";
+                    const queueLabel = isDispatching
+                      ? "Sending"
+                      : index === 0
+                        ? "Queued - next"
+                        : `Queued - position ${index + 1}`;
+                    return (
+                      <box
+                        key={`queued-message-${entry.messageId}`}
+                        style={{
+                          width: "100%",
+                          marginTop: 1,
+                          marginBottom: 1,
+                          flexDirection: "column",
+                          alignItems: "flex-end",
+                        }}
+                      >
+                        <box
+                          style={{
+                            width: userMessageBubbleWidth,
+                            flexDirection: "column",
+                            flexShrink: 1,
+                            alignItems: "flex-end",
+                          }}
+                        >
+                          <text content={queueLabel} style={{ fg: PALETTE.subtle }} />
+                          <box
+                            style={{
+                              width: "auto",
+                              maxWidth: "100%",
+                              minWidth: 0,
+                              paddingLeft: 1,
+                              paddingRight: 1,
+                              flexDirection: "column",
+                              flexShrink: 1,
+                              alignSelf: "flex-end",
+                            }}
+                          >
+                            <MessageMentions
+                              mentions={entry.mentions as readonly ComposerMention[]}
+                              align="flex-end"
+                            />
+                            {queuedBody.length > 0 ? (
+                              <MessageMarkdown
+                                content={queuedBody}
+                                fillWidth={false}
+                                onCopyCodeBlock={(value) => {
+                                  void copyToClipboard(value, "Code copied");
+                                }}
+                              />
+                            ) : null}
+                          </box>
+                          <text
+                            content={
+                              isDispatching
+                                ? "Sending queued message..."
+                                : "Alt+↑/↓ move · Ctrl+D cancel"
+                            }
+                            style={{ fg: PALETTE.subtle }}
+                          />
+                        </box>
+                      </box>
+                    );
+                  })}
 
                   {showAssistantTyping ? (
                     <box
