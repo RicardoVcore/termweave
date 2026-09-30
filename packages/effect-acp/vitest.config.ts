@@ -2,14 +2,13 @@ import { defineConfig, mergeConfig } from "vitest/config";
 
 import baseConfig from "../../vitest.config";
 
+// Tests spawn cold `bun` mock peers; default 5s flakes under parallel turbo load.
 export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
       testTimeout: 15_000,
       hookTimeout: 15_000,
-      // Keep test git repos hermetic from developer config (e.g. global core.hooksPath).
-      env: { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
     },
   }),
 );

@@ -2,7 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Spawns a cold `bun` process; default 5s timeouts flake under parallel turbo test load.
+const SUBPROCESS_WAIT_MS = 15_000;
+vi.setConfig({ testTimeout: 30_000 });
 
 const children = new Set<ChildProcess>();
 
@@ -19,7 +23,7 @@ function waitForOutput(child: ChildProcess, expected: string): Promise<void> {
     const timeout = setTimeout(() => {
       const diagnostic = stderr.trim() ? `\n${stderr.trim()}` : "";
       reject(new Error(`Timed out waiting for ${expected}.${diagnostic}`));
-    }, 5_000);
+    }, SUBPROCESS_WAIT_MS);
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
@@ -38,7 +42,10 @@ function waitForOutput(child: ChildProcess, expected: string): Promise<void> {
 
 function waitForExit(child: ChildProcess): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out waiting for TUI exit.")), 5_000);
+    const timeout = setTimeout(
+      () => reject(new Error("Timed out waiting for TUI exit.")),
+      SUBPROCESS_WAIT_MS,
+    );
     child.once("exit", () => {
       clearTimeout(timeout);
       resolve();
