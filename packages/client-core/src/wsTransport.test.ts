@@ -240,3 +240,63 @@ describe("WsTransport reconnect", () => {
     transport.dispose();
   });
 });
+
+describe("WsTransport request queue lifecycle", () => {
+  it("drops a queued request when it times out before the socket opens", async () => {
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+    });
+    const requestPromise = transport.request("projects.list", {}, { timeoutMs: 1_000 });
+    requestPromise.catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(requestPromise).rejects.toThrow("Request timed out: projects.list");
+
+    // Reconnect fires after 500ms: the timed-out request must not be flushed.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sockets[0]).toBeDefined();
+    expect(sockets[0]?.sent).toHaveLength(0);
+    transport.dispose();
+  });
+
+  it("clears queued requests when the connection closes", async () => {
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+    });
+
+    const first = transport.request("projects.list");
+    const second = transport.request("projects.get", { id: "a" });
+    first.catch(() => {});
+    second.catch(() => {});
+    expect(sockets[0]?.sent).toHaveLength(0);
+    sockets[0]?.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sockets[1]).toBeDefined();
+    expect(sockets[1]?.sent).toHaveLength(0);
+    transport.dispose();
+  });
+
+  it("flushes queued requests in order when the socket opens", async () => {
+    const transport = new WsTransport({
+      url: "ws://localhost:3020",
+      WebSocketCtor: MockWebSocket as unknown as typeof WebSocket,
+    });
+
+    const requestPromise = transport.request("projects.list");
+    expect(sockets[0]?.sent).toHaveLength(0);
+
+    sockets[0]?.open();
+    expect(sockets[0]?.sent).toHaveLength(1);
+
+    const sent = JSON.parse(sockets[0]?.sent[0] ?? "{}") as { id: string; body: { _tag: string } };
+    expect(sent.body._tag).toBe("projects.list");
+    sockets[0]?.serverMessage(JSON.stringify({ id: sent.id, result: { projects: [] } }));
+
+    await expect(requestPromise).resolves.toEqual({ projects: [] });
+    transport.dispose();
+  });
+});
