@@ -203,6 +203,16 @@ const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
 };
 
+// Default to no provider instances: live hydration probes whatever CLIs are installed on
+// the dev machine, which blocks provider snapshots for seconds and makes tests host-dependent.
+const emptyProviderInstanceRegistry: ProviderInstanceRegistryShape = {
+  getInstance: () => Effect.succeed(undefined),
+  listInstances: Effect.succeed([]),
+  listUnavailable: Effect.succeed([]),
+  streamChanges: Stream.empty,
+  subscribeChanges: PubSub.unbounded<void>().pipe(Effect.flatMap(PubSub.subscribe)),
+};
+
 class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
   private readonly listeners = new Set<(event: TerminalEvent) => void>();
@@ -578,7 +588,8 @@ describe("WebSocket Server", () => {
       authToken?: string;
       baseDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
-      providerInstanceRegistry?: ProviderInstanceRegistryShape;
+      /** "live" opts into real hydration (probes installed provider CLIs). */
+      providerInstanceRegistry?: ProviderInstanceRegistryShape | "live";
       providerMaintenanceRunner?: ProviderMaintenanceRunnerShape;
       processDiagnostics?: ProcessDiagnosticsShape;
       traceDiagnostics?: TraceDiagnosticsShape;
@@ -649,9 +660,13 @@ describe("WebSocket Server", () => {
       ),
       runtimeOverrides,
     );
-    const providerInstanceRegistryLayer = options.providerInstanceRegistry
-      ? Layer.succeed(ProviderInstanceRegistry, options.providerInstanceRegistry)
-      : ProviderInstanceRegistryHydrationLive;
+    const providerInstanceRegistryLayer =
+      options.providerInstanceRegistry === "live"
+        ? ProviderInstanceRegistryHydrationLive
+        : Layer.succeed(
+            ProviderInstanceRegistry,
+            options.providerInstanceRegistry ?? emptyProviderInstanceRegistry,
+          );
     const providerMaintenanceLayer = options.providerMaintenanceRunner
       ? Layer.merge(
           providerInstanceRegistryLayer,
@@ -944,7 +959,11 @@ describe("WebSocket Server", () => {
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
 
-    server = await createTestServer({ cwd: "/my/workspace", baseDir });
+    server = await createTestServer({
+      cwd: "/my/workspace",
+      baseDir,
+      providerInstanceRegistry: "live",
+    });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 

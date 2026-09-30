@@ -44,6 +44,7 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { writeFileStringAtomically } from "./atomicWrite";
+import { watchFileEagerly } from "./fileWatch";
 import { ServerConfig } from "./config";
 
 export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
@@ -821,8 +822,6 @@ const makeKeybindings = Effect.gen(function* () {
 
   const startWatcher = Effect.gen(function* () {
     const keybindingsConfigDir = path.dirname(keybindingsConfigPath);
-    const keybindingsConfigFile = path.basename(keybindingsConfigPath);
-    const keybindingsConfigPathResolved = path.resolve(keybindingsConfigPath);
 
     yield* fs.makeDirectory(keybindingsConfigDir, { recursive: true }).pipe(
       Effect.mapError(
@@ -835,18 +834,24 @@ const makeKeybindings = Effect.gen(function* () {
       ),
     );
 
+    const changes = yield* watchFileEagerly(keybindingsConfigPath).pipe(
+      Scope.provide(watcherScope),
+      Effect.mapError(
+        (cause) =>
+          new KeybindingsConfigError({
+            configPath: keybindingsConfigPath,
+            detail: "failed to watch keybindings config",
+            cause,
+          }),
+      ),
+    );
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
-    yield* Stream.runForEach(fs.watch(keybindingsConfigDir), (event) => {
-      const isTargetConfigEvent =
-        event.path === keybindingsConfigFile ||
-        event.path === keybindingsConfigPath ||
-        path.resolve(keybindingsConfigDir, event.path) === keybindingsConfigPathResolved;
-      if (!isTargetConfigEvent) {
-        return Effect.void;
-      }
-      return revalidateAndEmitSafely;
-    }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
+    yield* Stream.runForEach(changes, () => revalidateAndEmitSafely).pipe(
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(watcherScope),
+      Effect.asVoid,
+    );
   });
 
   const start = Effect.gen(function* () {
