@@ -86,6 +86,7 @@ import {
   getCustomModelsForProvider,
   getProviderStartOptions,
   rankModelPickerItems,
+  scoreModelPickerSearch,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   normalizeAppSettings,
@@ -4092,6 +4093,7 @@ export function App({
   >({});
   const [showAllCustomModels, setShowAllCustomModels] = useState(false);
   const [showAllModelPreferenceRows, setShowAllModelPreferenceRows] = useState(false);
+  const [modelPreferencesQuery, setModelPreferencesQuery] = useState("");
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [updatingProviderInstanceId, setUpdatingProviderInstanceId] =
     useState<ProviderInstanceId | null>(null);
@@ -5641,9 +5643,29 @@ export function App({
       .filter((favorite) => favorite.provider === selectedModelPreferencesEntry.instanceId)
       .map((favorite) => favorite.model),
   );
-  const visibleModelPreferenceRows = showAllModelPreferenceRows
-    ? selectedModelPreferencesOptions
-    : selectedModelPreferencesOptions.slice(0, 8);
+  const isModelPreferencesQueryActive = modelPreferencesQuery.trim().length > 0;
+  // Filter keeps preference order (no re-rank) so Up/Down stay meaningful.
+  const filteredModelPreferenceOptions = selectedModelPreferencesOptions.filter(
+    (option) =>
+      scoreModelPickerSearch(
+        {
+          name: option.name,
+          slug: option.slug,
+          ...(option.shortName ? { shortName: option.shortName } : {}),
+          ...(option.subProvider ? { subProvider: option.subProvider } : {}),
+          driverKind: selectedModelPreferencesEntry.driverKind,
+          providerDisplayName: selectedModelPreferencesEntry.displayName,
+        },
+        modelPreferencesQuery,
+      ) !== null,
+  );
+  const modelPreferenceIndexBySlug = new Map(
+    selectedModelPreferencesOptions.map((option, index) => [option.slug, index] as const),
+  );
+  const visibleModelPreferenceRows =
+    isModelPreferencesQueryActive || showAllModelPreferenceRows
+      ? filteredModelPreferenceOptions
+      : filteredModelPreferenceOptions.slice(0, 8);
   const totalFavoriteModels = appSettings.favorites.length;
   const totalHiddenModels = Object.values(appSettings.providerModelPreferences).reduce(
     (count, preferences) => count + preferences.hiddenModels.length,
@@ -5747,6 +5769,7 @@ export function App({
           onSelect: () => {
             setSelectedModelPreferencesInstanceId(entry.instanceId);
             setShowAllModelPreferenceRows(false);
+            setModelPreferencesQuery("");
             setOverlayMenu(null);
           },
         }));
@@ -13107,14 +13130,41 @@ export function App({
                                   onPress={resetProviderModelPreferences}
                                 />
                               ) : null}
+                              <box
+                                style={{
+                                  backgroundColor: PALETTE.input,
+                                  paddingLeft: 1,
+                                  paddingRight: 1,
+                                  height: 3,
+                                  justifyContent: "center",
+                                  flexGrow: 1,
+                                  flexShrink: 1,
+                                }}
+                              >
+                                <input
+                                  value={modelPreferencesQuery}
+                                  onInput={setModelPreferencesQuery}
+                                  placeholder="Search models..."
+                                  cursorColor={PALETTE.cursor}
+                                  style={{
+                                    backgroundColor: PALETTE.input,
+                                    focusedBackgroundColor: PALETTE.input,
+                                    textColor: PALETTE.text,
+                                    focusedTextColor: PALETTE.text,
+                                    placeholderColor: PALETTE.subtle,
+                                  }}
+                                />
+                              </box>
                             </box>
-                            {visibleModelPreferenceRows.map((model, index) => {
+                            {visibleModelPreferenceRows.map((model) => {
                               const isFavorite = selectedModelPreferencesFavoriteModels.has(
                                 model.slug,
                               );
                               const isHidden =
                                 !model.isCustom &&
                                 selectedModelPreferencesHiddenModels.has(model.slug);
+                              // Neighbours come from full list; rows may be filtered.
+                              const index = modelPreferenceIndexBySlug.get(model.slug)!;
                               const previousModel = selectedModelPreferencesOptions[index - 1];
                               const nextModel = selectedModelPreferencesOptions[index + 1];
                               const canMoveUp =
@@ -13196,7 +13246,12 @@ export function App({
                                 </box>
                               );
                             })}
-                            {selectedModelPreferencesOptions.length > 8 ? (
+                            {isModelPreferencesQueryActive &&
+                            filteredModelPreferenceOptions.length === 0 ? (
+                              <text content="No models match." style={{ fg: PALETTE.subtle }} />
+                            ) : null}
+                            {!isModelPreferencesQueryActive &&
+                            selectedModelPreferencesOptions.length > 8 ? (
                               <ToolbarButton
                                 label={showAllModelPreferenceRows ? "Show less" : "Show more"}
                                 onPress={() => setShowAllModelPreferenceRows((current) => !current)}
