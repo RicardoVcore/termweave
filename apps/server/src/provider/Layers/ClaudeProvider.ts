@@ -617,7 +617,44 @@ function resolveClaudeDiscoveredModelSlug(
   }
   if (alias !== "opus" && alias !== "sonnet" && alias !== "haiku") return value;
 
-  return findClaudeFamilyModelSlug(alias, cachedModels, version) ?? value;
+  // An alias only maps to a canonical slug when that canonical model is
+  // verified against the SDK: the resolved candidate's own display name must
+  // be version-compatible with the SDK's displayName. When the version cannot
+  // be verified - a bare alias ("Sonnet") with nothing to check it against,
+  // or a versioned name that disagrees with every candidate - preserve the
+  // SDK identifier so turns follow whatever the SDK currently resolves the
+  // alias to instead of being silently pinned to an older release.
+  const familySlug = findClaudeFamilyModelSlug(alias, cachedModels, version);
+  if (!familySlug) {
+    return value;
+  }
+  const displayName = model.displayName.trim().toLowerCase();
+  const versionToken = displayName.match(/\b\d+(?:\.\d+)?\b/u)?.[0];
+  if (!versionToken) {
+    // No version to verify against: keep the SDK alias.
+    return value;
+  }
+  const candidateVersionToken = findClaudeModelDisplayName(familySlug, cachedModels, version)
+    ?.toLowerCase()
+    .match(/\b\d+(?:\.\d+)?\b/u)?.[0];
+  return candidateVersionToken === versionToken ? familySlug : value;
+}
+
+/** Resolve a canonical slug to its human display name, preferring the cache,
+ *  then the built-in list. Returns null for unknown slugs. */
+function findClaudeModelDisplayName(
+  slug: string,
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+  version: string | null | undefined,
+): string | undefined {
+  const canonical = canonicalClaudeModelSlug(slug);
+  return (
+    cachedModels.find((candidate) => canonicalClaudeModelSlug(candidate.slug) === canonical)
+      ?.name ??
+    getBuiltInClaudeModelsForVersion(version).find(
+      (candidate) => canonicalClaudeModelSlug(candidate.slug) === canonical,
+    )?.name
+  );
 }
 
 function findClaudeFamilyModelSlug(
