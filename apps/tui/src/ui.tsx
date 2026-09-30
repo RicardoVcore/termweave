@@ -65,11 +65,8 @@ import {
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneProtocol,
   type SourceControlDiscoveryResult,
-  type SourceControlProviderAuth,
-  type SourceControlProviderDiscoveryItem,
   type SourceControlProviderKind,
   type SourceControlRepositoryVisibility,
-  type VcsDiscoveryItem,
 } from "@termweave/contracts";
 import {
   DEFAULT_AUTO_OPEN_PLAN_SIDEBAR,
@@ -220,6 +217,35 @@ import {
   sortProviderInstanceEntries,
 } from "./providerInstances";
 import { resolveUserMessageBubbleWidth } from "./messageLayout";
+import {
+  cloneComposerMention,
+  detectTrailingComposerPathTrigger,
+  mentionLabel,
+  mentionSignature,
+  replaceComposerTextRange,
+  stripMentionTokensFromText,
+} from "./composerMentions";
+import {
+  formatCheckedRelativeTime,
+  formatCpuPercent,
+  formatDurationMs,
+  formatMemoryBytes,
+  formatMessageTimestamp,
+  formatRelativeTime,
+  formatRelativeTimeLabel,
+} from "./timeFormatting";
+import {
+  canRunProviderUpdate,
+  formatProviderVersionStatus,
+  isProviderUpdateActive,
+  providerUpdateButtonLabel,
+} from "./providerUpdateStatus";
+import {
+  authStatusLabel,
+  sourceControlProviderSummary,
+  sourceControlStatusColor,
+  vcsSummary,
+} from "./sourceControlSummary";
 import {
   isDiffLikeCodeBlockFiletype,
   parseMessageMarkdownSegments,
@@ -520,11 +546,6 @@ const SETTINGS_NAV_ITEMS = [
   readonly label: string;
 }>;
 
-type ComposerPathTrigger = {
-  query: string;
-  rangeStart: number;
-  rangeEnd: number;
-};
 type ParsedDiffFile = {
   readonly key: string;
   readonly filePath: string;
@@ -580,10 +601,6 @@ function cloneDraftAttachment(
   attachment: DraftComposerImageAttachment,
 ): DraftComposerImageAttachment {
   return { ...attachment };
-}
-
-function cloneComposerMention(mention: ComposerMention): ComposerMention {
-  return { ...mention };
 }
 
 function cloneComposerDraftState(draft: ComposerDraftState): ComposerDraftState {
@@ -1054,23 +1071,6 @@ async function listDirectorySuggestions(input: string, homeDir: string): Promise
   }
 }
 
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const diffMs = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(diffMs)) return "";
-  const minutes = Math.max(Math.floor(diffMs / 60_000), 0);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
-}
-
-function formatRelativeTimeLabel(iso: string | null | undefined): string {
-  const relativeTime = formatRelativeTime(iso);
-  return relativeTime === "now" ? "now" : `${relativeTime} ago`;
-}
-
 function commandPaletteTextMatches(item: CommandPaletteItem, query: string): boolean {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
@@ -1084,78 +1084,6 @@ function commandPaletteTextMatches(item: CommandPaletteItem, query: string): boo
     .join(" ")
     .toLowerCase();
   return tokens.every((token) => haystack.includes(token));
-}
-
-function formatCheckedRelativeTime(iso: string | null | undefined): string {
-  const relativeTime = formatRelativeTime(iso);
-  return relativeTime === "now" ? "Checked now" : `Checked ${relativeTime} ago`;
-}
-
-function formatMemoryBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB"] as const;
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const precision = value >= 10 ? 0 : 1;
-  return `${value.toFixed(precision)} ${units[unitIndex]}`;
-}
-
-function formatCpuPercent(value: number): string {
-  if (!Number.isFinite(value)) return "0%";
-  const precision = value >= 10 ? 0 : 1;
-  return `${value.toFixed(precision)}%`;
-}
-
-function authStatusLabel(auth: SourceControlProviderAuth): string {
-  switch (auth.status) {
-    case "authenticated":
-      return "Authenticated";
-    case "unauthenticated":
-      return "Sign-in needed";
-    case "unknown":
-      return "Unknown auth";
-  }
-}
-
-function sourceControlStatusColor(input: {
-  readonly status: "available" | "missing";
-  readonly implemented?: boolean;
-  readonly auth?: SourceControlProviderAuth;
-}): TuiColor {
-  if (input.implemented === false) return PALETTE.subtle;
-  if (input.status !== "available") return PALETTE.warning;
-  if (input.auth && input.auth.status !== "authenticated") return PALETTE.warning;
-  return PALETTE.success;
-}
-
-function vcsSummary(item: VcsDiscoveryItem): string {
-  if (!item.implemented) return `Support for ${item.label} is coming soon.`;
-  if (item.status !== "available") return `Not available on this server: ${item.installHint}`;
-  return "Available";
-}
-
-function sourceControlProviderSummary(item: SourceControlProviderDiscoveryItem): string {
-  if (item.status !== "available") return `Not available on this server: ${item.installHint}`;
-  if (item.auth.status === "authenticated") {
-    return item.auth.account
-      ? `${item.auth.account}${item.auth.host ? ` on ${item.auth.host}` : ""}`
-      : "Authenticated";
-  }
-  return item.auth.detail ?? item.detail ?? item.installHint;
-}
-
-function formatDurationMs(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "0ms";
-  if (value < 1_000) return `${Math.round(value)}ms`;
-  const seconds = value / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
-  const minutes = seconds / 60;
-  return `${minutes.toFixed(minutes >= 10 ? 0 : 1)}m`;
 }
 
 function collapseOtelSignalsUrl(input: { tracesUrl: string; metricsUrl: string }): string | null {
@@ -1272,75 +1200,6 @@ function updateProjectScriptsForSave(input: {
         ? { ...script, runOnWorktreeCreate: false }
         : script,
   );
-}
-
-function isProviderUpdateActive(provider: ServerProvider | null | undefined): boolean {
-  const status = provider?.updateState?.status;
-  return status === "queued" || status === "running";
-}
-
-function canRunProviderUpdate(provider: ServerProvider | null | undefined): boolean {
-  return (
-    provider?.versionAdvisory?.canUpdate === true &&
-    provider.versionAdvisory.status === "behind_latest" &&
-    !isProviderUpdateActive(provider)
-  );
-}
-
-function providerUpdateButtonLabel(provider: ServerProvider | null | undefined): string {
-  const status = provider?.updateState?.status;
-  if (status === "queued") return "Queued";
-  if (status === "running") return "Updating...";
-  return "Update";
-}
-
-function formatProviderVersionStatus(provider: ServerProvider | null | undefined): string | null {
-  if (!provider) return null;
-  const updateState = provider.updateState;
-  if (updateState) {
-    if (updateState.status === "running") return updateState.message ?? "Updating provider.";
-    if (updateState.status === "queued") return updateState.message ?? "Update queued.";
-    if (updateState.status === "succeeded") return updateState.message ?? "Provider updated.";
-    if (updateState.status === "failed") return updateState.message ?? "Provider update failed.";
-    if (updateState.status === "unchanged")
-      return updateState.message ?? "Provider still outdated.";
-  }
-
-  const advisory = provider.versionAdvisory;
-  if (advisory?.status === "behind_latest") {
-    const current = advisory.currentVersion ?? provider.version ?? "installed";
-    const latest = advisory.latestVersion ?? "latest";
-    return `Update available ${current} -> ${latest}`;
-  }
-  if (advisory?.status === "current") {
-    return provider.version ? `Current ${provider.version}` : "Current";
-  }
-  if (provider.version) return `Version ${provider.version}`;
-  return provider.installed ? "Installed" : "Not installed";
-}
-
-const timestampFormatterCache = new Map<TimestampFormat, Intl.DateTimeFormat>();
-
-function getTimestampFormatter(timestampFormat: TimestampFormat): Intl.DateTimeFormat {
-  const cached = timestampFormatterCache.get(timestampFormat);
-  if (cached) return cached;
-  const formatter = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
-  });
-  timestampFormatterCache.set(timestampFormat, formatter);
-  return formatter;
-}
-
-function formatMessageTimestamp(
-  iso: string | null | undefined,
-  timestampFormat: TimestampFormat = DEFAULT_TIMESTAMP_FORMAT,
-): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return getTimestampFormatter(timestampFormat).format(date);
 }
 
 function providerIcon(provider: ProviderKind | string | null | undefined): string {
@@ -1567,94 +1426,6 @@ function summarizeGitActionResult(
   if (action === "commit_push") return "Push complete";
   if (action === "commit_push_pr") return "PR flow complete";
   return "Commit complete";
-}
-
-function basenameOfPath(input: string): string {
-  const trimmed = input.replace(/\/+$/g, "");
-  const parts = trimmed.split("/");
-  return parts[parts.length - 1] || input;
-}
-
-function inferMentionKindFromPath(pathValue: string): ProjectEntry["kind"] {
-  return basenameOfPath(pathValue).includes(".") ? "file" : "directory";
-}
-
-function mentionLabel(mention: Pick<ComposerMention, "path" | "kind">): string {
-  const icon = mention.kind === "directory" ? "󰉋" : "󰈔";
-  return `${icon} ${basenameOfPath(mention.path)}`;
-}
-
-function mentionSignature(mention: Pick<ComposerMention, "path">): string {
-  return mention.path;
-}
-
-const MENTION_TOKEN_PATTERN = /(^|\s)@([^\s@]+)(?=\s|$)/g;
-
-function detectTrailingComposerPathTrigger(input: string): ComposerPathTrigger | null {
-  const trimmedEnd = input.replace(/\r/g, "");
-  const cursor = trimmedEnd.length;
-  let index = cursor - 1;
-  while (index >= 0) {
-    const char = trimmedEnd[index] ?? "";
-    if (char === " " || char === "\n" || char === "\t") {
-      break;
-    }
-    index -= 1;
-  }
-  const rangeStart = index + 1;
-  const token = trimmedEnd.slice(rangeStart, cursor);
-  if (!token.startsWith("@")) {
-    return null;
-  }
-  return {
-    query: token.slice(1),
-    rangeStart,
-    rangeEnd: cursor,
-  };
-}
-
-function replaceComposerTextRange(
-  text: string,
-  rangeStart: number,
-  rangeEnd: number,
-  replacement: string,
-): string {
-  const safeStart = Math.max(0, Math.min(text.length, rangeStart));
-  const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
-  return `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
-}
-
-function stripMentionTokensFromText(input: string): { mentions: ComposerMention[]; body: string } {
-  const mentions: ComposerMention[] = [];
-  let cursor = 0;
-  let output = "";
-
-  for (const match of input.matchAll(MENTION_TOKEN_PATTERN)) {
-    const fullMatch = match[0] ?? "";
-    const prefix = match[1] ?? "";
-    const mentionPath = match[2] ?? "";
-    const matchIndex = match.index ?? 0;
-    const mentionStart = matchIndex + prefix.length;
-    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
-    output += input.slice(cursor, mentionStart);
-    if (mentionPath.length > 0) {
-      mentions.push({
-        type: "path",
-        path: mentionPath,
-        kind: inferMentionKindFromPath(mentionPath),
-      });
-    } else {
-      output += input.slice(mentionStart, mentionEnd);
-    }
-    cursor = mentionEnd;
-  }
-
-  output += input.slice(cursor);
-  const body = output
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return { mentions, body };
 }
 
 function composerTraitsIcon(provider: ProviderKind): string {
@@ -14815,10 +14586,13 @@ export function App({
                                       <text
                                         content="●"
                                         style={{
-                                          fg: sourceControlStatusColor({
-                                            status: item.status,
-                                            implemented: item.implemented,
-                                          }),
+                                          fg: sourceControlStatusColor(
+                                            {
+                                              status: item.status,
+                                              implemented: item.implemented,
+                                            },
+                                            PALETTE,
+                                          ),
                                           marginRight: 1,
                                         }}
                                       />
@@ -14939,10 +14713,13 @@ export function App({
                                       <text
                                         content="●"
                                         style={{
-                                          fg: sourceControlStatusColor({
-                                            status: item.status,
-                                            auth: item.auth,
-                                          }),
+                                          fg: sourceControlStatusColor(
+                                            {
+                                              status: item.status,
+                                              auth: item.auth,
+                                            },
+                                            PALETTE,
+                                          ),
                                           marginRight: 1,
                                         }}
                                       />
