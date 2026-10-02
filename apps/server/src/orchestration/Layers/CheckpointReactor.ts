@@ -767,8 +767,10 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: CheckpointReactorShape["start"] = Effect.gen(function* () {
+    // Subscribe before forking so events dispatched right after `start` are not missed.
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      Stream.runForEach(Stream.fromSubscription(domainEvents), (event) => {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
