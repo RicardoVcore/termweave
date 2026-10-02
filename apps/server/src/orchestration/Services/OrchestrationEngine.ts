@@ -56,15 +56,9 @@ export interface OrchestrationEngineShape {
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
-   * Stream persisted domain events in dispatch order.
-   *
-   * This is a hot runtime stream (new events only), not a historical replay.
-   */
-  readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
-
-  /**
-   * Subscribe to new domain events. Live as soon as this completes, so consumers that
-   * signal readiness afterwards miss nothing (`streamDomainEvents` subscribes lazily).
+   * Subscribe to persisted domain events in dispatch order (new events only, not a
+   * historical replay). Live as soon as this completes, so consumers that signal
+   * readiness afterwards miss nothing. Each subscription independently receives all events.
    */
   readonly subscribeDomainEvents: Effect.Effect<
     PubSub.Subscription<OrchestrationEvent>,
