@@ -105,6 +105,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly authToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
+  readonly tailscaleServePort: number | undefined; // Tailscale Serve HTTPS port; undefined disables serve.
 }
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -169,6 +170,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           port: 0,
           host: undefined,
           authToken: undefined,
+          tailscaleServePort: undefined,
         } satisfies ServerConfigShape;
       }),
     );

@@ -4,6 +4,7 @@ import { buildServerWsUrl, type AttachedServerConnection } from "./serverSupervi
 import { startSshTunnel, type SshTunnel, type SshTunnelInput } from "./sshTunnel";
 
 const DEFAULT_REMOTE_PORT = 3773;
+const DEFAULT_WSS_PORT = 443;
 const USAGE = "Usage: termweave [attach ssh user@host | attach direct [ws://|wss://]host[:port]]";
 const DIRECT_USAGE = "Usage: termweave attach direct [ws://|wss://]host[:port]";
 
@@ -231,7 +232,10 @@ function parseDirectPort(value: string): number {
   return port;
 }
 
-function splitHostPort(input: string): { host: string; port: number; bracketed: boolean } {
+function splitHostPort(
+  input: string,
+  defaultPort: number,
+): { host: string; port: number; bracketed: boolean } {
   if (input.startsWith("[")) {
     const close = input.indexOf("]");
     if (close === -1) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
@@ -241,11 +245,11 @@ function splitHostPort(input: string): { host: string; port: number; bracketed: 
     if (after !== "" && !after.startsWith(":")) {
       throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
     }
-    const port = after.startsWith(":") ? parseDirectPort(after.slice(1)) : DEFAULT_REMOTE_PORT;
+    const port = after.startsWith(":") ? parseDirectPort(after.slice(1)) : defaultPort;
     return { host, port, bracketed: true };
   }
   const separator = input.lastIndexOf(":");
-  if (separator === -1) return { host: input, port: DEFAULT_REMOTE_PORT, bracketed: false };
+  if (separator === -1) return { host: input, port: defaultPort, bracketed: false };
   return {
     host: input.slice(0, separator),
     port: parseDirectPort(input.slice(separator + 1)),
@@ -276,7 +280,8 @@ export function parseDirectAttachCommand(args: readonly string[]): DirectAttachT
   }
   rest = rest.replace(/\/+$/u, "");
 
-  const { host, port, bracketed } = splitHostPort(rest);
+  const defaultPort = scheme === "wss" ? DEFAULT_WSS_PORT : DEFAULT_REMOTE_PORT;
+  const { host, port, bracketed } = splitHostPort(rest, defaultPort);
   if (!host) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);
   if (bracketed) {
     if (isIP(host) !== 6) throw new Error(`Invalid direct target. ${DIRECT_USAGE}`);

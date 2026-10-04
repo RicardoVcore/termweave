@@ -160,4 +160,44 @@ it.layer(testLayer)("server CLI command", (it) => {
       ]);
     }),
   );
+
+  it.effect("--tailscale-serve without auth token fails", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(runCli(["--tailscale-serve"]));
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(Cause.pretty(result.cause), /TERMWEAVE_AUTH_TOKEN is required/);
+      }
+      assert.equal(start.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("--tailscale-serve with non-loopback host fails", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        runCli(["--tailscale-serve", "--host", "0.0.0.0", "--auth-token", "secret"]),
+      );
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(Cause.pretty(result.cause), /must bind to it/);
+      }
+      assert.equal(start.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("--tailscale-serve with token resolves port 443", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--tailscale-serve", "--auth-token", "secret"]);
+
+      assert.equal(resolvedConfig?.tailscaleServePort, 443);
+    }),
+  );
+
+  it.effect("--tailscale-serve-port 8443 with token resolves port 8443", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--tailscale-serve-port", "8443", "--auth-token", "secret"]);
+
+      assert.equal(resolvedConfig?.tailscaleServePort, 8443);
+    }),
+  );
 });

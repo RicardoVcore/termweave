@@ -22,13 +22,15 @@ linking). See the top of the script for options.
 
 The Termweave CLI accepts the following configuration options, available either as CLI flags or environment variables:
 
-| CLI flag               | Env var                | Notes                                                                                |
-| ---------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
-| `--port <number>`      | `T3CODE_PORT`          | HTTP/WebSocket port.                                                                 |
-| `--host <address>`     | `T3CODE_HOST`          | Bind interface/address.                                                              |
-| `--home-dir <path>`    | `T3CODE_HOME`          | Base directory.                                                                      |
-| `--auth-token <token>` | `TERMWEAVE_AUTH_TOKEN` | WebSocket auth token. `T3CODE_AUTH_TOKEN` remains a legacy alias.                    |
-| `--bootstrap-fd <fd>`  | `T3CODE_BOOTSTRAP_FD`  | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
+| CLI flag                        | Env var                          | Notes                                                                                |
+| ------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
+| `--port <number>`               | `T3CODE_PORT`                    | HTTP/WebSocket port.                                                                 |
+| `--host <address>`              | `T3CODE_HOST`                    | Bind interface/address.                                                              |
+| `--home-dir <path>`             | `T3CODE_HOME`                    | Base directory.                                                                      |
+| `--auth-token <token>`          | `TERMWEAVE_AUTH_TOKEN`           | WebSocket auth token. `T3CODE_AUTH_TOKEN` remains a legacy alias.                    |
+| `--tailscale-serve`             | `TERMWEAVE_TAILSCALE_SERVE`      | Expose the loopback server to the tailnet over HTTPS. Requires an auth token.        |
+| `--tailscale-serve-port <port>` | `TERMWEAVE_TAILSCALE_SERVE_PORT` | Tailscale Serve HTTPS port (default 443). Setting it also enables Serve.             |
+| `--bootstrap-fd <fd>`           | `T3CODE_BOOTSTRAP_FD`            | Read a one-shot bootstrap envelope from an inherited file descriptor during startup. |
 
 > TIP: Use the `--help` flag to see all available options and their descriptions.
 
@@ -59,7 +61,38 @@ Notes:
 
 ## 2) Tailnet / Tailscale access
 
-If you use Tailscale, you can bind directly to your Tailnet address.
+If you use Tailscale, Tailscale Serve is the recommended path. Start the server with Serve enabled:
+
+```bash
+TOKEN="$(openssl rand -hex 24)"
+bun run --cwd apps/server start -- --tailscale-serve --auth-token "$TOKEN"
+```
+
+Then attach from the client with:
+
+```bash
+TERMWEAVE_AUTH_TOKEN="$TOKEN" termweave attach direct wss://<machine>.<tailnet>.ts.net
+```
+
+Replace `<machine>.<tailnet>.ts.net` with the server's MagicDNS name. The endpoint
+is also listed in the TUI Connections view.
+
+Notes:
+
+- The server stays on loopback; do not pass `--host`. Tailscale Serve terminates
+  HTTPS on the tailnet and proxies to `127.0.0.1`.
+- The auth token is mandatory in this mode. Without it every device on the
+  tailnet could drive the agent, so startup fails.
+- MagicDNS and HTTPS certificates must be enabled for the tailnet (admin console,
+  DNS page).
+- The server user must be root or the Tailscale operator:
+  `sudo tailscale set --operator=<user>`.
+- Serve on port 443 replaces any existing Tailscale Serve config on that port.
+  Use `--tailscale-serve-port 8443` to keep it.
+- Startup fails when `tailscale serve` cannot be configured. Serve is turned off
+  again on shutdown.
+
+Alternatively, bind directly to your Tailnet address if you prefer not to use Serve:
 
 ```bash
 TAILNET_IP="$(tailscale ip -4)"
@@ -120,8 +153,8 @@ termweave attach direct wss://vps.example.com  # public host, TLS terminated in 
 ```
 
 The target may be a bare `host[:port]` (assumes `ws://`) or a full
-`ws://` / `wss://` URL. Default port is `3773`. IPv6 literals use brackets:
-`[fd7a:1::2]:3773`.
+`ws://` / `wss://` URL. Default port is `3773`, or `443` for a `wss://` target
+without a port. IPv6 literals use brackets: `[fd7a:1::2]:3773`.
 
 Security rules enforced by the client:
 
@@ -142,10 +175,11 @@ Private/Tailscale ranges recognized as non-public: `10/8`, `172.16/12`,
 ### Tailscale
 
 Tailscale is optional infrastructure. Install and configure it yourself
-(<https://tailscale.com/download>); Termweave never installs, configures, or
-manages it and does not require it for normal operation. Once your machine and
-the server share a tailnet, bind the server to its Tailnet IP (see section 2)
-and point the TUI at that address:
+(<https://tailscale.com/download>); Termweave never installs Tailscale and only
+touches its configuration when you opt in with `--tailscale-serve`. When your
+machine and the server share a tailnet, use Tailscale Serve (section 2) as the
+recommended path, or bind the server to its Tailnet IP and point the TUI at that
+address:
 
 ```bash
 termweave attach direct "$(tailscale ip -4)":3773

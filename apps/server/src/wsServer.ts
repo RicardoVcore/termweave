@@ -89,6 +89,7 @@ import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@termweave/shared/schemaJson";
 import { buildServerEnvironmentDescriptor } from "./environment/ServerEnvironmentDescriptor.ts";
 import { buildCoreAdvertisedEndpoints } from "./remoteAccess/AdvertisedEndpoints.ts";
+import { acquireTailscaleServe } from "./remoteAccess/tailscaleServe.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -123,6 +124,10 @@ const isServerNotRunningError = (error: Error): boolean => {
   );
 };
 
+function listeningPort(server: http.Server, fallback: number): number {
+  const address = server.address();
+  return typeof address === "object" && address !== null ? address.port : fallback;
+}
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
   socket.end(
     `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
@@ -748,6 +753,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
   yield* readiness.markHttpListening;
 
+  const tailscaleServeBaseUrl =
+    serverConfig.tailscaleServePort === undefined
+      ? null
+      : yield* acquireTailscaleServe({
+          localPort: listeningPort(httpServer, port),
+          servePort: serverConfig.tailscaleServePort,
+        }).pipe(
+          Effect.mapError(
+            (cause) => new ServerLifecycleError({ operation: "tailscaleServe", cause }),
+          ),
+        );
+
   yield* Effect.addFinalizer(() =>
     Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
   );
@@ -974,11 +991,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* sourceControlDiscovery.discover({ cwd });
 
       case WS_METHODS.serverGetAdvertisedEndpoints: {
-        const address = httpServer.address();
-        const advertisedPort =
-          typeof address === "object" && address !== null ? address.port : port;
+        const advertisedPort = listeningPort(httpServer, port);
         return {
-          endpoints: buildCoreAdvertisedEndpoints({ host, port: advertisedPort }),
+          endpoints: buildCoreAdvertisedEndpoints({
+            host,
+            port: advertisedPort,
+            ...(tailscaleServeBaseUrl === null ? {} : { tailscaleServeBaseUrl }),
+          }),
         };
       }
 
