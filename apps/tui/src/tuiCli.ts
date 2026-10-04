@@ -4,7 +4,6 @@ import { buildServerWsUrl, type AttachedServerConnection } from "./serverSupervi
 import { startSshTunnel, type SshTunnel, type SshTunnelInput } from "./sshTunnel";
 
 const DEFAULT_REMOTE_PORT = 3773;
-const DEFAULT_WSS_PORT = 443;
 const USAGE = "Usage: termweave [attach ssh user@host | attach direct [ws://|wss://]host[:port]]";
 const DIRECT_USAGE = "Usage: termweave attach direct [ws://|wss://]host[:port]";
 
@@ -222,6 +221,9 @@ export function describeDirectHost(host: string): {
   // warn on plain ws://, but do not hard-reject.
   return { hostClass: "public", hostKind: "name" };
 }
+
+// A `wss://` target without a port is TLS on the standard port, e.g. Tailscale Serve.
+const DEFAULT_WSS_PORT = 443;
 
 function parseDirectPort(value: string): number {
   const trimmed = value.trim();
