@@ -29,6 +29,7 @@ import {
   WsResponse,
   type WsPushEnvelopeBase,
   type ServerProvider,
+  ENVIRONMENT_DESCRIPTOR_PATH,
 } from "@termweave/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -476,6 +477,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void Effect.runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+        if (url.pathname === ENVIRONMENT_DESCRIPTOR_PATH) {
+          respond(
+            200,
+            { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            JSON.stringify(environment),
+          );
+          return;
+        }
         if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
           const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
           const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);

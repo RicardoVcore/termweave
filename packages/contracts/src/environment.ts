@@ -34,6 +34,9 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 
+/** HTTP path where a backend serves its `ExecutionEnvironmentDescriptor`, unauthenticated, for discovery. */
+export const ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/termweave/environment";
+
 export const EnvironmentConnectionState = Schema.Literals([
   "connecting",
   "connected",
