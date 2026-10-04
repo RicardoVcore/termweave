@@ -64,6 +64,13 @@ export interface ServerSupervisorDependencies {
   }) => Promise<void>;
 }
 
+/** Env vars an auth token is read from, in precedence order. */
+export const AUTH_TOKEN_ENV_VARS = [
+  "TERMWEAVE_AUTH_TOKEN",
+  "T1CODE_AUTH_TOKEN",
+  "T3CODE_AUTH_TOKEN",
+] as const;
+
 function extractFatalStartupError(output: string): string | null {
   const normalized = output.trim();
   if (!normalized) {
@@ -126,12 +133,13 @@ export function buildServerWsUrl(host: string, port: number, authToken?: string 
 }
 
 export function resolveServerAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
-  return (
-    env.TERMWEAVE_AUTH_TOKEN?.trim() ||
-    env.T1CODE_AUTH_TOKEN?.trim() ||
-    env.T3CODE_AUTH_TOKEN?.trim() ||
-    null
-  );
+  for (const envVar of AUTH_TOKEN_ENV_VARS) {
+    const value = env[envVar]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return null;
 }
 
 export function resolveAttachedServerConnection(

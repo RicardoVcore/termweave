@@ -45,6 +45,8 @@ export interface PersistedDraftThreadState {
 
 export interface TuiPrefs {
   readonly connectionProfiles?: readonly ConnectionProfile[];
+  /** Profile opened by a bare `termweave` launch. */
+  readonly defaultConnectionProfileId?: string;
   readonly tuiThemeId?: TuiThemeId;
   readonly selectedProjectId?: string;
   readonly selectedThreadId?: string;

@@ -74,7 +74,7 @@ describe("TUI process signals", () => {
     );
     children.add(child);
 
-    await waitForOutput(child, "PREFS_PENDING");
+    await waitForOutput(child, "RENDERER_PENDING");
     child.kill("SIGTERM");
     await waitForExit(child);
 

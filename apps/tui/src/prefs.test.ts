@@ -141,6 +141,7 @@ describe("prefs", () => {
           transport: "direct",
           host: "100.64.0.10",
           port: 3773,
+          scheme: "ws",
           tokenEnvVar: "TERMWEAVE_AUTH_TOKEN",
           password: "must-not-persist",
           privateKey: "must-not-persist",
@@ -159,6 +160,7 @@ describe("prefs", () => {
         transport: "direct",
         host: "100.64.0.10",
         port: 3773,
+        scheme: "ws",
         tokenEnvVar: "TERMWEAVE_AUTH_TOKEN",
       },
     ]);

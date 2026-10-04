@@ -17,11 +17,12 @@ import { normalizeTuiThemeId, resolveTerminalThemeMode, resolveTuiTheme } from "
 import { App } from "./ui";
 import { resolveServerAuthToken } from "./serverSupervisor";
 import {
-  assertKnownAttachCommand,
   buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
-  parseDirectAttachCommand,
+  directTargetFromProfile,
+  resolveLaunchProfile,
   startSshAttach,
+  type SshAttach,
 } from "./tuiCli";
 
 function readBooleanEnv(value: string | undefined): boolean | undefined {
@@ -56,7 +57,7 @@ function shouldEnableMouseMovement(env: NodeJS.ProcessEnv = process.env): boolea
 }
 
 const sshStartup = new AbortController();
-let sshAttach: Awaited<ReturnType<typeof startSshAttach>> = null;
+let sshAttach: SshAttach | null = null;
 let destroyUi: (() => void) | null = null;
 let requestInterrupt: (() => void) | null = null;
 let shuttingDown = false;
@@ -95,28 +96,45 @@ const shutdown = (code = 0, error?: unknown) => {
 process.on("SIGINT", onSigint);
 process.on("SIGTERM", onSigterm);
 process.once("exit", stopSshAttach);
+
 const cliArgs = process.argv.slice(2);
-assertKnownAttachCommand(cliArgs);
-const directTarget = parseDirectAttachCommand(cliArgs);
-if (!directTarget) {
-  sshAttach = await startSshAttach(cliArgs, { signal: sshStartup.signal }).catch(
+const paths = resolveTuiPaths();
+const prefs = await readPrefs(paths);
+
+// An explicit attach-only env launch outranks the saved default profile.
+const attachOnlyEnv = readBooleanEnv(process.env.T1CODE_TUI_ATTACH_ONLY) === true;
+const launchProfile = resolveLaunchProfile(cliArgs, {
+  ...(prefs.connectionProfiles ? { connectionProfiles: prefs.connectionProfiles } : {}),
+  defaultConnectionProfileId: attachOnlyEnv ? undefined : prefs.defaultConnectionProfileId,
+});
+
+if (launchProfile?.transport === "ssh") {
+  sshAttach = await startSshAttach(launchProfile, { signal: sshStartup.signal }).catch(
     (error: unknown) => {
       if (!shuttingDown) throw error;
       return null;
     },
   );
 }
+
 if (shuttingDown) await new Promise<never>(() => {});
-const sshAuthToken = resolveServerAuthToken();
-const initialServerConnection = directTarget
-  ? buildDirectAttachServerConnection(directTarget, sshAuthToken)
-  : sshAttach
-    ? buildSshAttachServerConnection(sshAttach, sshAuthToken)
-    : undefined;
-const initialServerConnectionProps = initialServerConnection ? { initialServerConnection } : {};
+
+const initialServerConnection =
+  launchProfile?.transport === "direct"
+    ? buildDirectAttachServerConnection(
+        directTargetFromProfile(launchProfile),
+        process.env[launchProfile.tokenEnvVar],
+      )
+    : sshAttach
+      ? buildSshAttachServerConnection(sshAttach, resolveServerAuthToken())
+      : undefined;
+
+const initialConnectionProps = {
+  ...(initialServerConnection ? { initialServerConnection } : {}),
+  ...(launchProfile ? { initialConnectionProfile: launchProfile } : {}),
+};
 
 if (process.env.T1CODE_HEADLESS === "1") {
-  const paths = resolveTuiPaths();
   const outputPath =
     process.env.T1CODE_HEADLESS_FRAME_PATH?.trim() ||
     path.join(paths.configHomeDir, "headless-frame.txt");
@@ -140,7 +158,7 @@ if (process.env.T1CODE_HEADLESS === "1") {
   testSetup.renderer.once("destroy", removeProcessCleanup);
   const root = createRoot(testSetup.renderer);
   unmountRoot = () => root.unmount();
-  root.render(<App renderer={testSetup.renderer} {...initialServerConnectionProps} />);
+  root.render(<App renderer={testSetup.renderer} {...initialConnectionProps} />);
 
   setTimeout(() => {
     void (async () => {
@@ -153,8 +171,6 @@ if (process.env.T1CODE_HEADLESS === "1") {
   }, timeoutMs);
 } else {
   let interruptRequestToken = 0;
-  const paths = resolveTuiPaths();
-  const prefs = await readPrefs(paths);
   const appTheme = prefs.appSettings?.theme ?? DEFAULT_APP_THEME;
   const tuiThemeId = normalizeTuiThemeId(prefs.tuiThemeId);
   const tracksSystemThemeMode = shouldTrackSystemThemeMode(appTheme);
@@ -202,7 +218,7 @@ if (process.env.T1CODE_HEADLESS === "1") {
         initialTuiThemeId={tuiThemeId}
         initialSystemThemeMode={initialSystemThemeMode}
         initialTerminalThemeColors={detectedTerminalPalette.colors}
-        {...initialServerConnectionProps}
+        {...initialConnectionProps}
         {...(prefs.appSettings ? { initialAppSettings: prefs.appSettings } : {})}
       />,
     );

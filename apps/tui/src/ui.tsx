@@ -259,7 +259,12 @@ import {
   parseTuiServerConnection,
 } from "./connectionsPanel";
 import { type TuiPrefs, readPrefs, writePrefs } from "./prefs";
-import type { ConnectionProfile } from "./connectionProfiles";
+import {
+  describeConnectionProfile,
+  removeConnectionProfile,
+  upsertConnectionProfile,
+  type ConnectionProfile,
+} from "./connectionProfiles";
 import {
   ADDITIONAL_COMING_SOON_MODEL_PROVIDER_OPTIONS,
   COMING_SOON_INSTALL_PROVIDER_OPTIONS,
@@ -3909,6 +3914,7 @@ export function App({
   initialSystemThemeMode,
   initialTerminalThemeColors,
   initialServerConnection,
+  initialConnectionProfile,
 }: {
   renderer: CliRenderer;
   interruptRequestToken?: number;
@@ -3918,6 +3924,7 @@ export function App({
   initialSystemThemeMode?: TuiThemeMode | null;
   initialTerminalThemeColors?: TerminalColors | null;
   initialServerConnection?: AttachedServerConnection;
+  initialConnectionProfile?: ConnectionProfile;
 }) {
   const terminalRenderer = _renderer as unknown as TerminalRenderer;
   const paths = useMemo(() => resolveTuiPaths(), []);
@@ -4114,6 +4121,19 @@ export function App({
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [prefsReady, setPrefsReady] = useState(false);
   const [connectionProfiles, setConnectionProfiles] = useState<readonly ConnectionProfile[]>([]);
+  const [defaultConnectionProfileId, setDefaultConnectionProfileId] = useState<string | null>(null);
+  const unsavedCurrentConnection = useMemo<ConnectionProfile | null>(
+    () =>
+      initialConnectionProfile &&
+      !connectionProfiles.some((p) => p.id === initialConnectionProfile.id)
+        ? initialConnectionProfile
+        : null,
+    [initialConnectionProfile, connectionProfiles],
+  );
+  const removeSavedConnection = useCallback((profileId: string) => {
+    setConnectionProfiles((current) => removeConnectionProfile(current, profileId));
+    setDefaultConnectionProfileId((current) => (current === profileId ? null : current));
+  }, []);
   const [serverHttpOrigin, setServerHttpOrigin] = useState<string | null>(null);
   const [serverWsUrl, setServerWsUrl] = useState<string | null>(null);
   const tuiServerConnection = useMemo(
@@ -4611,6 +4631,7 @@ export function App({
         if (prefs.connectionProfiles) {
           setConnectionProfiles(prefs.connectionProfiles);
         }
+        setDefaultConnectionProfileId(prefs.defaultConnectionProfileId ?? null);
         if (prefs.appSettings) {
           setAppSettings(normalizeAppSettings({ ...DEFAULT_APP_SETTINGS, ...prefs.appSettings }));
           setOpenInstallProviders({
@@ -4913,6 +4934,7 @@ export function App({
       ...(Object.keys(composerDraftsByThreadId).length > 0 ? { composerDraftsByThreadId } : {}),
       appSettings,
       ...(connectionProfiles.length > 0 ? { connectionProfiles } : {}),
+      ...(defaultConnectionProfileId ? { defaultConnectionProfileId } : {}),
     } satisfies TuiPrefs;
     void writePrefs(paths, prefs);
     logger.log("prefs.saved", prefs as Record<string, unknown>);
@@ -4937,6 +4959,7 @@ export function App({
     tuiThemeId,
     composerDraftsByThreadId,
     connectionProfiles,
+    defaultConnectionProfileId,
     expandedProjectIds,
     selectedProjectId,
     selectedThreadId,
@@ -15191,12 +15214,68 @@ export function App({
                               />
                             ))}
                           </SettingsSection>
-                          <SettingsSection title="Remote environments">
-                            <SettingsRow
-                              title="Environment pairing"
-                              description="Use attach-only mode to connect this TUI to another reachable backend."
-                              status="Set T1CODE_TUI_ATTACH_ONLY=1 with T1CODE_HOST, T1CODE_PORT, and T1CODE_AUTH_TOKEN."
-                            />
+                          <SettingsSection title="Saved connections">
+                            {unsavedCurrentConnection ? (
+                              <SettingsRow
+                                title="Current connection"
+                                description={describeConnectionProfile(unsavedCurrentConnection)}
+                                status="Not saved."
+                                control={
+                                  <ToolbarButton
+                                    label="Save"
+                                    onPress={() => {
+                                      setConnectionProfiles((current) =>
+                                        upsertConnectionProfile(current, unsavedCurrentConnection),
+                                      );
+                                    }}
+                                  />
+                                }
+                              />
+                            ) : null}
+                            {connectionProfiles.map((profile) => (
+                              <SettingsRow
+                                key={profile.id}
+                                title={profile.label}
+                                description={describeConnectionProfile(profile)}
+                                status={
+                                  profile.id === defaultConnectionProfileId
+                                    ? "Opens on launch."
+                                    : `Open with: termweave attach ${profile.label}`
+                                }
+                                control={
+                                  <box style={{ flexDirection: "row", gap: 1 }}>
+                                    {profile.id === defaultConnectionProfileId ? (
+                                      <ToolbarButton
+                                        label="Clear default"
+                                        onPress={() => {
+                                          setDefaultConnectionProfileId(null);
+                                        }}
+                                      />
+                                    ) : (
+                                      <ToolbarButton
+                                        label="Open on launch"
+                                        onPress={() => {
+                                          setDefaultConnectionProfileId(profile.id);
+                                        }}
+                                      />
+                                    )}
+                                    <ToolbarButton
+                                      label="Remove"
+                                      onPress={() => {
+                                        removeSavedConnection(profile.id);
+                                      }}
+                                    />
+                                  </box>
+                                }
+                              />
+                            ))}
+                            {connectionProfiles.length === 0 && !unsavedCurrentConnection ? (
+                              <SettingsRow
+                                title="No saved connections"
+                                description="Attach once with `termweave attach ssh user@host` or `termweave attach direct wss://host`, then save it here."
+                                status="Run `termweave local` to skip the launch default."
+                              />
+                            ) : null}
                           </SettingsSection>
                         </>
                       ) : null}
