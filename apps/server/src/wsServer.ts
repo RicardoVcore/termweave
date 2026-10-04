@@ -621,11 +621,26 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       ] satisfies ReadonlyArray<ServerProvider>;
     });
 
-  yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+  // Subscribe before forking consumers: lazy streams would only subscribe once the forked
+  // fiber runs, dropping events published after the readiness mark below.
+  const domainEvents = yield* Scope.provide(
+    orchestrationEngine.subscribeDomainEvents,
+    subscriptionsScope,
+  );
+  const keybindingsChanges = yield* Scope.provide(
+    keybindingsManager.subscribeChanges,
+    subscriptionsScope,
+  );
+  const providerInstanceChanges = yield* Scope.provide(
+    providerInstanceRegistry.subscribeChanges,
+    subscriptionsScope,
+  );
+
+  yield* Stream.runForEach(Stream.fromSubscription(domainEvents), (event) =>
     pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
+  yield* Stream.runForEach(Stream.fromSubscription(keybindingsChanges), (event) =>
     getProviderInstances.pipe(
       Effect.flatMap((providerInstances) =>
         pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
@@ -637,7 +652,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(providerInstanceRegistry.streamChanges, () =>
+  yield* Stream.runForEach(Stream.fromSubscription(providerInstanceChanges), () =>
     Effect.all([keybindingsManager.loadConfigState, getProviderInstances] as const, {
       concurrency: "unbounded",
     }).pipe(
