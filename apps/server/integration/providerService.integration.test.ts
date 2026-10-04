@@ -73,15 +73,16 @@ const makeIntegrationFixture = Effect.gen(function* () {
 });
 
 const collectEventsDuring = <A, E, R>(
-  stream: Stream.Stream<ProviderRuntimeEvent>,
+  subscribe: ProviderServiceShape["subscribeEvents"],
   count: number,
   action: Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderRuntimeEvent>();
-    yield* Stream.runForEach(stream, (event) => Queue.offer(queue, event).pipe(Effect.asVoid)).pipe(
-      Effect.forkScoped,
-    );
+    const runtimeEvents = yield* subscribe;
+    yield* Stream.runForEach(Stream.fromSubscription(runtimeEvents), (event) =>
+      Queue.offer(queue, event).pipe(Effect.asVoid),
+    ).pipe(Effect.forkScoped);
 
     yield* action;
 
@@ -103,7 +104,7 @@ const runTurn = (input: {
     yield* input.harness.queueTurnResponse(input.threadId, input.response);
 
     return yield* collectEventsDuring(
-      input.provider.streamEvents,
+      input.provider.subscribeEvents,
       input.response.events.length,
       input.provider.sendTurn({
         threadId: input.threadId,

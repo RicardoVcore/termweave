@@ -1274,8 +1274,9 @@ const make = Effect.gen(function* () {
   const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
     // Subscribe before forking so events dispatched right after `start` are not missed.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    const runtimeEvents = yield* providerService.subscribeEvents;
     yield* Effect.forkScoped(
-      Stream.runForEach(providerService.streamEvents, (event) =>
+      Stream.runForEach(Stream.fromSubscription(runtimeEvents), (event) =>
         worker.enqueue({ source: "runtime", event }),
       ),
     );

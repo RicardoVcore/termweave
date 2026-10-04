@@ -706,7 +706,7 @@ const make = Effect.gen(function* () {
 
     // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
     // from a turn.diff.updated runtime event, capture the real git checkpoint to
-    // replace it. The providerService.streamEvents PubSub does not reliably deliver
+    // replace it. The providerService runtime event PubSub does not reliably deliver
     // turn.completed runtime events to this reactor (shared subscription), so
     // reacting to the domain event is the reliable path.
     if (event.type === "thread.turn-diff-completed") {
@@ -783,8 +783,9 @@ const make = Effect.gen(function* () {
       }),
     );
 
+    const runtimeEvents = yield* providerService.subscribeEvents;
     yield* Effect.forkScoped(
-      Stream.runForEach(providerService.streamEvents, (event) => {
+      Stream.runForEach(Stream.fromSubscription(runtimeEvents), (event) => {
         if (event.type !== "turn.started" && event.type !== "turn.completed") {
           return Effect.void;
         }

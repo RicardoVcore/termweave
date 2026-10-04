@@ -26,7 +26,7 @@ import type {
   ProviderTurnStartResult,
 } from "@termweave/contracts";
 import { Context } from "effect";
-import type { Effect, Stream } from "effect";
+import type { Effect, PubSub, Scope } from "effect";
 
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
@@ -109,11 +109,17 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
-   * Canonical provider runtime event stream.
+   * Subscribe to canonical provider runtime events. Live as soon as this completes, so
+   * consumers that signal readiness afterwards miss nothing. Each subscription
+   * independently receives all events.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).
    */
-  readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
+  readonly subscribeEvents: Effect.Effect<
+    PubSub.Subscription<ProviderRuntimeEvent>,
+    never,
+    Scope.Scope
+  >;
 }
 
 /**
