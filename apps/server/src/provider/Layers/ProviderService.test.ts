@@ -932,7 +932,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       });
 
       const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
-      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+      const runtimeEvents = yield* provider.subscribeEvents;
+      const consumer = yield* Stream.runForEach(Stream.fromSubscription(runtimeEvents), (event) =>
         Ref.update(eventsRef, (current) => [...current, event]),
       ).pipe(Effect.forkChild);
       yield* sleep(50);
@@ -970,7 +971,8 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       });
 
       const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
-      const consumer = yield* Stream.take(provider.streamEvents, 3).pipe(
+      const runtimeEvents = yield* provider.subscribeEvents;
+      const consumer = yield* Stream.take(Stream.fromSubscription(runtimeEvents), 3).pipe(
         Stream.runForEach((event) => Ref.update(receivedRef, (current) => [...current, event])),
         Effect.forkChild,
       );
@@ -1026,7 +1028,9 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
 
       const receivedByHealthy: string[] = [];
       const expectedEventIds = new Set<string>(["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"]);
-      const healthyFiber = yield* Stream.take(provider.streamEvents, 3).pipe(
+      const healthyEvents = yield* provider.subscribeEvents;
+      const failingEvents = yield* provider.subscribeEvents;
+      const healthyFiber = yield* Stream.take(Stream.fromSubscription(healthyEvents), 3).pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
             receivedByHealthy.push(event.eventId);
@@ -1034,7 +1038,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         ),
         Effect.forkChild,
       );
-      const failingFiber = yield* Stream.take(provider.streamEvents, 1).pipe(
+      const failingFiber = yield* Stream.take(Stream.fromSubscription(failingEvents), 1).pipe(
         Stream.runForEach(() => Effect.fail("listener crash")),
         Effect.forkChild,
       );

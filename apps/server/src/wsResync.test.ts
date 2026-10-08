@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, PubSub, Scope } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -484,7 +484,7 @@ describe("orchestration reconnect and interrupted sessions", () => {
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: () => unsupported(),
       rollbackConversation: () => unsupported(),
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      subscribeEvents: PubSub.subscribe(runtimeEventPubSub),
     };
 
     server = await createTestServer({
@@ -635,7 +635,7 @@ describe("orchestration reconnect and interrupted sessions", () => {
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: () => unsupported(),
       rollbackConversation: () => unsupported(),
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      subscribeEvents: PubSub.subscribe(runtimeEventPubSub),
     };
 
     server = await createTestServer({

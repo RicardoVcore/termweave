@@ -2096,7 +2096,7 @@ describe("WebSocket Server", () => {
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: () => unsupported(),
       rollbackConversation: () => unsupported(),
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      subscribeEvents: PubSub.subscribe(runtimeEventPubSub),
     };
     const providerLayer = Layer.succeed(ProviderService, providerService);
 
