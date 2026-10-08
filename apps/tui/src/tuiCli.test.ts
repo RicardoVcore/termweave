@@ -3,12 +3,14 @@ import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  assertKnownAttachCommand,
   buildDirectAttachServerConnection,
   buildSshAttachServerConnection,
   describeDirectHost,
+  directProfileFromTarget,
+  directTargetFromProfile,
   parseDirectAttachCommand,
   parseSshAttachCommand,
+  resolveLaunchProfile,
   sshTunnelInputFromProfile,
   startSshAttach,
 } from "./tuiCli";
@@ -36,12 +38,13 @@ describe("TUI CLI", () => {
   it("starts SSH attach through the configured profile and tunnel", async () => {
     const tunnel = fakeTunnel(41001);
     const startTunnel = vi.fn(async () => tunnel);
+    const profile = parseSshAttachCommand(["attach", "ssh", "termweave@production"])!;
 
-    const attach = await startSshAttach(["attach", "ssh", "termweave@production"], {
+    const attach = await startSshAttach(profile, {
       startTunnel,
     });
 
-    expect(attach?.profile).toMatchObject({
+    expect(attach.profile).toMatchObject({
       transport: "ssh",
       host: "production",
       username: "termweave",
@@ -52,8 +55,8 @@ describe("TUI CLI", () => {
       target: "termweave@production",
       remotePort: 3773,
     });
-    expect(attach?.localPort).toBe(tunnel.localPort);
-    attach?.stop();
+    expect(attach.localPort).toBe(tunnel.localPort);
+    attach.stop();
   });
 
   it("reconnects an exited tunnel on the same local port", async () => {
@@ -65,7 +68,9 @@ describe("TUI CLI", () => {
       .fn()
       .mockResolvedValueOnce(firstTunnel)
       .mockResolvedValueOnce(secondTunnel);
-    const attach = await startSshAttach(["attach", "ssh", "production"], {
+    const profile = parseSshAttachCommand(["attach", "ssh", "production"])!;
+
+    const attach = await startSshAttach(profile, {
       startTunnel,
       reconnectDelayMs: 25,
     });
@@ -80,7 +85,7 @@ describe("TUI CLI", () => {
       localPort: 41002,
       signal: expect.any(AbortSignal),
     });
-    attach?.stop();
+    attach.stop();
     expect(secondTunnel.stop).toHaveBeenCalledOnce();
   });
 
@@ -97,7 +102,9 @@ describe("TUI CLI", () => {
             input.signal?.addEventListener("abort", stopPendingChild, { once: true }),
           ),
       );
-    const attach = await startSshAttach(["attach", "ssh", "production"], {
+    const profile = parseSshAttachCommand(["attach", "ssh", "production"])!;
+
+    const attach = await startSshAttach(profile, {
       startTunnel,
       reconnectDelayMs: 25,
     });
@@ -105,7 +112,7 @@ describe("TUI CLI", () => {
     firstProcess.exitCode = 255;
     firstProcess.emit("exit", 255, null);
     await vi.advanceTimersByTimeAsync(25);
-    attach?.stop();
+    attach.stop();
 
     expect(stopPendingChild).toHaveBeenCalledOnce();
   });
@@ -117,7 +124,9 @@ describe("TUI CLI", () => {
     const spawned = new Promise<void>((resolve) => {
       markSpawned = resolve;
     });
-    const startup = startSshAttach(["attach", "ssh", "production"], {
+    const profile = parseSshAttachCommand(["attach", "ssh", "production"])!;
+
+    const startup = startSshAttach(profile, {
       signal: controller.signal,
       startTunnel: (input) =>
         startSshTunnel(input, {
@@ -143,12 +152,14 @@ describe("TUI CLI", () => {
     process.exitCode = 255;
     const tunnel = fakeTunnel(41003, process);
     const startTunnel = vi.fn(async () => tunnel);
-    const attach = await startSshAttach(["attach", "ssh", "production"], {
+    const profile = parseSshAttachCommand(["attach", "ssh", "production"])!;
+
+    const attach = await startSshAttach(profile, {
       startTunnel,
       reconnectDelayMs: 25,
     });
 
-    attach?.stop();
+    attach.stop();
     await vi.advanceTimersByTimeAsync(25);
 
     expect(startTunnel).toHaveBeenCalledOnce();
@@ -156,18 +167,22 @@ describe("TUI CLI", () => {
 
   it("builds the shared App connection without persisting the SSH token", async () => {
     const token = "memory-only-token";
-    const attach = await startSshAttach(["attach", "ssh", "production"], {
-      startTunnel: async () => fakeTunnel(41004),
+    const tunnel = fakeTunnel(41004);
+    const startTunnel = vi.fn(async () => tunnel);
+    const profile = parseSshAttachCommand(["attach", "ssh", "production"])!;
+
+    const attach = await startSshAttach(profile, {
+      startTunnel,
     });
 
-    expect(buildSshAttachServerConnection(attach!, token)).toEqual({
+    expect(buildSshAttachServerConnection(attach, token)).toEqual({
       host: "127.0.0.1",
       port: 41004,
       authToken: token,
       wsUrl: `ws://127.0.0.1:41004/?token=${token}`,
     });
-    expect(JSON.stringify(attach?.profile)).not.toContain(token);
-    attach?.stop();
+    expect(JSON.stringify(attach.profile)).not.toContain(token);
+    attach.stop();
   });
 
   it("preserves explicit profile SSH options", () => {
@@ -202,14 +217,63 @@ describe("TUI CLI", () => {
     expect(parseSshAttachCommand(["attach", "direct", "host"])).toBeNull();
   });
 
-  it("rejects an unknown attach mode instead of silently starting a local server", () => {
-    expect(() => assertKnownAttachCommand(["attach", "diret", "host"])).toThrow("attach");
-    expect(() => assertKnownAttachCommand(["attach"])).toThrow("attach");
-    expect(() => assertKnownAttachCommand(["bogus"])).toThrow("attach");
-    expect(() => assertKnownAttachCommand(["--help"])).toThrow("attach");
-    expect(() => assertKnownAttachCommand(["attach", "ssh", "user@host"])).not.toThrow();
-    expect(() => assertKnownAttachCommand(["attach", "direct", "host"])).not.toThrow();
-    expect(() => assertKnownAttachCommand([])).not.toThrow();
+  describe("launch profile resolution", () => {
+    const saved = {
+      id: "prod",
+      label: "Production",
+      transport: "ssh" as const,
+      host: "example.com",
+      port: 22,
+      remotePort: 3773,
+    };
+    const prefs = { connectionProfiles: [saved], defaultConnectionProfileId: "prod" };
+
+    it("opens the default profile on a bare launch, and a local server without one", () => {
+      expect(resolveLaunchProfile([], {})).toBeNull();
+      expect(resolveLaunchProfile([], { connectionProfiles: [saved] })).toBeNull();
+      expect(resolveLaunchProfile([], prefs)).toEqual(saved);
+    });
+
+    it("lets `local` skip the default profile", () => {
+      expect(resolveLaunchProfile(["local"], prefs)).toBeNull();
+    });
+
+    it("resolves `attach <name>` against saved profiles", () => {
+      expect(resolveLaunchProfile(["attach", "Production"], prefs)).toEqual(saved);
+      expect(() => resolveLaunchProfile(["attach", "unknown"], prefs)).toThrow(
+        'No saved connection named "unknown"',
+      );
+    });
+
+    it("rejects unknown commands instead of silently starting a local server", () => {
+      expect(() => resolveLaunchProfile(["attach", "diret", "host"], prefs)).toThrow("Usage");
+      expect(() => resolveLaunchProfile(["attach"], prefs)).toThrow("Usage");
+      expect(() => resolveLaunchProfile(["bogus"], prefs)).toThrow("Usage");
+      expect(() => resolveLaunchProfile(["--help"], prefs)).toThrow("Usage");
+    });
+
+    it("records which env var holds the token for a direct attach", () => {
+      const args = ["attach", "direct", "wss://box.ts.net:443"];
+      expect(resolveLaunchProfile(args, {}, { T1CODE_AUTH_TOKEN: "token1" })).toMatchObject({
+        transport: "direct",
+        scheme: "wss",
+        host: "box.ts.net",
+        port: 443,
+        tokenEnvVar: "T1CODE_AUTH_TOKEN",
+      });
+      expect(resolveLaunchProfile(args, {}, {})).toMatchObject({
+        tokenEnvVar: "TERMWEAVE_AUTH_TOKEN",
+      });
+    });
+  });
+
+  describe("direct profile conversions", () => {
+    it("round-trip: target -> profile -> target", () => {
+      const target = parseDirectAttachCommand(["attach", "direct", "192.168.1.10:3773"])!;
+      const profile = directProfileFromTarget(target, {});
+      const reconstructed = directTargetFromProfile(profile);
+      expect(reconstructed).toEqual(target);
+    });
   });
 
   describe("direct attach", () => {

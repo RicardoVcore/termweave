@@ -1,4 +1,7 @@
-export type ConnectionTransport = "local" | "ssh" | "direct";
+// Saved remote connections for the TUI.
+// A `direct` profile stores the NAME of the env var holding the auth token, never the token.
+
+export type ConnectionTransport = "ssh" | "direct";
 
 interface ConnectionProfileBase {
   readonly id: string;
@@ -9,7 +12,6 @@ interface ConnectionProfileBase {
 }
 
 export type ConnectionProfile =
-  | (ConnectionProfileBase & { readonly transport: "local" })
   | (ConnectionProfileBase & {
       readonly transport: "ssh";
       readonly username?: string;
@@ -19,10 +21,11 @@ export type ConnectionProfile =
     })
   | (ConnectionProfileBase & {
       readonly transport: "direct";
+      readonly scheme: "ws" | "wss";
       readonly tokenEnvVar: string;
     });
 
-const transports = new Set<ConnectionTransport>(["local", "ssh", "direct"]);
+const transports = new Set<ConnectionTransport>(["ssh", "direct"]);
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -57,10 +60,14 @@ export function decodeConnectionProfile(value: unknown): ConnectionProfile | und
   const base = baseProfile(record);
   if (base === undefined) return undefined;
 
-  if (base.transport === "local") return { ...base, transport: "local" };
   if (base.transport === "direct") {
     return nonEmptyString(record.tokenEnvVar)
-      ? { ...base, transport: "direct", tokenEnvVar: record.tokenEnvVar.trim() }
+      ? {
+          ...base,
+          transport: "direct",
+          scheme: record.scheme === "wss" ? "wss" : "ws",
+          tokenEnvVar: record.tokenEnvVar.trim(),
+        }
       : undefined;
   }
   if (!validPort(record.remotePort)) return undefined;
@@ -80,4 +87,45 @@ export function normalizeConnectionProfiles(value: unknown): readonly Connection
     const decoded = decodeConnectionProfile(profile);
     return decoded === undefined ? [] : [decoded];
   });
+}
+
+/** Finds a saved profile by label or id (exact match after trimming). */
+export function findConnectionProfile(
+  profiles: readonly ConnectionProfile[],
+  name: string,
+): ConnectionProfile | undefined {
+  const trimmed = name.trim();
+  return profiles.find((p) => p.label.trim() === trimmed || p.id.trim() === trimmed);
+}
+
+/** Adds the profile, replacing any existing profile with the same id. */
+export function upsertConnectionProfile(
+  profiles: readonly ConnectionProfile[],
+  profile: ConnectionProfile,
+): readonly ConnectionProfile[] {
+  const index = profiles.findIndex((p) => p.id === profile.id);
+  if (index >= 0) {
+    return [...profiles.slice(0, index), profile, ...profiles.slice(index + 1)];
+  }
+  return [...profiles, profile];
+}
+
+/** Removes the profile with the given id. */
+export function removeConnectionProfile(
+  profiles: readonly ConnectionProfile[],
+  id: string,
+): readonly ConnectionProfile[] {
+  return profiles.filter((p) => p.id !== id);
+}
+
+/** One-line human summary, e.g. `ssh user@host` or `direct wss://host:443`. */
+export function describeConnectionProfile(profile: ConnectionProfile): string {
+  if (profile.transport === "ssh") {
+    const userPrefix = profile.username ? `${profile.username}@` : "";
+    const hostPart = profile.sshAlias ?? profile.host;
+    return `ssh ${userPrefix}${hostPart}`;
+  }
+
+  const hostForUrl = profile.host.includes(":") ? `[${profile.host}]` : profile.host;
+  return `direct ${profile.scheme}://${hostForUrl}:${profile.port}`;
 }

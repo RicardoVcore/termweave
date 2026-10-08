@@ -184,3 +184,19 @@ address:
 ```bash
 termweave attach direct "$(tailscale ip -4)":3773
 ```
+
+## 5) Saved connections
+
+After attaching with `attach ssh` or `attach direct`, open the Connections view
+and press **Save** on the "Current connection" row. Saved connections are stored
+in the TUI prefs file and can then be reopened by name:
+
+```bash
+termweave attach <name>   # name as shown in the Connections view
+termweave local           # local server, ignoring the launch default
+```
+
+**Open on launch** marks one saved connection as the default for a bare
+`termweave`. A saved direct connection stores the name of the environment
+variable holding the token (for example `TERMWEAVE_AUTH_TOKEN`), never the token
+itself, so that variable must still be set when you launch.

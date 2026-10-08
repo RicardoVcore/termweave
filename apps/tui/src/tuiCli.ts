@@ -1,13 +1,19 @@
 import { isIP } from "node:net";
-import type { ConnectionProfile } from "./connectionProfiles";
-import { buildServerWsUrl, type AttachedServerConnection } from "./serverSupervisor";
+import { findConnectionProfile, type ConnectionProfile } from "./connectionProfiles";
+import {
+  AUTH_TOKEN_ENV_VARS,
+  buildServerWsUrl,
+  type AttachedServerConnection,
+} from "./serverSupervisor";
 import { startSshTunnel, type SshTunnel, type SshTunnelInput } from "./sshTunnel";
 
 const DEFAULT_REMOTE_PORT = 3773;
-const USAGE = "Usage: termweave [attach ssh user@host | attach direct [ws://|wss://]host[:port]]";
+const USAGE =
+  "Usage: termweave [local | attach <saved name> | attach ssh user@host | attach direct [ws://|wss://]host[:port]]";
 const DIRECT_USAGE = "Usage: termweave attach direct [ws://|wss://]host[:port]";
 
-type SshConnectionProfile = Extract<ConnectionProfile, { readonly transport: "ssh" }>;
+export type SshConnectionProfile = Extract<ConnectionProfile, { readonly transport: "ssh" }>;
+type DirectConnectionProfile = Extract<ConnectionProfile, { readonly transport: "direct" }>;
 
 export interface SshAttach {
   readonly profile: SshConnectionProfile;
@@ -21,15 +27,6 @@ interface SshAttachDependencies {
   readonly reconnectDelayMs?: number;
   readonly setTimeoutImpl?: typeof setTimeout;
   readonly clearTimeoutImpl?: typeof clearTimeout;
-}
-
-// The only recognized invocations are a bare local start (no args) and
-// `attach ssh|direct ...`. Reject anything else (a bogus command or an unknown
-// attach mode like `attach diret`) instead of silently starting a local server.
-export function assertKnownAttachCommand(args: readonly string[]): void {
-  if (args.length === 0) return;
-  if (args[0] === "attach" && (args[1] === "ssh" || args[1] === "direct")) return;
-  throw new Error(USAGE);
 }
 
 export function parseSshAttachCommand(args: readonly string[]): SshConnectionProfile | null {
@@ -73,11 +70,9 @@ export function sshTunnelInputFromProfile(profile: SshConnectionProfile): SshTun
 }
 
 export async function startSshAttach(
-  args: readonly string[],
+  profile: SshConnectionProfile,
   dependencies: SshAttachDependencies = {},
-): Promise<SshAttach | null> {
-  const profile = parseSshAttachCommand(args);
-  if (profile === null) return null;
+): Promise<SshAttach> {
   const startTunnel = dependencies.startTunnel ?? startSshTunnel;
   const setTimeoutImpl = dependencies.setTimeoutImpl ?? setTimeout;
   const clearTimeoutImpl = dependencies.clearTimeoutImpl ?? clearTimeout;
@@ -339,4 +334,70 @@ export function buildDirectAttachServerConnection(
     authToken: token,
     wsUrl: buildDirectWsUrl(target, token),
   };
+}
+
+// ---- Launch profiles ----
+
+/** Builds the saved-profile form of a CLI direct target. `tokenEnvVar` is the first auth env var that is set. */
+export function directProfileFromTarget(
+  target: DirectAttachTarget,
+  env: NodeJS.ProcessEnv = process.env,
+): DirectConnectionProfile {
+  return {
+    id: `cli:direct:${target.scheme}://${target.host}:${target.port}`,
+    label: target.host,
+    transport: "direct",
+    scheme: target.scheme,
+    host: target.host,
+    port: target.port,
+    tokenEnvVar: AUTH_TOKEN_ENV_VARS.find((name) => env[name]?.trim()) ?? AUTH_TOKEN_ENV_VARS[0],
+  };
+}
+
+/** Rebuilds the attach target (including host classification) from a saved direct profile. */
+export function directTargetFromProfile(profile: DirectConnectionProfile): DirectAttachTarget {
+  return {
+    scheme: profile.scheme,
+    host: profile.host,
+    port: profile.port,
+    ...describeDirectHost(profile.host),
+  };
+}
+
+function requireSavedProfile(
+  profiles: readonly ConnectionProfile[],
+  name: string,
+): ConnectionProfile {
+  const profile = findConnectionProfile(profiles, name);
+  if (!profile) throw new Error(`No saved connection named "${name}". ${USAGE}`);
+  return profile;
+}
+
+/**
+ * Resolves what a launch connects to: a profile, or null for a local server.
+ * Bare launch uses the default saved profile; `local` forces a local server.
+ * Anything unrecognized (e.g. `attach diret host`) throws instead of silently
+ * starting a local server.
+ */
+export function resolveLaunchProfile(
+  args: readonly string[],
+  saved: {
+    readonly connectionProfiles?: readonly ConnectionProfile[];
+    readonly defaultConnectionProfileId?: string | undefined;
+  },
+  env: NodeJS.ProcessEnv = process.env,
+): ConnectionProfile | null {
+  const profiles = saved.connectionProfiles ?? [];
+  if (args.length === 0) {
+    return profiles.find((profile) => profile.id === saved.defaultConnectionProfileId) ?? null;
+  }
+  if (args.length === 1 && args[0] === "local") return null;
+  if (args[0] !== "attach") throw new Error(USAGE);
+
+  const sshProfile = parseSshAttachCommand(args);
+  if (sshProfile) return sshProfile;
+  const directTarget = parseDirectAttachCommand(args);
+  if (directTarget) return directProfileFromTarget(directTarget, env);
+  if (args.length === 2 && args[1]) return requireSavedProfile(profiles, args[1]);
+  throw new Error(USAGE);
 }
