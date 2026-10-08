@@ -39,6 +39,7 @@ import { ServerLoggerLive } from "./serverLogger";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { readBootstrapEnvelope } from "./bootstrap";
+import { TAILSCALE_SERVE_LOCAL_HOST } from "./remoteAccess/tailscaleServe";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -64,6 +65,8 @@ interface CliInput {
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly tailscaleServe: Option.Option<boolean>;
+  readonly tailscaleServePort: Option.Option<number>;
 }
 
 /**
@@ -117,6 +120,14 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tailscaleServe: Config.boolean("TERMWEAVE_TAILSCALE_SERVE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  tailscaleServePort: Config.port("TERMWEAVE_TAILSCALE_SERVE_PORT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -135,6 +146,33 @@ const authTokenOption = (value: string | undefined): Option.Option<string> =>
   Option.fromUndefinedOr(normalizeAuthToken(value));
 
 const isValidPort = (value: number): boolean => value >= 1 && value <= 65_535;
+
+export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
+/** Resolves the Tailscale Serve port; undefined means serve is disabled. A given port implies enabled. */
+export const resolveTailscaleServePort = (input: {
+  readonly enabled: boolean;
+  readonly port: number | undefined;
+}): number | undefined =>
+  input.enabled || input.port !== undefined
+    ? (input.port ?? DEFAULT_TAILSCALE_SERVE_PORT)
+    : undefined;
+
+const tailscaleServeStartupError = (input: {
+  readonly host: string;
+  readonly authToken: string | undefined;
+}): string | undefined => {
+  // Serve is pointed at 127.0.0.1, so a bind to any other address (even another
+  // loopback alias) would be unreachable through it.
+  if (input.host !== TAILSCALE_SERVE_LOCAL_HOST) {
+    return `Tailscale Serve proxies to ${TAILSCALE_SERVE_LOCAL_HOST}, so Termweave must bind to it. Omit --host when using --tailscale-serve.`;
+  }
+  if (input.authToken === undefined) {
+    return "TERMWEAVE_AUTH_TOKEN is required when Tailscale Serve exposes Termweave to the tailnet.";
+  }
+  return undefined;
+};
+
 const ServerConfigLive = (input: CliInput) =>
   Layer.effect(
     ServerConfig,
@@ -233,6 +271,15 @@ const ServerConfigLive = (input: CliInput) =>
         );
       }
 
+      const tailscaleServePort = resolveTailscaleServePort({
+        enabled: resolveBooleanFlag(input.tailscaleServe, env.tailscaleServe ?? false),
+        port: Option.getOrUndefined(input.tailscaleServePort) ?? env.tailscaleServePort,
+      });
+      if (tailscaleServePort !== undefined) {
+        const message = tailscaleServeStartupError({ host, authToken: resolvedAuthToken });
+        if (message !== undefined) return yield* new StartupError({ message });
+      }
+
       const config: ServerConfigShape = {
         port,
         cwd: cliConfig.cwd,
@@ -242,6 +289,7 @@ const ServerConfigLive = (input: CliInput) =>
         authToken: resolvedAuthToken,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
+        tailscaleServePort,
       } satisfies ServerConfigShape;
 
       return config;
@@ -362,6 +410,19 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
+  Flag.withDescription(
+    "Expose the loopback server to the tailnet over HTTPS with Tailscale Serve (requires an auth token).",
+  ),
+  Flag.optional,
+);
+const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
+  Flag.withSchema(PortSchema),
+  Flag.withDescription(
+    "Tailscale Serve HTTPS port (default 443). Setting it also enables Tailscale Serve.",
+  ),
+  Flag.optional,
+);
 
 export const termweaveCli = Command.make("termweave", {
   port: portFlag,
@@ -371,6 +432,8 @@ export const termweaveCli = Command.make("termweave", {
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
+  tailscaleServe: tailscaleServeFlag,
+  tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
   Command.withDescription("Run the Termweave server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),

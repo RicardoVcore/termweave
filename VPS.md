@@ -92,6 +92,27 @@ sudo systemctl status termweave-server
 sudo journalctl -u termweave-server -f
 ```
 
+### Tailscale Serve
+
+To expose the server over Tailscale Serve instead of binding a tailnet address,
+use this `/etc/termweave/server.env` instead:
+
+```text
+TERMWEAVE_TAILSCALE_SERVE=1
+TERMWEAVE_AUTH_TOKEN=replace-with-random-token
+```
+
+Leave `T3CODE_HOST` unset so the server stays on loopback. Run this once so the
+service user may configure Serve:
+
+```bash
+sudo tailscale set --operator=termweave
+```
+
+The service fails fast when `tailscale serve` cannot be configured, and systemd
+restarts it until tailscaled is reachable. Prerequisites and the attach command
+are in [REMOTE.md](REMOTE.md) section 2.
+
 ## Firewall
 
 The auth token gates WebSocket access but does not encrypt transport, so do not

@@ -229,11 +229,29 @@ describe("TUI CLI", () => {
         {
           scheme: "wss",
           host: "vps.example.com",
-          port: 3773, // default remote port
+          port: 443, // default WSS port
           hostClass: "public",
           hostKind: "name",
         },
       );
+
+      expect(
+        parseDirectAttachCommand(["attach", "direct", "wss://box.tail1234.ts.net:8443"]),
+      ).toMatchObject({
+        scheme: "wss",
+        host: "box.tail1234.ts.net",
+        port: 8443,
+        hostClass: "public",
+        hostKind: "name",
+      });
+
+      expect(parseDirectAttachCommand(["attach", "direct", "ws://192.168.1.50"])).toMatchObject({
+        scheme: "ws",
+        host: "192.168.1.50",
+        port: 3773,
+        hostClass: "private",
+        hostKind: "ip",
+      });
 
       expect(parseDirectAttachCommand(["attach", "direct", "[fd7a:1::2]:5000"])).toMatchObject({
         host: "fd7a:1::2",

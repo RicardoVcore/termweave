@@ -22,6 +22,7 @@ function makeServerConfig(baseDir: string): ServerConfigShape {
     cwd: "/workspace/termweave",
     baseDir,
     authToken: undefined,
+    tailscaleServePort: undefined,
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,
   };

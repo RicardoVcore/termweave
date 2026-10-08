@@ -319,6 +319,7 @@ describe("orchestration reconnect and interrupted sessions", () => {
       authToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
+      tailscaleServePort: undefined,
     } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
     const runtimeLayer = Layer.merge(
