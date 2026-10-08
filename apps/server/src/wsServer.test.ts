@@ -38,6 +38,7 @@ import {
   type WsPushChannel,
   type WsPushMessage,
   type WsPush,
+  ENVIRONMENT_DESCRIPTOR_PATH,
 } from "@termweave/contracts";
 import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings";
 import type {
@@ -799,6 +800,22 @@ describe("WebSocket Server", () => {
     expect(response.headers.get("content-type")).toContain("image/png");
     const bytes = Buffer.from(await response.arrayBuffer());
     expect(bytes).toEqual(Buffer.from("hello-encoded-attachment"));
+  });
+
+  it("serves environment descriptor unauthenticated", async () => {
+    server = await createTestServer({ cwd: "/test/project", authToken: "test-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await fetch(`http://127.0.0.1:${port}${ENVIRONMENT_DESCRIPTOR_PATH}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+
+    expect(await response.json()).toMatchObject({
+      environmentId: expect.stringMatching(/./),
+      label: expect.stringMatching(/./),
+    });
   });
 
   it("bootstraps the cwd project on startup when enabled", async () => {

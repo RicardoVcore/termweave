@@ -266,6 +266,11 @@ import {
   type ConnectionProfile,
 } from "./connectionProfiles";
 import {
+  discoverTailnetBackends,
+  profileFromTailnetBackend,
+  type TailnetBackend,
+} from "./tailnetDiscovery";
+import {
   ADDITIONAL_COMING_SOON_MODEL_PROVIDER_OPTIONS,
   COMING_SOON_INSTALL_PROVIDER_OPTIONS,
   INSTALL_PROVIDER_SETTINGS,
@@ -515,6 +520,26 @@ type ImagePreviewState = {
   status: "loading" | "ready" | "error";
   error: string | null;
 };
+type TailnetScan =
+  | { readonly status: "idle" }
+  | { readonly status: "scanning" }
+  | { readonly status: "done"; readonly backends: readonly TailnetBackend[] }
+  | { readonly status: "error"; readonly message: string };
+
+function tailnetScanSummary(scan: TailnetScan): string {
+  switch (scan.status) {
+    case "idle":
+      return "Lists online tailnet peers that serve Termweave through Tailscale Serve.";
+    case "scanning":
+      return "Scanning tailnet...";
+    case "error":
+      return scan.message;
+    case "done":
+      return scan.backends.length === 0
+        ? "No Termweave backends found. Start the server with --tailscale-serve on the remote machine."
+        : `Found ${scan.backends.length}.`;
+  }
+}
 const SIDEBAR_PROJECT_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -4133,6 +4158,18 @@ export function App({
   const removeSavedConnection = useCallback((profileId: string) => {
     setConnectionProfiles((current) => removeConnectionProfile(current, profileId));
     setDefaultConnectionProfileId((current) => (current === profileId ? null : current));
+  }, []);
+  const [tailnetScan, setTailnetScan] = useState<TailnetScan>({ status: "idle" });
+  const scanTailnet = useCallback(async () => {
+    setTailnetScan({ status: "scanning" });
+    try {
+      setTailnetScan({ status: "done", backends: await discoverTailnetBackends() });
+    } catch (error) {
+      setTailnetScan({
+        status: "error",
+        message: error instanceof Error ? error.message : "Tailnet scan failed.",
+      });
+    }
   }, []);
   const [serverHttpOrigin, setServerHttpOrigin] = useState<string | null>(null);
   const [serverWsUrl, setServerWsUrl] = useState<string | null>(null);
@@ -15213,6 +15250,53 @@ export function App({
                                 }
                               />
                             ))}
+                          </SettingsSection>
+                          <SettingsSection title="Tailnet">
+                            <SettingsRow
+                              title="Find Termweave on your tailnet"
+                              description="Scans Tailscale peers and saves a backend as a connection, no host or port to type."
+                              status={tailnetScanSummary(tailnetScan)}
+                              control={
+                                <ToolbarButton
+                                  label={tailnetScan.status === "scanning" ? "Scanning..." : "Scan"}
+                                  disabled={tailnetScan.status === "scanning"}
+                                  onPress={() => {
+                                    void scanTailnet();
+                                  }}
+                                />
+                              }
+                            />
+                            {tailnetScan.status === "done"
+                              ? tailnetScan.backends.map((backend) => {
+                                  const profile = profileFromTailnetBackend(backend);
+                                  const saved = connectionProfiles.some(
+                                    (existing) => existing.id === profile.id,
+                                  );
+                                  return (
+                                    <SettingsRow
+                                      key={backend.dnsName}
+                                      title={backend.label}
+                                      description={`wss://${backend.dnsName}`}
+                                      status={
+                                        saved
+                                          ? "Saved."
+                                          : "Needs TERMWEAVE_AUTH_TOKEN set to the server's token at launch."
+                                      }
+                                      control={
+                                        <ToolbarButton
+                                          label={saved ? "Saved" : "Save"}
+                                          disabled={saved}
+                                          onPress={() => {
+                                            setConnectionProfiles((current) =>
+                                              upsertConnectionProfile(current, profile),
+                                            );
+                                          }}
+                                        />
+                                      }
+                                    />
+                                  );
+                                })
+                              : null}
                           </SettingsSection>
                           <SettingsSection title="Saved connections">
                             {unsavedCurrentConnection ? (

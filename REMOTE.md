@@ -196,6 +196,10 @@ termweave attach <name>   # name as shown in the Connections view
 termweave local           # local server, ignoring the launch default
 ```
 
+With Tailscale, skip typing the host: **Scan** in the Tailnet section lists online
+peers that run a Termweave server with `--tailscale-serve` (default port 443
+only), and **Save** stores one as a connection.
+
 **Open on launch** marks one saved connection as the default for a bare
 `termweave`. A saved direct connection stores the name of the environment
 variable holding the token (for example `TERMWEAVE_AUTH_TOKEN`), never the token
