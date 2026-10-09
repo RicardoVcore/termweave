@@ -15,6 +15,15 @@ import {
 } from "./rendererTheme";
 import { normalizeTuiThemeId, resolveTerminalThemeMode, resolveTuiTheme } from "./theme";
 import { App } from "./ui";
+import { resolveServerAuthToken } from "./serverSupervisor";
+import {
+  buildDirectAttachServerConnection,
+  buildSshAttachServerConnection,
+  directTargetFromProfile,
+  resolveLaunchProfile,
+  startSshAttach,
+  type SshAttach,
+} from "./tuiCli";
 
 function readBooleanEnv(value: string | undefined): boolean | undefined {
   if (!value) return undefined;
@@ -47,8 +56,85 @@ function shouldEnableMouseMovement(env: NodeJS.ProcessEnv = process.env): boolea
   return readBooleanEnv(env.T1CODE_ENABLE_MOUSE_MOVEMENT) ?? false;
 }
 
+const sshStartup = new AbortController();
+let sshAttach: SshAttach | null = null;
+let destroyUi: (() => void) | null = null;
+let requestInterrupt: (() => void) | null = null;
+let shuttingDown = false;
+
+const stopSshAttach = () => {
+  sshStartup.abort(new Error("SSH tunnel startup cancelled."));
+  sshAttach?.stop();
+  sshAttach = null;
+};
+const onSigint = () => (requestInterrupt ? requestInterrupt() : shutdown(0));
+const onSigterm = () => shutdown(0);
+const removeProcessCleanup = () => {
+  stopSshAttach();
+  process.off("SIGINT", onSigint);
+  process.off("SIGTERM", onSigterm);
+  process.off("exit", stopSshAttach);
+};
+const shutdown = (code = 0, error?: unknown) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopSshAttach();
+  try {
+    destroyUi?.();
+  } catch {}
+  if (error) {
+    process.stderr.write(
+      `t1 tui shutdown after error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
+    process.exitCode = code || 1;
+  } else {
+    process.exitCode = code;
+  }
+  setTimeout(() => process.exit(process.exitCode ?? code), 50).unref();
+};
+
+process.on("SIGINT", onSigint);
+process.on("SIGTERM", onSigterm);
+process.once("exit", stopSshAttach);
+
+const cliArgs = process.argv.slice(2);
+const paths = resolveTuiPaths();
+const prefs = await readPrefs(paths);
+
+// An explicit attach-only env launch outranks the saved default profile.
+const attachOnlyEnv = readBooleanEnv(process.env.T1CODE_TUI_ATTACH_ONLY) === true;
+const launchProfile = resolveLaunchProfile(cliArgs, {
+  ...(prefs.connectionProfiles ? { connectionProfiles: prefs.connectionProfiles } : {}),
+  defaultConnectionProfileId: attachOnlyEnv ? undefined : prefs.defaultConnectionProfileId,
+});
+
+if (launchProfile?.transport === "ssh") {
+  sshAttach = await startSshAttach(launchProfile, { signal: sshStartup.signal }).catch(
+    (error: unknown) => {
+      if (!shuttingDown) throw error;
+      return null;
+    },
+  );
+}
+
+if (shuttingDown) await new Promise<never>(() => {});
+
+const initialServerConnection =
+  launchProfile?.transport === "direct"
+    ? buildDirectAttachServerConnection(
+        directTargetFromProfile(launchProfile),
+        process.env[launchProfile.tokenEnvVar],
+      )
+    : sshAttach
+      ? buildSshAttachServerConnection(sshAttach, resolveServerAuthToken())
+      : undefined;
+
+const initialConnectionProps = {
+  ...(initialServerConnection ? { initialServerConnection } : {}),
+  ...(launchProfile ? { initialConnectionProfile: launchProfile } : {}),
+};
+
 if (process.env.T1CODE_HEADLESS === "1") {
-  const paths = resolveTuiPaths();
   const outputPath =
     process.env.T1CODE_HEADLESS_FRAME_PATH?.trim() ||
     path.join(paths.configHomeDir, "headless-frame.txt");
@@ -60,25 +146,31 @@ if (process.env.T1CODE_HEADLESS === "1") {
     height,
     kittyKeyboard: true,
   });
+  let unmountRoot: (() => void) | null = null;
+  destroyUi = () => {
+    try {
+      unmountRoot?.();
+    } catch {}
+    try {
+      testSetup.renderer.destroy();
+    } catch {}
+  };
+  testSetup.renderer.once("destroy", removeProcessCleanup);
   const root = createRoot(testSetup.renderer);
-  root.render(<App renderer={testSetup.renderer} />);
+  unmountRoot = () => root.unmount();
+  root.render(<App renderer={testSetup.renderer} {...initialConnectionProps} />);
 
   setTimeout(() => {
     void (async () => {
       await testSetup.renderOnce();
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
       await fs.writeFile(outputPath, testSetup.captureCharFrame(), "utf8");
-      root.unmount();
-      testSetup.renderer.destroy();
       process.stdout.write(`Headless frame written to ${outputPath}\n`);
-      process.exit(0);
+      shutdown(0);
     })();
   }, timeoutMs);
 } else {
-  let shuttingDown = false;
   let interruptRequestToken = 0;
-  const paths = resolveTuiPaths();
-  const prefs = await readPrefs(paths);
   const appTheme = prefs.appSettings?.theme ?? DEFAULT_APP_THEME;
   const tuiThemeId = normalizeTuiThemeId(prefs.tuiThemeId);
   const tracksSystemThemeMode = shouldTrackSystemThemeMode(appTheme);
@@ -93,6 +185,16 @@ if (process.env.T1CODE_HEADLESS === "1") {
     useKittyKeyboard: shouldUseKittyKeyboard() ? { events: true } : null,
     ...(!shouldDeferInitialBackground ? { backgroundColor: initialTheme.palette.canvas } : {}),
   });
+  let unmountRoot: (() => void) | null = null;
+  destroyUi = () => {
+    try {
+      unmountRoot?.();
+    } catch {}
+    try {
+      renderer.destroy();
+    } catch {}
+  };
+  renderer.once("destroy", removeProcessCleanup);
   const initialRendererThemeMode = normalizeRendererThemeMode(renderer.themeMode);
   const detectedTerminalPalette = usesTerminalPalette
     ? await resolveTerminalPalette(renderer, { clearCache: true })
@@ -105,6 +207,7 @@ if (process.env.T1CODE_HEADLESS === "1") {
   });
   renderer.setBackgroundColor?.(rendererTheme.palette.canvas);
   const root = createRoot(renderer);
+  unmountRoot = () => root.unmount();
 
   const renderApp = () => {
     root.render(
@@ -115,42 +218,13 @@ if (process.env.T1CODE_HEADLESS === "1") {
         initialTuiThemeId={tuiThemeId}
         initialSystemThemeMode={initialSystemThemeMode}
         initialTerminalThemeColors={detectedTerminalPalette.colors}
+        {...initialConnectionProps}
         {...(prefs.appSettings ? { initialAppSettings: prefs.appSettings } : {})}
       />,
     );
   };
 
-  const shutdown = (code = 0, error?: unknown) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    try {
-      root.unmount();
-    } catch {}
-    try {
-      renderer.destroy();
-    } catch {}
-    if (error) {
-      process.stderr.write(
-        `t1 tui shutdown after error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
-      );
-      process.exitCode = code || 1;
-    } else {
-      process.exitCode = code;
-    }
-    setTimeout(() => {
-      process.exit(process.exitCode ?? code);
-    }, 50).unref();
-  };
-
   const signalHandlers = [
-    [
-      "SIGINT",
-      () => {
-        interruptRequestToken += 1;
-        renderApp();
-      },
-    ],
-    ["SIGTERM", () => shutdown(0)],
     ["SIGHUP", () => shutdown(0)],
     ["uncaughtException", (error: unknown) => shutdown(1, error)],
     ["unhandledRejection", (error: unknown) => shutdown(1, error)],
@@ -166,5 +240,9 @@ if (process.env.T1CODE_HEADLESS === "1") {
     }
   });
 
+  requestInterrupt = () => {
+    interruptRequestToken += 1;
+    renderApp();
+  };
   renderApp();
 }

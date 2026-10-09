@@ -15,7 +15,7 @@ import {
   ThreadId,
   TurnId,
 } from "@termweave/contracts";
-import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
@@ -248,7 +248,7 @@ describe("ProviderCommandReactor", () => {
           },
         }),
       rollbackConversation: () => unsupported(),
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      subscribeEvents: PubSub.subscribe(runtimeEventPubSub),
     };
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(

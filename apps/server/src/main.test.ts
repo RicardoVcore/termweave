@@ -7,6 +7,7 @@ import { assert, it, vi } from "@effect/vitest";
 import type { OrchestrationReadModel } from "@termweave/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
 import * as Layer from "effect/Layer";
 import * as Command from "effect/unstable/cli/Command";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -91,12 +92,35 @@ it.layer(testLayer)("server CLI command", (it) => {
       yield* runCli([], {
         T3CODE_PORT: "4999",
         T3CODE_HOST: "100.88.10.4",
-        T3CODE_AUTH_TOKEN: "env-token",
+        TERMWEAVE_AUTH_TOKEN: "env-token",
       });
 
       assert.equal(resolvedConfig?.port, 4999);
       assert.equal(resolvedConfig?.host, "100.88.10.4");
       assert.equal(resolvedConfig?.authToken, "env-token");
+    }),
+  );
+
+  it.effect("rejects non-loopback bind without an auth token", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(runCli(["--host", "0.0.0.0"]));
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(Cause.pretty(result.cause), /TERMWEAVE_AUTH_TOKEN is required/);
+      }
+      assert.equal(start.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("falls back to legacy token when new token is blank", () =>
+    Effect.gen(function* () {
+      yield* runCli([], {
+        T3CODE_HOST: "100.88.10.4",
+        TERMWEAVE_AUTH_TOKEN: "   ",
+        T3CODE_AUTH_TOKEN: "legacy-token",
+      });
+
+      assert.equal(resolvedConfig?.authToken, "legacy-token");
     }),
   );
 
@@ -134,6 +158,46 @@ it.layer(testLayer)("server CLI command", (it) => {
         "server.boot.heartbeat",
         { threadCount: 2, projectCount: 1 },
       ]);
+    }),
+  );
+
+  it.effect("--tailscale-serve without auth token fails", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(runCli(["--tailscale-serve"]));
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(Cause.pretty(result.cause), /TERMWEAVE_AUTH_TOKEN is required/);
+      }
+      assert.equal(start.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("--tailscale-serve with non-loopback host fails", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        runCli(["--tailscale-serve", "--host", "0.0.0.0", "--auth-token", "secret"]),
+      );
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(Cause.pretty(result.cause), /must bind to it/);
+      }
+      assert.equal(start.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("--tailscale-serve with token resolves port 443", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--tailscale-serve", "--auth-token", "secret"]);
+
+      assert.equal(resolvedConfig?.tailscaleServePort, 443);
+    }),
+  );
+
+  it.effect("--tailscale-serve-port 8443 with token resolves port 8443", () =>
+    Effect.gen(function* () {
+      yield* runCli(["--tailscale-serve-port", "8443", "--auth-token", "secret"]);
+
+      assert.equal(resolvedConfig?.tailscaleServePort, 8443);
     }),
   );
 });

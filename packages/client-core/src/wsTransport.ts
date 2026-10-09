@@ -11,6 +11,13 @@ import { Result, Schema } from "effect";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
 
+/** A queued outbound envelope. `id` links the payload to its pending request so
+ *  a timed-out request can be dropped before the socket reopens. */
+interface QueuedEnvelope {
+  readonly id: string | null;
+  readonly encoded: string;
+}
+
 interface PendingRequest {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -25,7 +32,13 @@ interface RequestOptions {
   readonly timeoutMs?: number | null;
 }
 
-type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "disposed";
+export type TransportState =
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "closed"
+  | "suspended"
+  | "disposed";
 
 interface WebSocketLike {
   readonly readyState: number;
@@ -47,6 +60,13 @@ export interface WsTransportOptions {
   readonly url: string;
   readonly WebSocketCtor?: WebSocketCtor;
   readonly onWarning?: (message: string, details?: unknown) => void;
+  /** Fired on every transport state transition, so callers can render connection
+   *  status and resync after a reconnect. */
+  readonly onStateChange?: (state: TransportState, previous: TransportState) => void;
+  /** Fired when the socket opens again after having been open before - i.e. a
+   *  reconnect, whether automatic or a manual reconnect() from suspend. Not fired
+   *  on the initial connection. Callers use it to resync state missed while gone. */
+  readonly onReconnect?: () => void;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -86,20 +106,39 @@ export class WsTransport {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly listeners = new Map<string, Set<(message: WsPush) => void>>();
   private readonly latestPushByChannel = new Map<string, WsPush>();
-  private readonly outboundQueue: string[] = [];
+  private readonly outboundQueue: QueuedEnvelope[] = [];
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private hasOpened = false;
   private state: TransportState = "connecting";
   private readonly url: string;
   private readonly WebSocketCtor: WebSocketCtor;
   private readonly onWarning: (message: string, details?: unknown) => void;
+  private readonly onStateChange:
+    | ((state: TransportState, previous: TransportState) => void)
+    | undefined;
+  private readonly onReconnect: (() => void) | undefined;
 
   constructor(options: WsTransportOptions) {
     this.url = options.url;
     this.WebSocketCtor = options.WebSocketCtor ?? getDefaultWebSocketCtor();
     this.onWarning = options.onWarning ?? ((message, details) => console.warn(message, details));
+    this.onStateChange = options.onStateChange;
+    this.onReconnect = options.onReconnect;
     this.connect();
+  }
+
+  /** Single choke point for state writes; notifies listeners only on real change. */
+  private setState(next: TransportState) {
+    if (this.state === next) return;
+    const previous = this.state;
+    this.state = next;
+    try {
+      this.onStateChange?.(next, previous);
+    } catch {
+      // Never let a listener break the transport.
+    }
   }
 
   async request<T = unknown>(
@@ -122,6 +161,7 @@ export class WsTransport {
           ? null
           : setTimeout(() => {
               this.pending.delete(id);
+              this.dropQueued(id);
               reject(new Error(`Request timed out: ${method}`));
             }, timeoutMs);
 
@@ -131,7 +171,7 @@ export class WsTransport {
         timeout,
       });
 
-      this.send(encoded);
+      this.send(encoded, id);
     });
   }
 
@@ -177,7 +217,7 @@ export class WsTransport {
 
   dispose() {
     this.disposed = true;
-    this.state = "disposed";
+    this.setState("disposed");
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -194,11 +234,51 @@ export class WsTransport {
     this.ws = null;
   }
 
+  /** Stop the auto-reconnect loop but keep the instance alive. The caller can
+   *  resume later with reconnect(). Unlike dispose(), this is not terminal. */
+  stopReconnecting() {
+    if (this.disposed || this.state === "suspended") return;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.rejectPending(new Error("Reconnect cancelled."));
+    this.outboundQueue.length = 0;
+    this.ws?.close();
+    this.ws = null;
+    this.setState("suspended");
+  }
+
+  /** Manually (re)start connecting after a suspend or close. Closes any
+   *  in-progress socket first so a stale attempt cannot leak. */
+  reconnect() {
+    if (this.disposed || this.state === "open" || this.state === "connecting") return;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const stale = this.ws;
+    this.ws = null;
+    stale?.close();
+    this.reconnectAttempt = 0;
+    this.connect();
+  }
+
+  private rejectPending(error: Error) {
+    for (const [id, pending] of this.pending.entries()) {
+      if (pending.timeout !== null) {
+        clearTimeout(pending.timeout);
+      }
+      this.pending.delete(id);
+      pending.reject(error);
+    }
+  }
+
   private connect() {
     if (this.disposed) {
       return;
     }
-    this.state = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
+    this.setState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
     const ws = new this.WebSocketCtor(this.url);
     this.ws = ws;
 
@@ -206,9 +286,18 @@ export class WsTransport {
       if (this.ws !== ws) {
         return;
       }
-      this.state = "open";
       this.reconnectAttempt = 0;
+      const reopened = this.hasOpened;
+      this.hasOpened = true;
+      this.setState("open");
       this.flushQueue();
+      if (reopened) {
+        try {
+          this.onReconnect?.();
+        } catch {
+          // Never let a listener break the transport.
+        }
+      }
     };
     const handleMessage = (event: { data?: unknown }) => {
       if (this.ws !== ws) {
@@ -220,29 +309,21 @@ export class WsTransport {
       if (this.ws !== ws) {
         return;
       }
-      if (this.ws === ws) {
-        this.ws = null;
-        this.outboundQueue.length = 0;
-        for (const [id, pending] of this.pending.entries()) {
-          if (pending.timeout !== null) {
-            clearTimeout(pending.timeout);
-          }
-          this.pending.delete(id);
-          pending.reject(new Error("WebSocket connection closed."));
-        }
-      }
+      this.ws = null;
+      this.outboundQueue.length = 0;
+      this.rejectPending(new Error("WebSocket connection closed."));
       if (this.disposed) {
-        this.state = "disposed";
+        this.setState("disposed");
         return;
       }
-      this.state = "closed";
+      this.setState("closed");
       this.scheduleReconnect();
     };
     const handleError = (event: { type?: string }) => {
       if (this.ws !== ws) {
         return;
       }
-      this.onWarning("WebSocket connection error", { type: event.type, url: this.url });
+      this.onWarning("WebSocket connection error", { type: event.type });
     };
 
     if (ws.addEventListener) {
@@ -300,9 +381,18 @@ export class WsTransport {
     pending.resolve(message.result);
   }
 
-  private send(encoded: string) {
+  /** Remove a queued payload by request id so a timed-out request is never
+   *  sent after the caller already received a timeout. */
+  private dropQueued(id: string) {
+    const index = this.outboundQueue.findIndex((entry) => entry.id === id);
+    if (index >= 0) {
+      this.outboundQueue.splice(index, 1);
+    }
+  }
+
+  private send(encoded: string, id: string | null = null) {
     if (this.ws?.readyState !== 1) {
-      this.outboundQueue.push(encoded);
+      this.outboundQueue.push({ id, encoded });
       return;
     }
     try {
@@ -321,7 +411,7 @@ export class WsTransport {
       if (!next) {
         continue;
       }
-      this.ws.send(next);
+      this.ws.send(next.encoded);
     }
   }
 

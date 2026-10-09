@@ -5,16 +5,32 @@
 // tracks the real models instead of a stale hard-coded list.
 import { Effect } from "effect";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 
 import type { ModelCapabilities, ServerProviderModel } from "@termweave/contracts";
 import { createModelCapabilities } from "@termweave/shared/model";
+import { expandHomePath, resolvePlatformHomeDirectory } from "@termweave/shared/pathExpansion";
 
 import { buildBooleanOptionDescriptor, buildSelectOptionDescriptor } from "../providerSnapshot.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
 
 const MODELS_CACHE_FILENAME = "models_cache.json";
+
+export function resolveCodexHomePath(
+  homePath: string | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  userHome?: string,
+): string {
+  const baseHome = resolvePlatformHomeDirectory(environment, platform, userHome);
+  const configuredHome = homePath?.trim();
+  if (configuredHome) return expandHomePath(configuredHome, baseHome, platform);
+
+  const codexHome = environment.CODEX_HOME?.trim();
+  if (codexHome) return expandHomePath(codexHome, baseHome, platform);
+
+  const platformPath = platform === "win32" ? path.win32 : path.posix;
+  return platformPath.join(baseHome, ".codex");
+}
 
 // codex writes efforts we don't model (max/ultra); keep only the ones the UI
 // knows how to label and dispatch.
@@ -83,7 +99,7 @@ function mapCapabilities(model: RawModel): ModelCapabilities {
   });
 }
 
-/** Parse a models_cache.json payload into picker models. Hidden entries dropped. */
+/** Parse a models_cache.json payload into current and legacy picker models. */
 export function parseCodexModelsCache(raw: string): ReadonlyArray<ServerProviderModel> {
   const parsed: unknown = JSON.parse(raw);
   const models =
@@ -97,13 +113,14 @@ export function parseCodexModelsCache(raw: string): ReadonlyArray<ServerProvider
       continue;
     }
     const slug = typeof model.slug === "string" ? model.slug.trim() : "";
-    if (!slug || seen.has(slug) || model.visibility === "hide") {
+    if (!slug || seen.has(slug)) {
       continue;
     }
     seen.add(slug);
     result.push({
       slug,
       name: toDisplayName(slug, model.display_name),
+      ...(model.visibility === "hide" ? { isLegacy: true } : {}),
       isCustom: false,
       capabilities: mapCapabilities(model),
     });
@@ -118,9 +135,10 @@ export function parseCodexModelsCache(raw: string): ReadonlyArray<ServerProvider
  */
 export const loadCodexModelsFromCache = (
   homePath: string | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Effect.Effect<ReadonlyArray<ServerProviderModel>> =>
   Effect.gen(function* () {
-    const home = homePath ? expandHomePath(homePath) : path.join(homedir(), ".codex");
+    const home = resolveCodexHomePath(homePath, environment);
     const cachePath = path.join(home, MODELS_CACHE_FILENAME);
     const raw = yield* Effect.tryPromise(() => readFile(cachePath, "utf8"));
     return parseCodexModelsCache(raw);

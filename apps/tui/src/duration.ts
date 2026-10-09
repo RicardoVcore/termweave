@@ -19,11 +19,13 @@ export function durationToSeconds(duration: unknown): number {
     return Number.isFinite(duration) ? Math.round(duration / 1_000) : 0;
   }
 
+  const jsonMillis = readJsonDurationMillis(duration);
+  if (jsonMillis !== null) return Math.round(jsonMillis / 1_000);
+
   try {
     const millis = Duration.toMillis(duration as Duration.Duration);
     return Number.isFinite(millis) ? Math.round(millis / 1_000) : 0;
   } catch {
-    const millis = readJsonDurationMillis(duration);
-    return millis === null ? 0 : Math.round(millis / 1_000);
+    return 0;
   }
 }

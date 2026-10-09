@@ -6,7 +6,7 @@ import {
   TurnId,
   type OrchestrationReadModel,
 } from "@termweave/contracts";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -109,7 +109,7 @@ describe("CheckpointDiffQueryLive", () => {
     getCapabilities: () => Effect.die("not implemented"),
     getInstanceInfo: () => Effect.die("not implemented"),
     rollbackConversation: () => Effect.die("not implemented"),
-    streamEvents: Stream.empty,
+    subscribeEvents: Effect.die("not implemented"),
   });
 
   it("computes diffs using canonical turn-0 checkpoint refs", async () => {

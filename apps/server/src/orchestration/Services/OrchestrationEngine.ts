@@ -16,7 +16,7 @@ import type {
   OrchestrationReadModel,
 } from "@termweave/contracts";
 import { Context } from "effect";
-import type { Effect, Stream } from "effect";
+import type { Effect, PubSub, Scope, Stream } from "effect";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
@@ -56,11 +56,15 @@ export interface OrchestrationEngineShape {
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
-   * Stream persisted domain events in dispatch order.
-   *
-   * This is a hot runtime stream (new events only), not a historical replay.
+   * Subscribe to persisted domain events in dispatch order (new events only, not a
+   * historical replay). Live as soon as this completes, so consumers that signal
+   * readiness afterwards miss nothing. Each subscription independently receives all events.
    */
-  readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
+  readonly subscribeDomainEvents: Effect.Effect<
+    PubSub.Subscription<OrchestrationEvent>,
+    never,
+    Scope.Scope
+  >;
 }
 
 /**

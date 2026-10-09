@@ -36,7 +36,7 @@ export interface RunningServer {
 export interface AttachedServerConnection {
   readonly host: string;
   readonly port: number;
-  readonly authToken: string;
+  readonly authToken: string | null;
   readonly wsUrl: string;
 }
 
@@ -63,6 +63,13 @@ export interface ServerSupervisorDependencies {
     process: ChildProcess;
   }) => Promise<void>;
 }
+
+/** Env vars an auth token is read from, in precedence order. */
+export const AUTH_TOKEN_ENV_VARS = [
+  "TERMWEAVE_AUTH_TOKEN",
+  "T1CODE_AUTH_TOKEN",
+  "T3CODE_AUTH_TOKEN",
+] as const;
 
 function extractFatalStartupError(output: string): string | null {
   const normalized = output.trim();
@@ -120,8 +127,19 @@ function parseConfiguredPort(value: string | undefined): number | null {
   return port;
 }
 
-export function buildServerWsUrl(host: string, port: number, authToken: string): string {
-  return `ws://${formatHostForUrl(host)}:${port}/?token=${encodeURIComponent(authToken)}`;
+export function buildServerWsUrl(host: string, port: number, authToken?: string | null): string {
+  const baseUrl = `ws://${formatHostForUrl(host)}:${port}/`;
+  return authToken ? `${baseUrl}?token=${encodeURIComponent(authToken)}` : baseUrl;
+}
+
+export function resolveServerAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  for (const envVar of AUTH_TOKEN_ENV_VARS) {
+    const value = env[envVar]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return null;
 }
 
 export function resolveAttachedServerConnection(
@@ -137,9 +155,11 @@ export function resolveAttachedServerConnection(
     throw new Error("T1CODE_TUI_ATTACH_ONLY requires a valid T1CODE_PORT.");
   }
 
-  const authToken = env.T1CODE_AUTH_TOKEN?.trim();
+  const authToken = resolveServerAuthToken(env);
   if (!authToken) {
-    throw new Error("T1CODE_TUI_ATTACH_ONLY requires T1CODE_AUTH_TOKEN.");
+    throw new Error(
+      "T1CODE_TUI_ATTACH_ONLY requires TERMWEAVE_AUTH_TOKEN (or a legacy auth-token variable).",
+    );
   }
 
   return {

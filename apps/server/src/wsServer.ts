@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import os from "node:os";
 import type { Duplex } from "node:stream";
 
@@ -28,6 +29,7 @@ import {
   WsResponse,
   type WsPushEnvelopeBase,
   type ServerProvider,
+  ENVIRONMENT_DESCRIPTOR_PATH,
 } from "@termweave/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -88,6 +90,7 @@ import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@termweave/shared/schemaJson";
 import { buildServerEnvironmentDescriptor } from "./environment/ServerEnvironmentDescriptor.ts";
 import { buildCoreAdvertisedEndpoints } from "./remoteAccess/AdvertisedEndpoints.ts";
+import { acquireTailscaleServe } from "./remoteAccess/tailscaleServe.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -122,6 +125,10 @@ const isServerNotRunningError = (error: Error): boolean => {
   );
 };
 
+function listeningPort(server: http.Server, fallback: number): number {
+  const address = server.address();
+  return typeof address === "object" && address !== null ? address.port : fallback;
+}
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
   socket.end(
     `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : "Bad Request"}\r\n` +
@@ -475,6 +482,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void Effect.runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+        if (url.pathname === ENVIRONMENT_DESCRIPTOR_PATH) {
+          respond(
+            200,
+            { "Content-Type": "application/json", "Cache-Control": "no-store" },
+            JSON.stringify(environment),
+          );
+          return;
+        }
         if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
           const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
           const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
@@ -620,11 +635,26 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       ] satisfies ReadonlyArray<ServerProvider>;
     });
 
-  yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+  // Subscribe before forking consumers: lazy streams would only subscribe once the forked
+  // fiber runs, dropping events published after the readiness mark below.
+  const domainEvents = yield* Scope.provide(
+    orchestrationEngine.subscribeDomainEvents,
+    subscriptionsScope,
+  );
+  const keybindingsChanges = yield* Scope.provide(
+    keybindingsManager.subscribeChanges,
+    subscriptionsScope,
+  );
+  const providerInstanceChanges = yield* Scope.provide(
+    providerInstanceRegistry.subscribeChanges,
+    subscriptionsScope,
+  );
+
+  yield* Stream.runForEach(Stream.fromSubscription(domainEvents), (event) =>
     pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
+  yield* Stream.runForEach(Stream.fromSubscription(keybindingsChanges), (event) =>
     getProviderInstances.pipe(
       Effect.flatMap((providerInstances) =>
         pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
@@ -636,7 +666,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(providerInstanceRegistry.streamChanges, () =>
+  yield* Stream.runForEach(Stream.fromSubscription(providerInstanceChanges), () =>
     Effect.all([keybindingsManager.loadConfigState, getProviderInstances] as const, {
       concurrency: "unbounded",
     }).pipe(
@@ -731,6 +761,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
   yield* readiness.markHttpListening;
+
+  const tailscaleServeBaseUrl =
+    serverConfig.tailscaleServePort === undefined
+      ? null
+      : yield* acquireTailscaleServe({
+          localPort: listeningPort(httpServer, port),
+          servePort: serverConfig.tailscaleServePort,
+        }).pipe(
+          Effect.mapError(
+            (cause) => new ServerLifecycleError({ operation: "tailscaleServe", cause }),
+          ),
+        );
 
   yield* Effect.addFinalizer(() =>
     Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
@@ -957,10 +999,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.serverDiscoverSourceControl:
         return yield* sourceControlDiscovery.discover({ cwd });
 
-      case WS_METHODS.serverGetAdvertisedEndpoints:
+      case WS_METHODS.serverGetAdvertisedEndpoints: {
+        const advertisedPort = listeningPort(httpServer, port);
         return {
-          endpoints: buildCoreAdvertisedEndpoints({ host, port }),
+          endpoints: buildCoreAdvertisedEndpoints({
+            host,
+            port: advertisedPort,
+            ...(tailscaleServeBaseUrl === null ? {} : { tailscaleServeBaseUrl }),
+          }),
         };
+      }
 
       case WS_METHODS.sourceControlLookupRepository: {
         const body = stripRequestTag(request.body);
@@ -1059,7 +1107,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return;
       }
 
-      if (providedToken !== authToken) {
+      const providedBytes = Buffer.from(providedToken ?? "");
+      const expectedBytes = Buffer.from(authToken);
+      const tokenMatches =
+        providedBytes.length === expectedBytes.length &&
+        timingSafeEqual(providedBytes, expectedBytes);
+      if (!tokenMatches) {
         rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
         return;
       }

@@ -8,6 +8,13 @@ const CORE_PROVIDER = {
   isAddon: false,
 } as const;
 
+const TAILSCALE_PROVIDER = {
+  id: "tailscale",
+  label: "Tailscale",
+  kind: "private-network",
+  isAddon: false,
+} as const;
+
 function isLoopbackHost(host: string): boolean {
   const normalized = host.toLowerCase();
   return normalized === "localhost" || normalized === "::1" || normalized.startsWith("127.");
@@ -38,9 +45,10 @@ export function resolveAdvertisedHost(host: string | undefined): {
 export function buildCoreAdvertisedEndpoints(input: {
   readonly host: string | undefined;
   readonly port: number;
+  readonly tailscaleServeBaseUrl?: string | undefined;
 }): readonly AdvertisedEndpoint[] {
   const advertised = resolveAdvertisedHost(input.host);
-  return [
+  const endpoints: AdvertisedEndpoint[] = [
     createAdvertisedEndpoint({
       id: "local-backend",
       label: "Local backend",
@@ -53,4 +61,21 @@ export function buildCoreAdvertisedEndpoints(input: {
       description: "Current Termweave backend endpoint for attachable TUI sessions.",
     }),
   ];
+
+  if (input.tailscaleServeBaseUrl !== undefined) {
+    endpoints.push(
+      createAdvertisedEndpoint({
+        id: "tailscale-serve",
+        label: "Tailscale",
+        provider: TAILSCALE_PROVIDER,
+        httpBaseUrl: input.tailscaleServeBaseUrl,
+        reachability: "private-network",
+        source: "server",
+        status: "available",
+        description: "Tailnet HTTPS endpoint served by Tailscale Serve.",
+      }),
+    );
+  }
+
+  return endpoints;
 }

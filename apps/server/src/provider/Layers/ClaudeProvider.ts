@@ -12,9 +12,11 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@termweave/shared/model";
+import { expandHomePath, resolvePlatformHomeDirectory } from "@termweave/shared/pathExpansion";
 import { compareSemverVersions } from "@termweave/shared/semver";
 import {
   query as claudeQuery,
+  type ModelInfo as ClaudeModelInfo,
   type SDKUserMessage,
   type SlashCommand as ClaudeSlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -38,8 +40,6 @@ import {
   loadClaudeModelCatalog,
   type ClaudeCatalogModel,
 } from "../Drivers/ClaudeModelCatalogCache";
-import { expandHomePath } from "../../pathExpansion";
-import { homedir } from "node:os";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
 
@@ -78,6 +78,12 @@ const CLAUDE_EFFORT_OPTIONS = {
     { value: "high", label: "High", isDefault: true },
     { value: "max", label: "Max" },
     { value: "ultrathink", label: "Ultrathink" },
+  ],
+  opus45: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
   ],
   sonnet46: [
     { value: "low", label: "Low" },
@@ -162,6 +168,24 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     }),
   },
   {
+    slug: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        buildSelectOptionDescriptor({
+          id: "effort",
+          label: "Reasoning",
+          options: CLAUDE_EFFORT_OPTIONS.opus45,
+        }),
+        buildBooleanOptionDescriptor({
+          id: "fastMode",
+          label: "Fast Mode",
+        }),
+      ],
+    }),
+  },
+  {
     slug: "claude-sonnet-4-6",
     name: "Claude Sonnet 4.6",
     isCustom: false,
@@ -231,9 +255,16 @@ const GENERIC_CLAUDE_EFFORT_OPTIONS = [
   { value: "ultrathink", label: "Ultrathink" },
 ] as const;
 
-const resolveClaudeHomeDir = (claudeSettings: ClaudeSettings): string => {
+export const resolveClaudeHomeDir = (
+  claudeSettings: ClaudeSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string => {
+  const platformHome = resolvePlatformHomeDirectory(environment, platform);
   const homePath = claudeSettings.homePath.trim();
-  return homePath.length > 0 ? expandHomePath(homePath) : homedir();
+  if (homePath.length > 0) return expandHomePath(homePath, platformHome, platform);
+
+  return platformHome;
 };
 
 function claudeCatalogModelCapabilities(entry: ClaudeCatalogModel): ModelCapabilities {
@@ -267,6 +298,7 @@ function claudeCatalogModels(
   return entries.map((entry) => ({
     slug: entry.slug,
     name: entry.name,
+    ...(entry.hidden ? { isLegacy: true } : {}),
     isCustom: false,
     capabilities: claudeCatalogModelCapabilities(entry),
   }));
@@ -299,6 +331,12 @@ export function resolveClaudeEffort(
     ...(raw ? { selections: [{ id: "effort", value: raw }] } : {}),
   });
   const effortDescriptor = descriptors.find((descriptor) => descriptor.id === "effort");
+  if (!effortDescriptor) {
+    // A completely unknown model can still advertise an effort option through live discovery.
+    // Known models with other descriptors (for example Haiku thinking) must continue to reject it.
+    const fallback = descriptors.length === 0 ? raw?.trim() : undefined;
+    return fallback || undefined;
+  }
   const value = getProviderOptionCurrentValue(effortDescriptor);
   return typeof value === "string" ? value : undefined;
 }
@@ -313,7 +351,7 @@ export function normalizeClaudeCliEffort(
   if (effort === "ultracode") {
     return "xhigh";
   }
-  if (effort === "xhigh" && model !== "claude-opus-4-8") {
+  if (effort === "xhigh" && (model === "claude-opus-4-7" || model === "claude-opus-4-6")) {
     return "max";
   }
   return effort;
@@ -326,7 +364,9 @@ export function isClaudeUltracodeEffort(effort: string | null | undefined): bool
 export function resolveClaudeApiModelId(modelSelection: ModelSelection): string {
   switch (getModelSelectionStringOptionValue(modelSelection, "contextWindow")) {
     case "1m":
-      return `${modelSelection.model}[1m]`;
+      return modelSelection.model.endsWith("[1m]")
+        ? modelSelection.model
+        : `${modelSelection.model}[1m]`;
     default:
       return modelSelection.model;
   }
@@ -441,8 +481,221 @@ type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly models: ReadonlyArray<ClaudeModelInfo & { readonly resolvedModel?: string }>;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
+
+function formatClaudeEffortLabel(effort: string): string {
+  return effort === "xhigh" ? "Extra High" : effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+function capabilitiesFromClaudeModelInfo(model: ClaudeModelInfo): ModelCapabilities {
+  const effortLevels = model.supportedEffortLevels ?? [];
+  const defaultEffort = effortLevels.includes("high") ? "high" : effortLevels[0];
+
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(model.supportsEffort && effortLevels.length > 0
+        ? [
+            buildSelectOptionDescriptor({
+              id: "effort",
+              label: "Reasoning",
+              options: effortLevels.map((effort) => ({
+                value: effort,
+                label: formatClaudeEffortLabel(effort),
+                isDefault: effort === defaultEffort,
+              })),
+            }),
+          ]
+        : []),
+      ...(model.supportsFastMode
+        ? [
+            buildBooleanOptionDescriptor({
+              id: "fastMode",
+              label: "Fast Mode",
+            }),
+          ]
+        : []),
+    ],
+  });
+}
+
+function mergeClaudeModelCapabilities(
+  preferred: ModelCapabilities | null | undefined,
+  discovered: ModelCapabilities,
+): ModelCapabilities {
+  const preferredDescriptors = preferred?.optionDescriptors ?? [];
+  const seen = new Set(preferredDescriptors.map((descriptor) => descriptor.id));
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...preferredDescriptors,
+      ...(discovered.optionDescriptors ?? []).filter((descriptor) => !seen.has(descriptor.id)),
+    ],
+  });
+}
+
+export function resolveClaudeProviderModels(
+  discoveredModels:
+    | ReadonlyArray<ClaudeModelInfo & { readonly resolvedModel?: string }>
+    | undefined,
+  version: string | null | undefined,
+  cachedModels: ReadonlyArray<ServerProviderModel> = [],
+): ReadonlyArray<ServerProviderModel> {
+  if (!discoveredModels || discoveredModels.length === 0) {
+    return appendKnownClaudeLegacyModels(
+      cachedModels.length > 0 ? cachedModels : getBuiltInClaudeModelsForVersion(version),
+      version,
+    );
+  }
+
+  const discoveredBySlug = new Map<string, ServerProviderModel>();
+  for (const model of discoveredModels) {
+    const rawValue = model.value.trim();
+    if (
+      rawValue.toLowerCase() === "default" &&
+      discoveredModels.some((candidate) => {
+        const candidateValue = candidate.value.trim().toLowerCase();
+        return (
+          candidateValue.length > 0 &&
+          candidateValue !== "default" &&
+          candidate.displayName.trim().length > 0
+        );
+      })
+    ) {
+      continue;
+    }
+    const slug = resolveClaudeDiscoveredModelSlug(model, cachedModels, version);
+    const name = model.displayName.trim();
+    if (!slug || !name) continue;
+
+    const key = canonicalClaudeModelSlug(slug);
+    const existing = discoveredBySlug.get(key);
+    if (existing && model.value === "default") continue;
+    const builtIn = BUILT_IN_MODELS.find(
+      (candidate) => canonicalClaudeModelSlug(candidate.slug) === key,
+    );
+    const cached = cachedModels.find(
+      (candidate) => canonicalClaudeModelSlug(candidate.slug) === key,
+    );
+    const discoveredCapabilities = capabilitiesFromClaudeModelInfo(model);
+    discoveredBySlug.set(key, {
+      slug,
+      name,
+      ...(model.description.trim() ? { description: model.description.trim() } : {}),
+      isCustom: false,
+      capabilities: mergeClaudeModelCapabilities(
+        builtIn?.capabilities ?? cached?.capabilities,
+        discoveredCapabilities,
+      ),
+    });
+  }
+
+  const discovered = [...discoveredBySlug.values()];
+  const seen = new Set(discovered.map((model) => canonicalClaudeModelSlug(model.slug)));
+  const hiddenCachedModels = cachedModels.filter(
+    (model) => model.isLegacy && !seen.has(canonicalClaudeModelSlug(model.slug)),
+  );
+  return appendKnownClaudeLegacyModels([...discovered, ...hiddenCachedModels], version);
+}
+
+function resolveClaudeDiscoveredModelSlug(
+  model: ClaudeModelInfo & { readonly resolvedModel?: string },
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+  version: string | null | undefined,
+): string {
+  const resolvedModel = model.resolvedModel?.trim();
+  if (resolvedModel) return resolvedModel.replace(/\[[^\]]+\]$/u, "");
+
+  const value = model.value.trim();
+  const alias = value.toLowerCase();
+  if (alias === "default") {
+    return (
+      cachedModels.find((candidate) => candidate.isDefault && !candidate.isLegacy)?.slug ??
+      findClaudeFamilyModelSlug("sonnet", cachedModels, version) ??
+      value
+    );
+  }
+  if (alias !== "opus" && alias !== "sonnet" && alias !== "haiku") return value;
+
+  // An alias only maps to a canonical slug when that canonical model is
+  // verified against the SDK: the resolved candidate's own display name must
+  // be version-compatible with the SDK's displayName. When the version cannot
+  // be verified - a bare alias ("Sonnet") with nothing to check it against,
+  // or a versioned name that disagrees with every candidate - preserve the
+  // SDK identifier so turns follow whatever the SDK currently resolves the
+  // alias to instead of being silently pinned to an older release.
+  const familySlug = findClaudeFamilyModelSlug(alias, cachedModels, version);
+  if (!familySlug) {
+    return value;
+  }
+  const displayName = model.displayName.trim().toLowerCase();
+  const versionToken = displayName.match(/\b\d+(?:\.\d+)?\b/u)?.[0];
+  if (!versionToken) {
+    // No version to verify against: keep the SDK alias.
+    return value;
+  }
+  const candidateVersionToken = findClaudeModelDisplayName(familySlug, cachedModels, version)
+    ?.toLowerCase()
+    .match(/\b\d+(?:\.\d+)?\b/u)?.[0];
+  return candidateVersionToken === versionToken ? familySlug : value;
+}
+
+/** Resolve a canonical slug to its human display name, preferring the cache,
+ *  then the built-in list. Returns null for unknown slugs. */
+function findClaudeModelDisplayName(
+  slug: string,
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+  version: string | null | undefined,
+): string | undefined {
+  const canonical = canonicalClaudeModelSlug(slug);
+  return (
+    cachedModels.find((candidate) => canonicalClaudeModelSlug(candidate.slug) === canonical)
+      ?.name ??
+    getBuiltInClaudeModelsForVersion(version).find(
+      (candidate) => canonicalClaudeModelSlug(candidate.slug) === canonical,
+    )?.name
+  );
+}
+
+function findClaudeFamilyModelSlug(
+  family: "opus" | "sonnet" | "haiku",
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+  version: string | null | undefined,
+): string | undefined {
+  const familyFragment = `-${family}-`;
+  return (
+    cachedModels.find(
+      (candidate) =>
+        !candidate.isLegacy && canonicalClaudeModelSlug(candidate.slug).includes(familyFragment),
+    )?.slug ??
+    getBuiltInClaudeModelsForVersion(version).find((candidate) =>
+      canonicalClaudeModelSlug(candidate.slug).includes(familyFragment),
+    )?.slug ??
+    undefined
+  );
+}
+
+function canonicalClaudeModelSlug(slug: string): string {
+  return slug
+    .trim()
+    .toLowerCase()
+    .replace(/\[[^\]]+\]$/u, "");
+}
+
+function appendKnownClaudeLegacyModels(
+  discovered: ReadonlyArray<ServerProviderModel>,
+  version: string | null | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  const seen = new Set(discovered.map((model) => canonicalClaudeModelSlug(model.slug)));
+  const legacyModels: ServerProviderModel[] = [];
+  for (const model of getBuiltInClaudeModelsForVersion(version)) {
+    if (!seen.has(canonicalClaudeModelSlug(model.slug))) {
+      legacyModels.push({ ...model, isLegacy: true });
+    }
+  }
+
+  return [...discovered, ...legacyModels];
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -551,6 +804,9 @@ const probeClaudeCapabilities = (
         email: account?.email,
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
+        models: (init.models ?? []) as ReadonlyArray<
+          ClaudeModelInfo & { readonly resolvedModel?: string }
+        >,
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
     });
@@ -596,7 +852,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   // Prefer claude's own on-disk catalog; it tracks the real current models.
   // Version gating below only applies to our built-in fallback list.
-  const catalogModels = yield* loadClaudeModelCatalog(resolveClaudeHomeDir(claudeSettings));
+  const catalogModels = yield* loadClaudeModelCatalog(
+    resolveClaudeHomeDir(claudeSettings, environment),
+  );
   const catalogBaseModels = catalogModels.length > 0 ? claudeCatalogModels(catalogModels) : null;
   const allModels = providerModelsFromSettings(
     catalogBaseModels ?? BUILT_IN_MODELS,
@@ -685,12 +943,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    catalogBaseModels ?? getBuiltInClaudeModelsForVersion(parsedVersion),
-    PROVIDER,
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
   // The built-in list's version gating (and its upgrade nudge) is moot once
   // the live catalog drives the models.
   const versionUpgradeMessage = catalogBaseModels
@@ -704,6 +956,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
+  const baseModels = resolveClaudeProviderModels(
+    capabilities?.models,
+    parsedVersion,
+    catalogBaseModels ?? [],
+  );
+  const models = providerModelsFromSettings(
+    baseModels,
+    PROVIDER,
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 

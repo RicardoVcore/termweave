@@ -38,6 +38,7 @@ import {
   type WsPushChannel,
   type WsPushMessage,
   type WsPush,
+  ENVIRONMENT_DESCRIPTOR_PATH,
 } from "@termweave/contracts";
 import { compileResolvedKeybindingRule, DEFAULT_KEYBINDINGS } from "./keybindings";
 import type {
@@ -201,6 +202,16 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
+};
+
+// Default to no provider instances: live hydration probes whatever CLIs are installed on
+// the dev machine, which blocks provider snapshots for seconds and makes tests host-dependent.
+const emptyProviderInstanceRegistry: ProviderInstanceRegistryShape = {
+  getInstance: () => Effect.succeed(undefined),
+  listInstances: Effect.succeed([]),
+  listUnavailable: Effect.succeed([]),
+  streamChanges: Stream.empty,
+  subscribeChanges: PubSub.unbounded<void>().pipe(Effect.flatMap(PubSub.subscribe)),
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -578,7 +589,8 @@ describe("WebSocket Server", () => {
       authToken?: string;
       baseDir?: string;
       providerLayer?: Layer.Layer<ProviderService, never>;
-      providerInstanceRegistry?: ProviderInstanceRegistryShape;
+      /** "live" opts into real hydration (probes installed provider CLIs). */
+      providerInstanceRegistry?: ProviderInstanceRegistryShape | "live";
       providerMaintenanceRunner?: ProviderMaintenanceRunnerShape;
       processDiagnostics?: ProcessDiagnosticsShape;
       traceDiagnostics?: TraceDiagnosticsShape;
@@ -630,6 +642,7 @@ describe("WebSocket Server", () => {
       authToken: options.authToken,
       autoBootstrapProjectFromCwd: options.autoBootstrapProjectFromCwd ?? false,
       logWebSocketEvents: options.logWebSocketEvents ?? false,
+      tailscaleServePort: undefined,
     } satisfies ServerConfigShape);
     const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
     const runtimeOverrides = Layer.mergeAll(
@@ -649,9 +662,13 @@ describe("WebSocket Server", () => {
       ),
       runtimeOverrides,
     );
-    const providerInstanceRegistryLayer = options.providerInstanceRegistry
-      ? Layer.succeed(ProviderInstanceRegistry, options.providerInstanceRegistry)
-      : ProviderInstanceRegistryHydrationLive;
+    const providerInstanceRegistryLayer =
+      options.providerInstanceRegistry === "live"
+        ? ProviderInstanceRegistryHydrationLive
+        : Layer.succeed(
+            ProviderInstanceRegistry,
+            options.providerInstanceRegistry ?? emptyProviderInstanceRegistry,
+          );
     const providerMaintenanceLayer = options.providerMaintenanceRunner
       ? Layer.merge(
           providerInstanceRegistryLayer,
@@ -783,6 +800,22 @@ describe("WebSocket Server", () => {
     expect(response.headers.get("content-type")).toContain("image/png");
     const bytes = Buffer.from(await response.arrayBuffer());
     expect(bytes).toEqual(Buffer.from("hello-encoded-attachment"));
+  });
+
+  it("serves environment descriptor unauthenticated", async () => {
+    server = await createTestServer({ cwd: "/test/project", authToken: "test-token" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await fetch(`http://127.0.0.1:${port}${ENVIRONMENT_DESCRIPTOR_PATH}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/json");
+
+    expect(await response.json()).toMatchObject({
+      environmentId: expect.stringMatching(/./),
+      label: expect.stringMatching(/./),
+    });
   });
 
   it("bootstraps the cwd project on startup when enabled", async () => {
@@ -944,7 +977,11 @@ describe("WebSocket Server", () => {
     ensureParentDir(keybindingsPath);
     fs.writeFileSync(keybindingsPath, "[]", "utf8");
 
-    server = await createTestServer({ cwd: "/my/workspace", baseDir });
+    server = await createTestServer({
+      cwd: "/my/workspace",
+      baseDir,
+      providerInstanceRegistry: "live",
+    });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
 
@@ -1656,6 +1693,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
@@ -1694,6 +1732,7 @@ describe("WebSocket Server", () => {
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [
@@ -1862,6 +1901,7 @@ describe("WebSocket Server", () => {
     ) as KeybindingsConfig;
     expect(response.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
@@ -1917,6 +1957,7 @@ describe("WebSocket Server", () => {
     expect(configResponse.error).toBeUndefined();
     expect(configResponse.result).toEqual({
       cwd: "/my/workspace",
+      environment: expect.any(Object),
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
@@ -2073,7 +2114,7 @@ describe("WebSocket Server", () => {
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       getInstanceInfo: () => unsupported(),
       rollbackConversation: () => unsupported(),
-      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+      subscribeEvents: PubSub.subscribe(runtimeEventPubSub),
     };
     const providerLayer = Layer.succeed(ProviderService, providerService);
 

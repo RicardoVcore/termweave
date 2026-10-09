@@ -514,6 +514,37 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("forwards explicit options for dynamically discovered Claude models", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-future-5",
+          [
+            { id: "effort", value: "xhigh" },
+            { id: "fastMode", value: true },
+            { id: "thinking", value: false },
+          ],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.effort, "xhigh");
+      assert.deepEqual(createInput?.options.settings, {
+        alwaysThinkingEnabled: false,
+        fastMode: true,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("ignores claude fast mode for non-opus models", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -1,9 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-import { parseCodexModelsCache } from "./CodexModelsCache.ts";
+import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
+
+import {
+  loadCodexModelsFromCache,
+  parseCodexModelsCache,
+  resolveCodexHomePath,
+} from "./CodexModelsCache.ts";
 
 describe("parseCodexModelsCache", () => {
-  it("maps listed models and drops hidden ones", () => {
+  it("resolves default homes using platform-specific environment precedence", () => {
+    expect(
+      resolveCodexHomePath(
+        undefined,
+        { HOME: "/c/Users/Maria", USERPROFILE: "C:\\Users\\Maria" },
+        "win32",
+      ),
+    ).toBe("C:\\Users\\Maria\\.codex");
+    expect(
+      resolveCodexHomePath(undefined, { HOME: "/Users/maria", USERPROFILE: "ignored" }, "darwin"),
+    ).toBe("/Users/maria/.codex");
+    expect(
+      resolveCodexHomePath("~/.codex-work", { USERPROFILE: "C:\\Users\\Maria" }, "win32"),
+    ).toBe("C:\\Users\\Maria\\.codex-work");
+  });
+
+  it("maps listed models and preserves hidden ones as legacy", () => {
     const raw = JSON.stringify({
       models: [
         {
@@ -24,7 +49,7 @@ describe("parseCodexModelsCache", () => {
 
     const models = parseCodexModelsCache(raw);
 
-    expect(models.map((m) => m.slug)).toEqual(["gpt-5.6-sol"]);
+    expect(models.map((m) => m.slug)).toEqual(["gpt-5.6-sol", "gpt-reserve"]);
     const model = models[0]!;
     expect(model.name).toBe("GPT-5.6-Sol");
     expect(model.isCustom).toBe(false);
@@ -37,6 +62,7 @@ describe("parseCodexModelsCache", () => {
       "high",
     ]);
     expect(descriptors.some((o) => o.id === "fastMode")).toBe(true);
+    expect(models[1]?.isLegacy).toBe(true);
   });
 
   it("returns empty on malformed payloads", () => {
@@ -49,5 +75,25 @@ describe("parseCodexModelsCache", () => {
       models: [null, 42, "nope", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }],
     });
     expect(parseCodexModelsCache(raw).map((m) => m.slug)).toEqual(["gpt-5.6-sol"]);
+  });
+
+  it("respects CODEX_HOME when no settings override is configured", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "codex-home-"));
+    try {
+      const codexHome = path.join(root, "custom-codex-home");
+      await mkdir(codexHome, { recursive: true });
+      await writeFile(
+        path.join(codexHome, "models_cache.json"),
+        JSON.stringify({ models: [{ slug: "gpt-from-custom-home" }] }),
+        "utf8",
+      );
+
+      const models = await Effect.runPromise(
+        loadCodexModelsFromCache(undefined, { CODEX_HOME: codexHome }),
+      );
+      expect(models.map((model) => model.slug)).toEqual(["gpt-from-custom-home"]);
+    } finally {
+      await rm(root, { recursive: true });
+    }
   });
 });

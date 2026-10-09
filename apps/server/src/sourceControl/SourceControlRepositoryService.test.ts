@@ -55,6 +55,7 @@ const serverConfigLayer = Layer.succeed(ServerConfig, {
   authToken: undefined,
   autoBootstrapProjectFromCwd: false,
   logWebSocketEvents: false,
+  tailscaleServePort: undefined,
 } satisfies ServerConfigShape);
 
 function makeLayer(input: {

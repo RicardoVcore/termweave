@@ -65,11 +65,8 @@ import {
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneProtocol,
   type SourceControlDiscoveryResult,
-  type SourceControlProviderAuth,
-  type SourceControlProviderDiscoveryItem,
   type SourceControlProviderKind,
   type SourceControlRepositoryVisibility,
-  type VcsDiscoveryItem,
 } from "@termweave/contracts";
 import {
   DEFAULT_AUTO_OPEN_PLAN_SIDEBAR,
@@ -89,6 +86,7 @@ import {
   getCustomModelsForProvider,
   getProviderStartOptions,
   rankModelPickerItems,
+  scoreModelPickerSearch,
   MAX_CUSTOM_MODEL_LENGTH,
   MODEL_PROVIDER_SETTINGS,
   normalizeAppSettings,
@@ -132,6 +130,7 @@ import {
   type ThreadStatusPill,
   type TimelineEntry,
   WsTransport,
+  type TransportState,
   formatContextWindowTokens,
   type ContextWindowSnapshot,
   type SlashCommandDefinition,
@@ -168,6 +167,20 @@ import { resolveTuiPaths } from "./config";
 import { resolveComposerPrimaryAction } from "./composerAction";
 import { parseStandaloneComposerModeCommand } from "./composerCommands";
 import { isCommandPaletteProjectPathQuery } from "./commandPaletteProjects";
+import {
+  createQueuedMessage,
+  type QueuedMessage,
+  markQueuedHeadDispatching,
+  moveQueuedMessage,
+  queueMessagesForThread,
+  QUEUED_SEND_MAX_ATTEMPTS,
+  QUEUED_SEND_STUCK_DISPATCH_MS,
+  queuedSendRetryBackoffMs,
+  requeueDispatchingHead,
+  removeQueuedMessage,
+  resolveDispatchingTransition,
+  resolveQueuePumpDecision,
+} from "./messageQueue";
 import { expandUserPath, normalizeWorkspaceRoot } from "./workspacePaths";
 import { clampSlashCommandMenuIndex, resolveTuiSlashCommandMenu } from "./composerSlashMenu";
 import { formatReasoningEffortLabel, truncateToolbarLabel } from "./composerControlLabels";
@@ -195,6 +208,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "./keybindings";
+import { buildModelMenuRows, menuWindow } from "./modelMenuNavigation";
 import { createT1Logger } from "./log";
 import {
   deriveProviderInstanceEntries,
@@ -204,6 +218,35 @@ import {
   sortProviderInstanceEntries,
 } from "./providerInstances";
 import { resolveUserMessageBubbleWidth } from "./messageLayout";
+import {
+  cloneComposerMention,
+  detectTrailingComposerPathTrigger,
+  mentionLabel,
+  mentionSignature,
+  replaceComposerTextRange,
+  stripMentionTokensFromText,
+} from "./composerMentions";
+import {
+  formatCheckedRelativeTime,
+  formatCpuPercent,
+  formatDurationMs,
+  formatMemoryBytes,
+  formatMessageTimestamp,
+  formatRelativeTime,
+  formatRelativeTimeLabel,
+} from "./timeFormatting";
+import {
+  canRunProviderUpdate,
+  formatProviderVersionStatus,
+  isProviderUpdateActive,
+  providerUpdateButtonLabel,
+} from "./providerUpdateStatus";
+import {
+  authStatusLabel,
+  sourceControlProviderSummary,
+  sourceControlStatusColor,
+  vcsSummary,
+} from "./sourceControlSummary";
 import {
   isDiffLikeCodeBlockFiletype,
   parseMessageMarkdownSegments,
@@ -216,6 +259,17 @@ import {
   parseTuiServerConnection,
 } from "./connectionsPanel";
 import { type TuiPrefs, readPrefs, writePrefs } from "./prefs";
+import {
+  describeConnectionProfile,
+  removeConnectionProfile,
+  upsertConnectionProfile,
+  type ConnectionProfile,
+} from "./connectionProfiles";
+import {
+  discoverTailnetBackends,
+  profileFromTailnetBackend,
+  type TailnetBackend,
+} from "./tailnetDiscovery";
 import {
   ADDITIONAL_COMING_SOON_MODEL_PROVIDER_OPTIONS,
   COMING_SOON_INSTALL_PROVIDER_OPTIONS,
@@ -246,7 +300,11 @@ import {
   shouldTrackSystemThemeMode,
 } from "./rendererTheme";
 import { resolveTuiResponsiveLayout, TUI_SIDEBAR_WIDTH } from "./responsiveLayout";
-import { resolveAttachedServerConnection, startServerSupervisor } from "./serverSupervisor";
+import {
+  resolveAttachedServerConnection,
+  startServerSupervisor,
+  type AttachedServerConnection,
+} from "./serverSupervisor";
 import { createCoalescedRefreshRunner } from "./snapshotRefresh";
 import {
   cacheRemoteAttachmentToFile,
@@ -462,6 +520,26 @@ type ImagePreviewState = {
   status: "loading" | "ready" | "error";
   error: string | null;
 };
+type TailnetScan =
+  | { readonly status: "idle" }
+  | { readonly status: "scanning" }
+  | { readonly status: "done"; readonly backends: readonly TailnetBackend[] }
+  | { readonly status: "error"; readonly message: string };
+
+function tailnetScanSummary(scan: TailnetScan): string {
+  switch (scan.status) {
+    case "idle":
+      return "Lists online tailnet peers that serve Termweave through Tailscale Serve.";
+    case "scanning":
+      return "Scanning tailnet...";
+    case "error":
+      return scan.message;
+    case "done":
+      return scan.backends.length === 0
+        ? "No Termweave backends found. Start the server with --tailscale-serve on the remote machine."
+        : `Found ${scan.backends.length}.`;
+  }
+}
 const SIDEBAR_PROJECT_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -499,11 +577,6 @@ const SETTINGS_NAV_ITEMS = [
   readonly label: string;
 }>;
 
-type ComposerPathTrigger = {
-  query: string;
-  rangeStart: number;
-  rangeEnd: number;
-};
 type ParsedDiffFile = {
   readonly key: string;
   readonly filePath: string;
@@ -559,10 +632,6 @@ function cloneDraftAttachment(
   attachment: DraftComposerImageAttachment,
 ): DraftComposerImageAttachment {
   return { ...attachment };
-}
-
-function cloneComposerMention(mention: ComposerMention): ComposerMention {
-  return { ...mention };
 }
 
 function cloneComposerDraftState(draft: ComposerDraftState): ComposerDraftState {
@@ -1033,23 +1102,6 @@ async function listDirectorySuggestions(input: string, homeDir: string): Promise
   }
 }
 
-function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const diffMs = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(diffMs)) return "";
-  const minutes = Math.max(Math.floor(diffMs / 60_000), 0);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
-}
-
-function formatRelativeTimeLabel(iso: string | null | undefined): string {
-  const relativeTime = formatRelativeTime(iso);
-  return relativeTime === "now" ? "now" : `${relativeTime} ago`;
-}
-
 function commandPaletteTextMatches(item: CommandPaletteItem, query: string): boolean {
   const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
@@ -1063,78 +1115,6 @@ function commandPaletteTextMatches(item: CommandPaletteItem, query: string): boo
     .join(" ")
     .toLowerCase();
   return tokens.every((token) => haystack.includes(token));
-}
-
-function formatCheckedRelativeTime(iso: string | null | undefined): string {
-  const relativeTime = formatRelativeTime(iso);
-  return relativeTime === "now" ? "Checked now" : `Checked ${relativeTime} ago`;
-}
-
-function formatMemoryBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB"] as const;
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const precision = value >= 10 ? 0 : 1;
-  return `${value.toFixed(precision)} ${units[unitIndex]}`;
-}
-
-function formatCpuPercent(value: number): string {
-  if (!Number.isFinite(value)) return "0%";
-  const precision = value >= 10 ? 0 : 1;
-  return `${value.toFixed(precision)}%`;
-}
-
-function authStatusLabel(auth: SourceControlProviderAuth): string {
-  switch (auth.status) {
-    case "authenticated":
-      return "Authenticated";
-    case "unauthenticated":
-      return "Sign-in needed";
-    case "unknown":
-      return "Unknown auth";
-  }
-}
-
-function sourceControlStatusColor(input: {
-  readonly status: "available" | "missing";
-  readonly implemented?: boolean;
-  readonly auth?: SourceControlProviderAuth;
-}): TuiColor {
-  if (input.implemented === false) return PALETTE.subtle;
-  if (input.status !== "available") return PALETTE.warning;
-  if (input.auth && input.auth.status !== "authenticated") return PALETTE.warning;
-  return PALETTE.success;
-}
-
-function vcsSummary(item: VcsDiscoveryItem): string {
-  if (!item.implemented) return `Support for ${item.label} is coming soon.`;
-  if (item.status !== "available") return `Not available on this server: ${item.installHint}`;
-  return "Available";
-}
-
-function sourceControlProviderSummary(item: SourceControlProviderDiscoveryItem): string {
-  if (item.status !== "available") return `Not available on this server: ${item.installHint}`;
-  if (item.auth.status === "authenticated") {
-    return item.auth.account
-      ? `${item.auth.account}${item.auth.host ? ` on ${item.auth.host}` : ""}`
-      : "Authenticated";
-  }
-  return item.auth.detail ?? item.detail ?? item.installHint;
-}
-
-function formatDurationMs(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "0ms";
-  if (value < 1_000) return `${Math.round(value)}ms`;
-  const seconds = value / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
-  const minutes = seconds / 60;
-  return `${minutes.toFixed(minutes >= 10 ? 0 : 1)}m`;
 }
 
 function collapseOtelSignalsUrl(input: { tracesUrl: string; metricsUrl: string }): string | null {
@@ -1251,75 +1231,6 @@ function updateProjectScriptsForSave(input: {
         ? { ...script, runOnWorktreeCreate: false }
         : script,
   );
-}
-
-function isProviderUpdateActive(provider: ServerProvider | null | undefined): boolean {
-  const status = provider?.updateState?.status;
-  return status === "queued" || status === "running";
-}
-
-function canRunProviderUpdate(provider: ServerProvider | null | undefined): boolean {
-  return (
-    provider?.versionAdvisory?.canUpdate === true &&
-    provider.versionAdvisory.status === "behind_latest" &&
-    !isProviderUpdateActive(provider)
-  );
-}
-
-function providerUpdateButtonLabel(provider: ServerProvider | null | undefined): string {
-  const status = provider?.updateState?.status;
-  if (status === "queued") return "Queued";
-  if (status === "running") return "Updating...";
-  return "Update";
-}
-
-function formatProviderVersionStatus(provider: ServerProvider | null | undefined): string | null {
-  if (!provider) return null;
-  const updateState = provider.updateState;
-  if (updateState) {
-    if (updateState.status === "running") return updateState.message ?? "Updating provider.";
-    if (updateState.status === "queued") return updateState.message ?? "Update queued.";
-    if (updateState.status === "succeeded") return updateState.message ?? "Provider updated.";
-    if (updateState.status === "failed") return updateState.message ?? "Provider update failed.";
-    if (updateState.status === "unchanged")
-      return updateState.message ?? "Provider still outdated.";
-  }
-
-  const advisory = provider.versionAdvisory;
-  if (advisory?.status === "behind_latest") {
-    const current = advisory.currentVersion ?? provider.version ?? "installed";
-    const latest = advisory.latestVersion ?? "latest";
-    return `Update available ${current} -> ${latest}`;
-  }
-  if (advisory?.status === "current") {
-    return provider.version ? `Current ${provider.version}` : "Current";
-  }
-  if (provider.version) return `Version ${provider.version}`;
-  return provider.installed ? "Installed" : "Not installed";
-}
-
-const timestampFormatterCache = new Map<TimestampFormat, Intl.DateTimeFormat>();
-
-function getTimestampFormatter(timestampFormat: TimestampFormat): Intl.DateTimeFormat {
-  const cached = timestampFormatterCache.get(timestampFormat);
-  if (cached) return cached;
-  const formatter = new Intl.DateTimeFormat(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
-  });
-  timestampFormatterCache.set(timestampFormat, formatter);
-  return formatter;
-}
-
-function formatMessageTimestamp(
-  iso: string | null | undefined,
-  timestampFormat: TimestampFormat = DEFAULT_TIMESTAMP_FORMAT,
-): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return getTimestampFormatter(timestampFormat).format(date);
 }
 
 function providerIcon(provider: ProviderKind | string | null | undefined): string {
@@ -1546,94 +1457,6 @@ function summarizeGitActionResult(
   if (action === "commit_push") return "Push complete";
   if (action === "commit_push_pr") return "PR flow complete";
   return "Commit complete";
-}
-
-function basenameOfPath(input: string): string {
-  const trimmed = input.replace(/\/+$/g, "");
-  const parts = trimmed.split("/");
-  return parts[parts.length - 1] || input;
-}
-
-function inferMentionKindFromPath(pathValue: string): ProjectEntry["kind"] {
-  return basenameOfPath(pathValue).includes(".") ? "file" : "directory";
-}
-
-function mentionLabel(mention: Pick<ComposerMention, "path" | "kind">): string {
-  const icon = mention.kind === "directory" ? "󰉋" : "󰈔";
-  return `${icon} ${basenameOfPath(mention.path)}`;
-}
-
-function mentionSignature(mention: Pick<ComposerMention, "path">): string {
-  return mention.path;
-}
-
-const MENTION_TOKEN_PATTERN = /(^|\s)@([^\s@]+)(?=\s|$)/g;
-
-function detectTrailingComposerPathTrigger(input: string): ComposerPathTrigger | null {
-  const trimmedEnd = input.replace(/\r/g, "");
-  const cursor = trimmedEnd.length;
-  let index = cursor - 1;
-  while (index >= 0) {
-    const char = trimmedEnd[index] ?? "";
-    if (char === " " || char === "\n" || char === "\t") {
-      break;
-    }
-    index -= 1;
-  }
-  const rangeStart = index + 1;
-  const token = trimmedEnd.slice(rangeStart, cursor);
-  if (!token.startsWith("@")) {
-    return null;
-  }
-  return {
-    query: token.slice(1),
-    rangeStart,
-    rangeEnd: cursor,
-  };
-}
-
-function replaceComposerTextRange(
-  text: string,
-  rangeStart: number,
-  rangeEnd: number,
-  replacement: string,
-): string {
-  const safeStart = Math.max(0, Math.min(text.length, rangeStart));
-  const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
-  return `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
-}
-
-function stripMentionTokensFromText(input: string): { mentions: ComposerMention[]; body: string } {
-  const mentions: ComposerMention[] = [];
-  let cursor = 0;
-  let output = "";
-
-  for (const match of input.matchAll(MENTION_TOKEN_PATTERN)) {
-    const fullMatch = match[0] ?? "";
-    const prefix = match[1] ?? "";
-    const mentionPath = match[2] ?? "";
-    const matchIndex = match.index ?? 0;
-    const mentionStart = matchIndex + prefix.length;
-    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
-    output += input.slice(cursor, mentionStart);
-    if (mentionPath.length > 0) {
-      mentions.push({
-        type: "path",
-        path: mentionPath,
-        kind: inferMentionKindFromPath(mentionPath),
-      });
-    } else {
-      output += input.slice(mentionStart, mentionEnd);
-    }
-    cursor = mentionEnd;
-  }
-
-  output += input.slice(cursor);
-  const body = output
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  return { mentions, body };
 }
 
 function composerTraitsIcon(provider: ProviderKind): string {
@@ -2755,6 +2578,7 @@ type ModelMenuOption = {
   readonly name: string;
   readonly shortName?: string;
   readonly subProvider?: string;
+  readonly isLegacy?: boolean;
   readonly isCustom: boolean;
 };
 type ModelSearchMenuItem = {
@@ -4114,6 +3938,8 @@ export function App({
   initialTuiThemeId,
   initialSystemThemeMode,
   initialTerminalThemeColors,
+  initialServerConnection,
+  initialConnectionProfile,
 }: {
   renderer: CliRenderer;
   interruptRequestToken?: number;
@@ -4122,6 +3948,8 @@ export function App({
   initialTuiThemeId?: TuiThemeId;
   initialSystemThemeMode?: TuiThemeMode | null;
   initialTerminalThemeColors?: TerminalColors | null;
+  initialServerConnection?: AttachedServerConnection;
+  initialConnectionProfile?: ConnectionProfile;
 }) {
   const terminalRenderer = _renderer as unknown as TerminalRenderer;
   const paths = useMemo(() => resolveTuiPaths(), []);
@@ -4131,6 +3959,8 @@ export function App({
   const [serverConfig, setServerConfig] = useState<TuiServerConfig>(null);
   const [serverSettings, setServerSettings] = useState<ServerSettings | null>(null);
   const [, setStatus] = useState("Booting");
+  const [connectionState, setConnectionState] = useState<TransportState>("connecting");
+  const transportRef = useRef<WsTransport | null>(null);
   const [selectionCopyToast, setSelectionCopyToast] = useState<string | null>(null);
   const [startupIssue, setStartupIssue] = useState<string | null>(null);
   const [mainView, setMainView] = useState<MainView>("thread");
@@ -4151,6 +3981,7 @@ export function App({
   const sendInFlightRef = useRef(false);
   const interruptInFlightRef = useRef(false);
   const [pendingSends, setPendingSends] = useState<PendingSendPreview[]>([]);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const [sendAnimationTick, setSendAnimationTick] = useState(0);
   const [sidebarPulseTick, setSidebarPulseTick] = useState(0);
   const [projectPathDraft, setProjectPathDraft] = useState("");
@@ -4224,6 +4055,7 @@ export function App({
     useState<ProviderInstanceId>(DEFAULT_CODEX_INSTANCE_ID);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
   const [modelMenuIndex, setModelMenuIndex] = useState(0);
+  const [legacyModelsExpanded, setLegacyModelsExpanded] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
@@ -4293,6 +4125,7 @@ export function App({
   >({});
   const [showAllCustomModels, setShowAllCustomModels] = useState(false);
   const [showAllModelPreferenceRows, setShowAllModelPreferenceRows] = useState(false);
+  const [modelPreferencesQuery, setModelPreferencesQuery] = useState("");
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [updatingProviderInstanceId, setUpdatingProviderInstanceId] =
     useState<ProviderInstanceId | null>(null);
@@ -4312,6 +4145,32 @@ export function App({
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [prefsReady, setPrefsReady] = useState(false);
+  const [connectionProfiles, setConnectionProfiles] = useState<readonly ConnectionProfile[]>([]);
+  const [defaultConnectionProfileId, setDefaultConnectionProfileId] = useState<string | null>(null);
+  const unsavedCurrentConnection = useMemo<ConnectionProfile | null>(
+    () =>
+      initialConnectionProfile &&
+      !connectionProfiles.some((p) => p.id === initialConnectionProfile.id)
+        ? initialConnectionProfile
+        : null,
+    [initialConnectionProfile, connectionProfiles],
+  );
+  const removeSavedConnection = useCallback((profileId: string) => {
+    setConnectionProfiles((current) => removeConnectionProfile(current, profileId));
+    setDefaultConnectionProfileId((current) => (current === profileId ? null : current));
+  }, []);
+  const [tailnetScan, setTailnetScan] = useState<TailnetScan>({ status: "idle" });
+  const scanTailnet = useCallback(async () => {
+    setTailnetScan({ status: "scanning" });
+    try {
+      setTailnetScan({ status: "done", backends: await discoverTailnetBackends() });
+    } catch (error) {
+      setTailnetScan({
+        status: "error",
+        message: error instanceof Error ? error.message : "Tailnet scan failed.",
+      });
+    }
+  }, []);
   const [serverHttpOrigin, setServerHttpOrigin] = useState<string | null>(null);
   const [serverWsUrl, setServerWsUrl] = useState<string | null>(null);
   const tuiServerConnection = useMemo(
@@ -4806,6 +4665,10 @@ export function App({
           setFocusArea("settings");
         }
         setTuiThemeId(normalizeTuiThemeId(prefs.tuiThemeId));
+        if (prefs.connectionProfiles) {
+          setConnectionProfiles(prefs.connectionProfiles);
+        }
+        setDefaultConnectionProfileId(prefs.defaultConnectionProfileId ?? null);
         if (prefs.appSettings) {
           setAppSettings(normalizeAppSettings({ ...DEFAULT_APP_SETTINGS, ...prefs.appSettings }));
           setOpenInstallProviders({
@@ -4841,7 +4704,7 @@ export function App({
         setDiffView(prefs.diffView ?? "unified");
         setPrefsReady(true);
 
-        const attachedServer = resolveAttachedServerConnection();
+        const attachedServer = initialServerConnection ?? resolveAttachedServerConnection();
         const server = attachedServer
           ? {
               wsUrl: attachedServer.wsUrl,
@@ -4868,10 +4731,32 @@ export function App({
             port: attachedServer.port,
           });
         }
+        let connectionSuspended = false;
         const transport = new WsTransport({
           url: server.wsUrl,
           onWarning: (message, details) => logger.log("ws.warning", { message, details }),
+          onStateChange: (state) => {
+            if (disposed) return;
+            setConnectionState(state);
+            // While the user has paused reconnection, stop the snapshot-retry
+            // churn - every attempt just queues a request that times out.
+            connectionSuspended = state === "suspended";
+            if (connectionSuspended && refreshTimer !== null) {
+              clearTimeout(refreshTimer);
+              refreshTimer = null;
+            }
+          },
+          // Fired only on a re-open (auto or manual resume), never the first
+          // connect. Pull a full snapshot plus server config/settings to
+          // reconcile anything missed while disconnected.
+          onReconnect: () => {
+            if (disposed) return;
+            void refresh("reconnect");
+            void loadServerConfig();
+            void loadServerSettings();
+          },
         });
+        transportRef.current = transport;
         setServerWsUrl(server.wsUrl);
         setServerHttpOrigin(resolveHttpOriginFromWsUrl(server.wsUrl));
         const nativeBridge = createTransportNativeApi({ transport });
@@ -4881,7 +4766,7 @@ export function App({
         let refreshAttempts = 0;
 
         const scheduleRefreshRetry = (reason: string) => {
-          if (disposed || refreshTimer !== null) return;
+          if (disposed || connectionSuspended || refreshTimer !== null) return;
           refreshTimer = setTimeout(() => {
             refreshTimer = null;
             void refresh(`retry:${reason}`);
@@ -4921,48 +4806,52 @@ export function App({
         });
 
         setApi(nativeApi);
-        void nativeApi.server
-          .getConfig()
-          .then((config) => {
-            if (!disposed) {
-              setServerConfig(config);
-            }
-          })
-          .catch((error) => {
-            logger.log("serverConfig.loadFailed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-        void nativeApi.server
-          .getSettings()
-          .then((settings) => {
-            if (!disposed) {
-              setServerSettings(settings);
-              setOpenInstallProviders({
-                codex: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[0]!,
-                ),
-                claudeAgent: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[1]!,
-                ),
-                cursor: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[2]!,
-                ),
-                opencode: isProviderInstallSettingsDirtyForSettings(
-                  settings,
-                  INSTALL_PROVIDER_SETTINGS[3]!,
-                ),
+        const loadServerConfig = () =>
+          nativeApi.server
+            .getConfig()
+            .then((config) => {
+              if (!disposed) {
+                setServerConfig(config);
+              }
+            })
+            .catch((error) => {
+              logger.log("serverConfig.loadFailed", {
+                error: error instanceof Error ? error.message : String(error),
               });
-            }
-          })
-          .catch((error) => {
-            logger.log("serverSettings.loadFailed", {
-              error: error instanceof Error ? error.message : String(error),
             });
-          });
+        const loadServerSettings = () =>
+          nativeApi.server
+            .getSettings()
+            .then((settings) => {
+              if (!disposed) {
+                setServerSettings(settings);
+                setOpenInstallProviders({
+                  codex: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[0]!,
+                  ),
+                  claudeAgent: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[1]!,
+                  ),
+                  cursor: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[2]!,
+                  ),
+                  opencode: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[3]!,
+                  ),
+                });
+              }
+            })
+            .catch((error) => {
+              logger.log("serverSettings.loadFailed", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
+        void loadServerConfig();
+        void loadServerSettings();
         await refresh("initial");
         const unsubscribeWelcome = nativeBridge.events.onServerWelcome((payload) => {
           logger.log("server.welcome", payload as Record<string, unknown>);
@@ -5026,6 +4915,7 @@ export function App({
           unsubscribeServerConfig();
           unsubscribeTerminalEvents();
           transport.dispose();
+          transportRef.current = null;
           server.stop();
         };
       } catch (error) {
@@ -5042,7 +4932,7 @@ export function App({
       clearTerminalImagePreview(terminalRenderer);
       cleanup?.();
     };
-  }, [logger, paths, terminalRenderer]);
+  }, [initialServerConnection, logger, paths, terminalRenderer]);
 
   useEffect(() => {
     selectedProjectIdRef.current = selectedProjectId;
@@ -5080,6 +4970,8 @@ export function App({
       ...(Object.keys(draftThreadsByProjectId).length > 0 ? { draftThreadsByProjectId } : {}),
       ...(Object.keys(composerDraftsByThreadId).length > 0 ? { composerDraftsByThreadId } : {}),
       appSettings,
+      ...(connectionProfiles.length > 0 ? { connectionProfiles } : {}),
+      ...(defaultConnectionProfileId ? { defaultConnectionProfileId } : {}),
     } satisfies TuiPrefs;
     void writePrefs(paths, prefs);
     logger.log("prefs.saved", prefs as Record<string, unknown>);
@@ -5103,6 +4995,8 @@ export function App({
     appSettings,
     tuiThemeId,
     composerDraftsByThreadId,
+    connectionProfiles,
+    defaultConnectionProfileId,
     expandedProjectIds,
     selectedProjectId,
     selectedThreadId,
@@ -5301,6 +5195,9 @@ export function App({
         .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
     : [];
   const showAssistantTyping = activeThreadIsRunning || activePendingSends.length > 0;
+  const activeQueuedMessages = activeThreadId
+    ? queueMessagesForThread(queuedMessages, activeThreadId)
+    : [];
   const latestProposedPlan = activeThread
     ? findLatestProposedPlan(activeThread.proposedPlans, activeThread.latestTurn?.turnId ?? null)
     : null;
@@ -5440,7 +5337,14 @@ export function App({
     }
     return optionsByInstance;
   }, [appSettings, modelMenuEntries, rawProviderModelOptionsByInstance]);
-  const modelOptions = providerModelOptionsByInstance.get(modelMenuInstanceId) ?? [];
+  const preferredModelOptions = providerModelOptionsByInstance.get(modelMenuInstanceId) ?? [];
+  const currentModelOptions = preferredModelOptions.filter((option) => !option.isLegacy);
+  const legacyModelOptions = preferredModelOptions.filter((option) => option.isLegacy);
+  const modelMenuRows = buildModelMenuRows(
+    currentModelOptions,
+    legacyModelOptions,
+    legacyModelsExpanded,
+  );
   const modelSearchItems = useMemo<ReadonlyArray<ModelSearchMenuItem>>(() => {
     const favoriteKeys = new Set(
       appSettings.favorites.map((favorite) => `${favorite.provider}:${favorite.model}`),
@@ -5799,9 +5703,29 @@ export function App({
       .filter((favorite) => favorite.provider === selectedModelPreferencesEntry.instanceId)
       .map((favorite) => favorite.model),
   );
-  const visibleModelPreferenceRows = showAllModelPreferenceRows
-    ? selectedModelPreferencesOptions
-    : selectedModelPreferencesOptions.slice(0, 8);
+  const isModelPreferencesQueryActive = modelPreferencesQuery.trim().length > 0;
+  // Filter keeps preference order (no re-rank) so Up/Down stay meaningful.
+  const filteredModelPreferenceOptions = selectedModelPreferencesOptions.filter(
+    (option) =>
+      scoreModelPickerSearch(
+        {
+          name: option.name,
+          slug: option.slug,
+          ...(option.shortName ? { shortName: option.shortName } : {}),
+          ...(option.subProvider ? { subProvider: option.subProvider } : {}),
+          driverKind: selectedModelPreferencesEntry.driverKind,
+          providerDisplayName: selectedModelPreferencesEntry.displayName,
+        },
+        modelPreferencesQuery,
+      ) !== null,
+  );
+  const modelPreferenceIndexBySlug = new Map(
+    selectedModelPreferencesOptions.map((option, index) => [option.slug, index] as const),
+  );
+  const visibleModelPreferenceRows =
+    isModelPreferencesQueryActive || showAllModelPreferenceRows
+      ? filteredModelPreferenceOptions
+      : filteredModelPreferenceOptions.slice(0, 8);
   const totalFavoriteModels = appSettings.favorites.length;
   const totalHiddenModels = Object.values(appSettings.providerModelPreferences).reduce(
     (count, preferences) => count + preferences.hiddenModels.length,
@@ -5905,6 +5829,7 @@ export function App({
           onSelect: () => {
             setSelectedModelPreferencesInstanceId(entry.instanceId);
             setShowAllModelPreferenceRows(false);
+            setModelPreferencesQuery("");
             setOverlayMenu(null);
           },
         }));
@@ -6390,6 +6315,75 @@ export function App({
     }, SEND_ANIMATION_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [allThreads, showAssistantTyping]);
+
+  // Reconcile dispatching entries on every read-model change, including the
+  // update that turns off the typing indicator. The deadline timer handles a
+  // dispatch that receives no further server update.
+  useEffect(() => {
+    const dispatching = queuedMessages.filter((entry) => entry.status === "dispatching");
+    if (dispatching.length === 0) return;
+
+    const reconcile = () => {
+      const now = Date.now();
+      setQueuedMessages((current) => {
+        let changed = false;
+        const next = current.flatMap((entry) => {
+          if (entry.status !== "dispatching") return [entry];
+          const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
+          if (!thread) return [entry];
+
+          const dispatchedAt = entry.dispatchedAt ?? now;
+          const turnRunning = isThreadSessionActivelyWorking(thread.session);
+          const turnRunningSeen = entry.turnRunningSeen || turnRunning;
+          const observedEntry =
+            turnRunningSeen === entry.turnRunningSeen ? entry : { ...entry, turnRunningSeen };
+          const transition = resolveDispatchingTransition(observedEntry, {
+            dispatchedAt,
+            userMessagePersisted: thread.messages.some((message) => message.id === entry.messageId),
+            turnRunning,
+            turnRunningSeen,
+            assistantReplyPersisted: thread.messages.some(
+              (message) =>
+                message.role === "assistant" && Date.parse(message.createdAt) >= dispatchedAt,
+            ),
+            now,
+          });
+          if (transition.kind === "complete") {
+            changed = true;
+            return [];
+          }
+          if (transition.kind === "lost") {
+            changed = true;
+            queuedSendAttemptsRef.current = {
+              ...queuedSendAttemptsRef.current,
+              [entry.messageId]: (queuedSendAttemptsRef.current[entry.messageId] ?? 0) + 1,
+            };
+            return [
+              requeueDispatchingHead(current, entry.messageId).find(
+                (candidate) => candidate.messageId === entry.messageId,
+              ) ?? entry,
+            ];
+          }
+          if (observedEntry !== entry) changed = true;
+          return [observedEntry];
+        });
+        return changed ? next : current;
+      });
+    };
+
+    reconcile();
+    const now = Date.now();
+    const nextDeadline = Math.min(
+      ...dispatching
+        .map((entry) => entry.dispatchedAt)
+        .filter((dispatchedAt): dispatchedAt is number => dispatchedAt !== null)
+        .map((dispatchedAt) => dispatchedAt + QUEUED_SEND_STUCK_DISPATCH_MS)
+        .filter((deadline) => deadline > now),
+    );
+    if (!Number.isFinite(nextDeadline)) return;
+    const timer = setTimeout(reconcile, nextDeadline - now + 1);
+    return () => clearTimeout(timer);
+  }, [allThreads, queuedMessages]);
 
   useEffect(() => {
     if (!hasPulsingThreadStatus) return;
@@ -7853,6 +7847,16 @@ export function App({
       source: key.source,
       sequence: key.sequence,
     });
+    // Ctrl+R toggles the reconnect loop while disconnected: cancel a running
+    // retry (suspend) or resume from a suspended state. Inert when connected.
+    if (key.ctrl && key.name === "r" && connectionState !== "open") {
+      const transport = transportRef.current;
+      if (transport) {
+        if (connectionState === "suspended") transport.reconnect();
+        else transport.stopReconnecting();
+      }
+      return;
+    }
     const shortcutCommand = resolveTuiShortcutCommand(
       {
         keyName: key.name,
@@ -8107,13 +8111,21 @@ export function App({
           applyDraftProviderModel(selectedSearchResult.instanceId, selectedSearchResult.slug);
           return;
         }
-        const selected = modelOptions[modelPickerJumpIndex];
-        if (!isModelSearchActive && selected) {
-          applyDraftProviderModel(modelMenuInstanceId, selected.slug);
+        const selectedRow = modelMenuRows[modelPickerJumpIndex];
+        if (!isModelSearchActive && selectedRow?.kind === "model") {
+          applyDraftProviderModel(modelMenuInstanceId, selectedRow.option.slug);
+          return;
+        }
+        if (!isModelSearchActive && selectedRow?.kind === "legacyHeader") {
+          setLegacyModelsExpanded((current) => !current);
+          setModelMenuIndex(modelPickerJumpIndex);
           return;
         }
         setModelSubmenuOpen(true);
-        setModelMenuIndex(Math.min(Math.max(modelOptions.length - 1, 0), modelPickerJumpIndex));
+        const jumpRowCount = isModelSearchActive
+          ? visibleModelSearchResults.length
+          : modelMenuRows.length;
+        setModelMenuIndex(Math.min(Math.max(jumpRowCount - 1, 0), modelPickerJumpIndex));
         return;
       }
       const printableSequence =
@@ -8180,7 +8192,7 @@ export function App({
         }
         const visibleModelCount = isModelSearchActive
           ? visibleModelSearchResults.length
-          : modelOptions.length;
+          : modelMenuRows.length;
         setModelMenuIndex((current) => Math.min(Math.max(visibleModelCount - 1, 0), current + 1));
         return;
       }
@@ -8201,9 +8213,11 @@ export function App({
           applyDraftProviderModel(selectedSearchResult.instanceId, selectedSearchResult.slug);
           return;
         }
-        const selected = modelOptions[modelMenuIndex];
-        if (!isModelSearchActive && selected) {
-          applyDraftProviderModel(modelMenuInstanceId, selected.slug);
+        const selectedRow = modelMenuRows[modelMenuIndex];
+        if (!isModelSearchActive && selectedRow?.kind === "model") {
+          applyDraftProviderModel(modelMenuInstanceId, selectedRow.option.slug);
+        } else if (!isModelSearchActive && selectedRow?.kind === "legacyHeader") {
+          setLegacyModelsExpanded((current) => !current);
         }
         return;
       }
@@ -8509,6 +8523,41 @@ export function App({
       ["up", "down", "pageup", "pagedown", "home", "end", "j", "k"].includes(key.name)
     ) {
       scheduleTimelineScrollStateSync();
+    }
+    if (key.meta && (key.name === "up" || key.name === "down") && activeThreadId) {
+      const threadQueue = queueMessagesForThread(queuedMessages, activeThreadId);
+      if (threadQueue.length === 0) {
+        return;
+      }
+      const queueIndex = threadQueue.length > 1 ? Math.min(1, threadQueue.length - 1) : 0;
+      const target = threadQueue[queueIndex];
+      if (!target || target.status === "dispatching") {
+        return;
+      }
+      key.preventDefault();
+      setQueuedMessages((current) => {
+        const next = moveQueuedMessage(current, target.messageId, key.name === "up" ? -1 : 1);
+        return next;
+      });
+      return;
+    }
+    if (key.ctrl && key.name === "d" && activeThreadId) {
+      const threadQueue = queueMessagesForThread(queuedMessages, activeThreadId);
+      if (threadQueue.length === 0) {
+        return;
+      }
+      const target = threadQueue[threadQueue.length - 1];
+      if (!target || target.status === "dispatching") {
+        return;
+      }
+      key.preventDefault();
+      setQueuedMessages((current) => removeQueuedMessage(current, target.messageId));
+      setStatus("Queued message cancelled");
+      logger.log("composer.queuedCancelled", {
+        threadId: activeThreadId,
+        messageId: target.messageId,
+      });
+      return;
     }
     if (!key.ctrl && key.name === "v" && showFullDiffView && focusArea === "diff") {
       setDiffView((current) => (current === "unified" ? "split" : "unified"));
@@ -10262,6 +10311,45 @@ export function App({
       if (!trimmed && pendingAttachments.length === 0) {
         return;
       }
+      if (activeThread && activeThreadIsRunning) {
+        const queuedMessage = createQueuedMessage({
+          threadId: activeThread.id,
+          messageId: newMessageId(),
+          text: trimmed,
+          mentions: composerMentions.map(cloneComposerMention),
+          attachments: pendingAttachments,
+          createdAt: nowIso(),
+          dispatch: {
+            provider: draftProvider,
+            model: draftModel,
+            interactionMode: draftInteractionMode,
+            runtimeMode: draftRuntimeMode,
+            assistantDeliveryMode: assistantStreamingEnabled ? "streaming" : "buffered",
+          },
+        });
+        setQueuedMessages((current) => [...current, queuedMessage]);
+        setSelectedProjectId(projectId);
+        setSelectedThreadId(activeThread.id);
+        resetComposerTextarea("");
+        setComposerMentions([]);
+        setComposerAttachments([]);
+        const activeDraftKey = activeThreadId ?? activeThread.id;
+        setComposerDraftsByThreadId((current) => {
+          if (!current[activeDraftKey]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[activeDraftKey];
+          return next;
+        });
+        setStatus("Message queued");
+        logger.log("composer.queued", {
+          threadId: activeThread.id,
+          messageId: queuedMessage.messageId,
+          length: trimmed.length,
+        });
+        return;
+      }
       const submissionAttachments = pendingAttachments.map((attachment) => ({
         type: "image" as const,
         name: attachment.name,
@@ -10406,10 +10494,145 @@ export function App({
       });
       setStatus("Prompt sent");
       logger.log("composer.sent", { threadId, length: trimmed.length });
+      scrollTimelineToBottom();
     } finally {
       sendInFlightRef.current = false;
     }
   }
+
+  // Pump the queue: when the thread settles with queued messages left, mark
+  // the head dispatching and dispatch it. The dispatching barrier holds
+  // through the full turn lifecycle: an entry stays dispatching until the
+  // turn has settled (user message persisted AND the provider turn is no
+  // longer running), so a message that lands before the provider starts
+  // still blocks the next dispatch. Failures requeue with exponential
+  // backoff plus a wakeup timer at the deadline - the prompt is never
+  // deleted. A dispatch stuck far longer than any turn could take (valve
+  // measured from dispatch start) is requeued as lost instead of blocking
+  // the queue forever.
+  const queuedHeadPumpRef = useRef<string | null>(null);
+  const queuedSendAttemptsRef = useRef<Record<string, number>>({});
+  const queuedSendNextRetryAtRef = useRef<Record<string, number>>({});
+  const queuedBackoffWakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const threadId = activeThreadId;
+    if (!threadId) {
+      return;
+    }
+    const decision = resolveQueuePumpDecision(
+      threadId,
+      queuedMessages,
+      activeThreadIsRunning,
+      queuedSendNextRetryAtRef.current,
+      Date.now(),
+    );
+    if (decision.action === "block-backoff") {
+      queuedHeadPumpRef.current = null;
+      // Schedule a pump pass at the deadline so the retry is not stranded
+      // waiting for an unrelated state change to re-run this effect.
+      const retryInMs = Math.max(decision.retryInMs, 0);
+      if (queuedBackoffWakeTimerRef.current !== null) {
+        clearTimeout(queuedBackoffWakeTimerRef.current);
+      }
+      queuedBackoffWakeTimerRef.current = setTimeout(() => {
+        queuedBackoffWakeTimerRef.current = null;
+        setQueuedMessages((current) => [...current]);
+      }, retryInMs + 1);
+      return () => {
+        if (queuedBackoffWakeTimerRef.current !== null) {
+          clearTimeout(queuedBackoffWakeTimerRef.current);
+          queuedBackoffWakeTimerRef.current = null;
+        }
+      };
+    }
+    // A backoff timer armed by a previous pass is stale once the pump can act.
+    if (queuedBackoffWakeTimerRef.current !== null) {
+      clearTimeout(queuedBackoffWakeTimerRef.current);
+      queuedBackoffWakeTimerRef.current = null;
+    }
+    if (decision.action !== "dispatch") {
+      queuedHeadPumpRef.current = null;
+      return;
+    }
+    const head = decision.head;
+    if (queuedHeadPumpRef.current === head.messageId) {
+      return;
+    }
+    queuedHeadPumpRef.current = head.messageId;
+    setQueuedMessages((current) => markQueuedHeadDispatching(current, head.messageId));
+    setPendingSends((current) => [
+      ...current,
+      {
+        threadId,
+        messageId: head.messageId,
+        text: head.text,
+        mentions: [...head.mentions] as PendingSendPreview["mentions"],
+        attachments: [...head.attachments] as PendingSendPreview["attachments"],
+        createdAt: head.createdAt,
+        visibleUntil: Date.now() + SEND_PLACEHOLDER_MIN_DURATION_MS,
+      },
+    ]);
+    const dispatchPromise = dispatch({
+      type: "thread.turn.start",
+      commandId: newCommandId(),
+      threadId: threadId as never,
+      message: {
+        messageId: head.messageId,
+        role: "user",
+        text: head.text,
+        attachments: head.attachments,
+      },
+      ...(head.dispatch.provider !== undefined ? { provider: head.dispatch.provider } : {}),
+      ...(head.dispatch.model !== undefined ? { model: head.dispatch.model } : {}),
+      ...(head.dispatch.interactionMode !== undefined
+        ? { interactionMode: head.dispatch.interactionMode }
+        : {}),
+      ...(head.dispatch.runtimeMode !== undefined
+        ? { runtimeMode: head.dispatch.runtimeMode }
+        : {}),
+      assistantDeliveryMode: head.dispatch.assistantDeliveryMode ?? "buffered",
+      createdAt: head.createdAt,
+    } as never);
+    dispatchPromise
+      .then(() => {
+        // The command is accepted; the entry stays dispatching as the
+        // two-starts barrier until the turn's user message persists in the
+        // read model, which the pruning interval below turns into removal.
+        queuedHeadPumpRef.current = null;
+        delete queuedSendAttemptsRef.current[head.messageId];
+        delete queuedSendNextRetryAtRef.current[head.messageId];
+      })
+      .catch((error: unknown) => {
+        queuedHeadPumpRef.current = null;
+        const attempts = (queuedSendAttemptsRef.current[head.messageId] ?? 0) + 1;
+        queuedSendAttemptsRef.current = {
+          ...queuedSendAttemptsRef.current,
+          [head.messageId]: attempts,
+        };
+        // Exponential backoff between retries; the prompt is never deleted.
+        const backoff = queuedSendRetryBackoffMs(attempts);
+        queuedSendNextRetryAtRef.current = {
+          ...queuedSendNextRetryAtRef.current,
+          [head.messageId]: Date.now() + backoff,
+        };
+        setQueuedMessages((current) => requeueDispatchingHead(current, head.messageId));
+        setStatus(
+          attempts >= QUEUED_SEND_MAX_ATTEMPTS
+            ? "Queued send keeps failing; retrying with backoff"
+            : "Queued message failed to send",
+        );
+        logger.log("composer.queuedSendFailed", {
+          threadId,
+          messageId: head.messageId,
+          attempts,
+          backoffMs: backoff,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    logger.log("composer.queuedDispatched", { threadId, messageId: head.messageId });
+    scrollTimelineToBottom();
+    // eslint-disable-next-line eslint-plugin-react-hooks(exhaustive-deps) -- dispatch/logger are stable component scope; ref guard prevents re-pump
+  }, [activeThreadId, activeThreadIsRunning, queuedMessages, scrollTimelineToBottom]);
 
   async function interruptActiveTurn() {
     if (!activeThread || !activeThreadIsRunning || interruptInFlightRef.current) {
@@ -10458,16 +10681,24 @@ export function App({
 
   function focusModelProvider(nextInstanceId: ProviderInstanceId, openSubmenu: boolean = true) {
     const nextOptions = providerModelOptionsByInstance.get(nextInstanceId) ?? [];
+    const nextCurrentOptions = nextOptions.filter((option) => !option.isLegacy);
+    const nextLegacyOptions = nextOptions.filter((option) => option.isLegacy);
+    const selectedCurrentIndex =
+      nextInstanceId === draftProviderInstanceId
+        ? nextCurrentOptions.findIndex((option) => option.slug === draftModel)
+        : -1;
+    const selectedLegacyIndex =
+      nextInstanceId === draftProviderInstanceId
+        ? nextLegacyOptions.findIndex((option) => option.slug === draftModel)
+        : -1;
     setModelSearchQuery("");
     setModelMenuInstanceId(nextInstanceId);
     setModelSubmenuOpen(openSubmenu);
+    setLegacyModelsExpanded(selectedLegacyIndex >= 0);
     setModelMenuIndex(
-      Math.max(
-        nextInstanceId === draftProviderInstanceId
-          ? nextOptions.findIndex((option) => option.slug === draftModel)
-          : 0,
-        0,
-      ),
+      selectedLegacyIndex >= 0
+        ? nextCurrentOptions.length + 1 + selectedLegacyIndex
+        : Math.max(selectedCurrentIndex, 0),
     );
   }
 
@@ -11681,8 +11912,14 @@ export function App({
 
   const modelVisibleOptionCount = isModelSearchActive
     ? visibleModelSearchResults.length
-    : modelOptions.length;
+    : modelMenuRows.length;
   const modelMenuHeight = Math.min(Math.max(modelVisibleOptionCount, 1), 8);
+  const visibleModelSearchWindow = menuWindow(
+    visibleModelSearchResults,
+    modelMenuIndex,
+    modelMenuHeight,
+  );
+  const visibleModelMenuWindow = menuWindow(modelMenuRows, modelMenuIndex, modelMenuHeight);
   const modelProvidersHeight =
     2 +
     modelMenuEntries.length +
@@ -12506,6 +12743,17 @@ export function App({
               minHeight: 0,
             }}
           >
+            {connectionState === "reconnecting" || connectionState === "closed" ? (
+              <text
+                content="Reconnecting to server... (Ctrl+R to stop)"
+                style={{ fg: PALETTE.warning }}
+              />
+            ) : connectionState === "suspended" ? (
+              <text
+                content="Disconnected - press Ctrl+R to reconnect"
+                style={{ fg: PALETTE.composerStop }}
+              />
+            ) : null}
             {mainView === "thread" && selectionCopyToast ? (
               <SelectionCopyToast message={selectionCopyToast} />
             ) : null}
@@ -12942,14 +13190,41 @@ export function App({
                                   onPress={resetProviderModelPreferences}
                                 />
                               ) : null}
+                              <box
+                                style={{
+                                  backgroundColor: PALETTE.input,
+                                  paddingLeft: 1,
+                                  paddingRight: 1,
+                                  height: 3,
+                                  justifyContent: "center",
+                                  flexGrow: 1,
+                                  flexShrink: 1,
+                                }}
+                              >
+                                <input
+                                  value={modelPreferencesQuery}
+                                  onInput={setModelPreferencesQuery}
+                                  placeholder="Search models..."
+                                  cursorColor={PALETTE.cursor}
+                                  style={{
+                                    backgroundColor: PALETTE.input,
+                                    focusedBackgroundColor: PALETTE.input,
+                                    textColor: PALETTE.text,
+                                    focusedTextColor: PALETTE.text,
+                                    placeholderColor: PALETTE.subtle,
+                                  }}
+                                />
+                              </box>
                             </box>
-                            {visibleModelPreferenceRows.map((model, index) => {
+                            {visibleModelPreferenceRows.map((model) => {
                               const isFavorite = selectedModelPreferencesFavoriteModels.has(
                                 model.slug,
                               );
                               const isHidden =
                                 !model.isCustom &&
                                 selectedModelPreferencesHiddenModels.has(model.slug);
+                              // Neighbours come from full list; rows may be filtered.
+                              const index = modelPreferenceIndexBySlug.get(model.slug)!;
                               const previousModel = selectedModelPreferencesOptions[index - 1];
                               const nextModel = selectedModelPreferencesOptions[index + 1];
                               const canMoveUp =
@@ -13031,7 +13306,12 @@ export function App({
                                 </box>
                               );
                             })}
-                            {selectedModelPreferencesOptions.length > 8 ? (
+                            {isModelPreferencesQueryActive &&
+                            filteredModelPreferenceOptions.length === 0 ? (
+                              <text content="No models match." style={{ fg: PALETTE.subtle }} />
+                            ) : null}
+                            {!isModelPreferencesQueryActive &&
+                            selectedModelPreferencesOptions.length > 8 ? (
                               <ToolbarButton
                                 label={showAllModelPreferenceRows ? "Show less" : "Show more"}
                                 onPress={() => setShowAllModelPreferenceRows((current) => !current)}
@@ -14421,10 +14701,13 @@ export function App({
                                       <text
                                         content="●"
                                         style={{
-                                          fg: sourceControlStatusColor({
-                                            status: item.status,
-                                            implemented: item.implemented,
-                                          }),
+                                          fg: sourceControlStatusColor(
+                                            {
+                                              status: item.status,
+                                              implemented: item.implemented,
+                                            },
+                                            PALETTE,
+                                          ),
                                           marginRight: 1,
                                         }}
                                       />
@@ -14545,10 +14828,13 @@ export function App({
                                       <text
                                         content="●"
                                         style={{
-                                          fg: sourceControlStatusColor({
-                                            status: item.status,
-                                            auth: item.auth,
-                                          }),
+                                          fg: sourceControlStatusColor(
+                                            {
+                                              status: item.status,
+                                              auth: item.auth,
+                                            },
+                                            PALETTE,
+                                          ),
                                           marginRight: 1,
                                         }}
                                       />
@@ -14965,12 +15251,115 @@ export function App({
                               />
                             ))}
                           </SettingsSection>
-                          <SettingsSection title="Remote environments">
+                          <SettingsSection title="Tailnet">
                             <SettingsRow
-                              title="Environment pairing"
-                              description="Use attach-only mode to connect this TUI to another reachable backend."
-                              status="Set T1CODE_TUI_ATTACH_ONLY=1 with T1CODE_HOST, T1CODE_PORT, and T1CODE_AUTH_TOKEN."
+                              title="Find Termweave on your tailnet"
+                              description="Scans Tailscale peers and saves a backend as a connection, no host or port to type."
+                              status={tailnetScanSummary(tailnetScan)}
+                              control={
+                                <ToolbarButton
+                                  label={tailnetScan.status === "scanning" ? "Scanning..." : "Scan"}
+                                  disabled={tailnetScan.status === "scanning"}
+                                  onPress={() => {
+                                    void scanTailnet();
+                                  }}
+                                />
+                              }
                             />
+                            {tailnetScan.status === "done"
+                              ? tailnetScan.backends.map((backend) => {
+                                  const profile = profileFromTailnetBackend(backend);
+                                  const saved = connectionProfiles.some(
+                                    (existing) => existing.id === profile.id,
+                                  );
+                                  return (
+                                    <SettingsRow
+                                      key={backend.dnsName}
+                                      title={backend.label}
+                                      description={`wss://${backend.dnsName}`}
+                                      status={
+                                        saved
+                                          ? "Saved."
+                                          : "Needs TERMWEAVE_AUTH_TOKEN set to the server's token at launch."
+                                      }
+                                      control={
+                                        <ToolbarButton
+                                          label={saved ? "Saved" : "Save"}
+                                          disabled={saved}
+                                          onPress={() => {
+                                            setConnectionProfiles((current) =>
+                                              upsertConnectionProfile(current, profile),
+                                            );
+                                          }}
+                                        />
+                                      }
+                                    />
+                                  );
+                                })
+                              : null}
+                          </SettingsSection>
+                          <SettingsSection title="Saved connections">
+                            {unsavedCurrentConnection ? (
+                              <SettingsRow
+                                title="Current connection"
+                                description={describeConnectionProfile(unsavedCurrentConnection)}
+                                status="Not saved."
+                                control={
+                                  <ToolbarButton
+                                    label="Save"
+                                    onPress={() => {
+                                      setConnectionProfiles((current) =>
+                                        upsertConnectionProfile(current, unsavedCurrentConnection),
+                                      );
+                                    }}
+                                  />
+                                }
+                              />
+                            ) : null}
+                            {connectionProfiles.map((profile) => (
+                              <SettingsRow
+                                key={profile.id}
+                                title={profile.label}
+                                description={describeConnectionProfile(profile)}
+                                status={
+                                  profile.id === defaultConnectionProfileId
+                                    ? "Opens on launch."
+                                    : `Open with: termweave attach ${profile.label}`
+                                }
+                                control={
+                                  <box style={{ flexDirection: "row", gap: 1 }}>
+                                    {profile.id === defaultConnectionProfileId ? (
+                                      <ToolbarButton
+                                        label="Clear default"
+                                        onPress={() => {
+                                          setDefaultConnectionProfileId(null);
+                                        }}
+                                      />
+                                    ) : (
+                                      <ToolbarButton
+                                        label="Open on launch"
+                                        onPress={() => {
+                                          setDefaultConnectionProfileId(profile.id);
+                                        }}
+                                      />
+                                    )}
+                                    <ToolbarButton
+                                      label="Remove"
+                                      onPress={() => {
+                                        removeSavedConnection(profile.id);
+                                      }}
+                                    />
+                                  </box>
+                                }
+                              />
+                            ))}
+                            {connectionProfiles.length === 0 && !unsavedCurrentConnection ? (
+                              <SettingsRow
+                                title="No saved connections"
+                                description="Attach once with `termweave attach ssh user@host` or `termweave attach direct wss://host`, then save it here."
+                                status="Run `termweave local` to skip the launch default."
+                              />
+                            ) : null}
                           </SettingsSection>
                         </>
                       ) : null}
@@ -15522,7 +15911,10 @@ export function App({
                                 alignSelf: "flex-end",
                               }}
                             >
-                              <MessageMentions mentions={entry.mentions} align="flex-end" />
+                              <MessageMentions
+                                mentions={entry.mentions as readonly ComposerMention[]}
+                                align="flex-end"
+                              />
                               <MessageAttachments
                                 attachments={entry.attachments}
                                 align="flex-end"
@@ -15551,6 +15943,73 @@ export function App({
                       );
                     })(),
                   )}
+
+                  {activeQueuedMessages.map((entry, index) => {
+                    const queuedBody = stripMentionTokensFromText(entry.text).body;
+                    const isDispatching = entry.status === "dispatching";
+                    const queueLabel = isDispatching
+                      ? "Sending"
+                      : index === 0
+                        ? "Queued - next"
+                        : `Queued - position ${index + 1}`;
+                    return (
+                      <box
+                        key={`queued-message-${entry.messageId}`}
+                        style={{
+                          width: "100%",
+                          marginTop: 1,
+                          marginBottom: 1,
+                          flexDirection: "column",
+                          alignItems: "flex-end",
+                        }}
+                      >
+                        <box
+                          style={{
+                            width: userMessageBubbleWidth,
+                            flexDirection: "column",
+                            flexShrink: 1,
+                            alignItems: "flex-end",
+                          }}
+                        >
+                          <text content={queueLabel} style={{ fg: PALETTE.subtle }} />
+                          <box
+                            style={{
+                              width: "auto",
+                              maxWidth: "100%",
+                              minWidth: 0,
+                              paddingLeft: 1,
+                              paddingRight: 1,
+                              flexDirection: "column",
+                              flexShrink: 1,
+                              alignSelf: "flex-end",
+                            }}
+                          >
+                            <MessageMentions
+                              mentions={entry.mentions as readonly ComposerMention[]}
+                              align="flex-end"
+                            />
+                            {queuedBody.length > 0 ? (
+                              <MessageMarkdown
+                                content={queuedBody}
+                                fillWidth={false}
+                                onCopyCodeBlock={(value) => {
+                                  void copyToClipboard(value, "Code copied");
+                                }}
+                              />
+                            ) : null}
+                          </box>
+                          <text
+                            content={
+                              isDispatching
+                                ? "Sending queued message..."
+                                : "Alt+↑/↓ move · Ctrl+D cancel"
+                            }
+                            style={{ fg: PALETTE.subtle }}
+                          />
+                        </box>
+                      </box>
+                    );
+                  })}
 
                   {showAssistantTyping ? (
                     <box
@@ -16754,9 +17213,9 @@ export function App({
               />
               {isModelSearchActive ? (
                 visibleModelSearchResults.length > 0 ? (
-                  visibleModelSearchResults
-                    .slice(0, modelMenuHeight)
-                    .map((item, index) => (
+                  visibleModelSearchWindow.rows.map((item, localIndex) => {
+                    const index = visibleModelSearchWindow.startIndex + localIndex;
+                    return (
                       <PopupRow
                         key={`model-search:${item.instanceId}:${item.slug}`}
                         icon={
@@ -16770,14 +17229,32 @@ export function App({
                         onHover={() => setModelMenuIndex(index)}
                         onPress={() => applyDraftProviderModel(item.instanceId, item.slug)}
                       />
-                    ))
+                    );
+                  })
                 ) : (
                   <text content="No matching models." style={{ fg: PALETTE.muted }} />
                 )
               ) : (
-                modelOptions
-                  .slice(0, modelMenuHeight)
-                  .map((option, index) => (
+                visibleModelMenuWindow.rows.map((row, localIndex) => {
+                  const index = visibleModelMenuWindow.startIndex + localIndex;
+                  if (row.kind === "legacyHeader") {
+                    return (
+                      <PopupRow
+                        key={`${modelMenuInstanceId}:legacy-header`}
+                        icon={legacyModelsExpanded ? "⌄" : "›"}
+                        label="Legacy models"
+                        trailingLabel={String(legacyModelOptions.length)}
+                        active={index === modelMenuIndex}
+                        onHover={() => setModelMenuIndex(index)}
+                        onPress={() => {
+                          setModelMenuIndex(index);
+                          setLegacyModelsExpanded((current) => !current);
+                        }}
+                      />
+                    );
+                  }
+                  const option = row.option;
+                  return (
                     <PopupRow
                       key={`${modelMenuInstanceId}:${option.slug}`}
                       icon={
@@ -16791,7 +17268,8 @@ export function App({
                       onHover={() => setModelMenuIndex(index)}
                       onPress={() => applyDraftProviderModel(modelMenuInstanceId, option.slug)}
                     />
-                  ))
+                  );
+                })
               )}
             </box>
           ) : null}

@@ -187,12 +187,12 @@ describe("OrchestrationEngine", () => {
     await system.run(
       Effect.gen(function* () {
         const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        const domainEvents = yield* engine.subscribeDomainEvents;
         yield* Effect.forkScoped(
-          Stream.take(engine.streamDomainEvents, 2).pipe(
+          Stream.take(Stream.fromSubscription(domainEvents), 2).pipe(
             Stream.runForEach((event) => Queue.offer(eventQueue, event).pipe(Effect.asVoid)),
           ),
         );
-        yield* Effect.sleep("10 millis");
         yield* engine.dispatch({
           type: "thread.create",
           commandId: CommandId.make("cmd-stream-thread-create"),
