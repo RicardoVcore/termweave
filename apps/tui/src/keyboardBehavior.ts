@@ -134,3 +134,20 @@ export function shouldClearComposerOnCtrlC(input: {
 }): boolean {
   return isCtrlC(input) && input.composerFocused && input.hasComposerText;
 }
+
+export type InterruptAction = "confirmQuit" | "clearComposer" | "openQuitDialog";
+
+// Decides what one Ctrl+C press does, independent of how the press was delivered.
+export function resolveInterruptAction(input: {
+  readonly quitDialogActive: boolean;
+  readonly composerFocused: boolean;
+  readonly hasComposerText: boolean;
+}): InterruptAction {
+  if (input.quitDialogActive) {
+    return "confirmQuit";
+  }
+  if (input.composerFocused && input.hasComposerText) {
+    return "clearComposer";
+  }
+  return "openQuitDialog";
+}

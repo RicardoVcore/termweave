@@ -201,7 +201,12 @@ import {
 } from "./composerSubmit";
 import { saveClipboardImageToFile } from "./clipboardImage";
 import { copyTextToClipboard } from "./clipboardText";
-import { KEYBINDING_GUIDE_SECTIONS, isCtrlC, shouldClearComposerOnCtrlC } from "./keyboardBehavior";
+import {
+  KEYBINDING_GUIDE_SECTIONS,
+  isCtrlC,
+  resolveInterruptAction,
+  shouldClearComposerOnCtrlC,
+} from "./keyboardBehavior";
 import {
   modelPickerJumpIndexFromCommand,
   resolveTuiShortcutCommand,
@@ -6736,29 +6741,34 @@ export function App({
     return focusArea === "composer" && !imagePasteInFlight && !activePendingApproval;
   }
 
+  // Tracks the last Ctrl+C token handled so unrelated state changes do not re-trigger it.
+  const lastHandledInterruptTokenRef = useRef(interruptRequestToken);
+
   useEffect(() => {
-    if (interruptRequestToken > 0) {
-      if (confirmDialog?.confirmLabel === "Quit") {
-        const action = confirmDialog.onConfirm;
-        setConfirmDialog(null);
-        void action();
-        return;
-      }
-      const composerValue = composerRef.current?.plainText ?? composerValueRef.current ?? composer;
-      if (
-        shouldClearComposerOnCtrlC({
-          keyName: "c",
-          ctrl: true,
-          composerFocused:
-            focusArea === "composer" && !imagePasteInFlight && !activePendingApproval,
-          hasComposerText: composerValue.length > 0,
-        })
-      ) {
-        clearComposerDraft();
-        return;
-      }
-      requestAppExit();
+    if (interruptRequestToken === lastHandledInterruptTokenRef.current) {
+      return;
     }
+    lastHandledInterruptTokenRef.current = interruptRequestToken;
+    const action = resolveInterruptAction({
+      quitDialogActive: confirmDialog?.confirmLabel === "Quit",
+      composerFocused: focusArea === "composer" && !imagePasteInFlight && !activePendingApproval,
+      hasComposerText:
+        (composerRef.current?.plainText ?? composerValueRef.current ?? composer).length > 0,
+    });
+    if (action === "confirmQuit") {
+      const onConfirm = confirmDialog?.onConfirm;
+      if (!onConfirm) {
+        return;
+      }
+      setConfirmDialog(null);
+      void onConfirm();
+      return;
+    }
+    if (action === "clearComposer") {
+      clearComposerDraft();
+      return;
+    }
+    requestAppExit();
   }, [
     activePendingApproval,
     clearComposerDraft,
