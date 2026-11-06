@@ -4127,8 +4127,10 @@ export function App({
   const [showAllModelPreferenceRows, setShowAllModelPreferenceRows] = useState(false);
   const [modelPreferencesQuery, setModelPreferencesQuery] = useState("");
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const providerRefreshInFlightRef = useRef(false);
   const [updatingProviderInstanceId, setUpdatingProviderInstanceId] =
     useState<ProviderInstanceId | null>(null);
+  const providerUpdateInFlightRef = useRef<ProviderInstanceId | null>(null);
   const [openInstallProviders, setOpenInstallProviders] = useState<
     Record<InstallProviderKey, boolean>
   >({
@@ -4239,9 +4241,12 @@ export function App({
     [api, logger],
   );
 
+  // Guard on refs, not state: two calls in one tick would both read the
+  // stale closure value and run concurrently. State stays for rendering only.
   const refreshProviderSnapshots = useCallback(
     async (instanceId?: ProviderInstanceId) => {
-      if (!api || isRefreshingProviders) return;
+      if (!api || providerRefreshInFlightRef.current) return;
+      providerRefreshInFlightRef.current = true;
       setIsRefreshingProviders(true);
       try {
         const payload = await api.server.refreshProviders(instanceId ? { instanceId } : undefined);
@@ -4260,15 +4265,17 @@ export function App({
         });
         setStatus("Provider refresh failed");
       } finally {
+        providerRefreshInFlightRef.current = false;
         setIsRefreshingProviders(false);
       }
     },
-    [api, isRefreshingProviders, logger],
+    [api, logger],
   );
 
   const runProviderUpdate = useCallback(
     async (provider: ServerProvider) => {
-      if (!api || updatingProviderInstanceId) return;
+      if (!api || providerUpdateInFlightRef.current !== null) return;
+      providerUpdateInFlightRef.current = provider.instanceId;
       setUpdatingProviderInstanceId(provider.instanceId);
       try {
         const payload = await api.server.updateProvider({
@@ -4295,10 +4302,11 @@ export function App({
         });
         setStatus("Provider update failed");
       } finally {
+        providerUpdateInFlightRef.current = null;
         setUpdatingProviderInstanceId(null);
       }
     },
-    [api, logger, updatingProviderInstanceId],
+    [api, logger],
   );
   const refreshProcessDiagnostics = useCallback(async () => {
     if (!api || isLoadingProcessDiagnostics) return;
@@ -4732,36 +4740,8 @@ export function App({
           });
         }
         let connectionSuspended = false;
-        const transport = new WsTransport({
-          url: server.wsUrl,
-          onWarning: (message, details) => logger.log("ws.warning", { message, details }),
-          onStateChange: (state) => {
-            if (disposed) return;
-            setConnectionState(state);
-            // While the user has paused reconnection, stop the snapshot-retry
-            // churn - every attempt just queues a request that times out.
-            connectionSuspended = state === "suspended";
-            if (connectionSuspended && refreshTimer !== null) {
-              clearTimeout(refreshTimer);
-              refreshTimer = null;
-            }
-          },
-          // Fired only on a re-open (auto or manual resume), never the first
-          // connect. Pull a full snapshot plus server config/settings to
-          // reconcile anything missed while disconnected.
-          onReconnect: () => {
-            if (disposed) return;
-            void refresh("reconnect");
-            void loadServerConfig();
-            void loadServerSettings();
-          },
-        });
-        transportRef.current = transport;
-        setServerWsUrl(server.wsUrl);
-        setServerHttpOrigin(resolveHttpOriginFromWsUrl(server.wsUrl));
-        const nativeBridge = createTransportNativeApi({ transport });
-        const nativeApi = nativeBridge.api;
-        logger.log("ws.connecting", { wsUrl: server.wsUrl });
+        // Declared before the transport so the onStateChange/onReconnect
+        // closures below cannot touch these bindings before initialization.
         let refreshTimer: ReturnType<typeof setTimeout> | null = null;
         let refreshAttempts = 0;
 
@@ -4804,6 +4784,37 @@ export function App({
             scheduleRefreshRetry(reason);
           }
         });
+
+        const transport = new WsTransport({
+          url: server.wsUrl,
+          onWarning: (message, details) => logger.log("ws.warning", { message, details }),
+          onStateChange: (state) => {
+            if (disposed) return;
+            setConnectionState(state);
+            // While the user has paused reconnection, stop the snapshot-retry
+            // churn - every attempt just queues a request that times out.
+            connectionSuspended = state === "suspended";
+            if (connectionSuspended && refreshTimer !== null) {
+              clearTimeout(refreshTimer);
+              refreshTimer = null;
+            }
+          },
+          // Fired only on a re-open (auto or manual resume), never the first
+          // connect. Pull a full snapshot plus server config/settings to
+          // reconcile anything missed while disconnected.
+          onReconnect: () => {
+            if (disposed) return;
+            void refresh("reconnect");
+            void loadServerConfig();
+            void loadServerSettings();
+          },
+        });
+        transportRef.current = transport;
+        setServerWsUrl(server.wsUrl);
+        setServerHttpOrigin(resolveHttpOriginFromWsUrl(server.wsUrl));
+        const nativeBridge = createTransportNativeApi({ transport });
+        const nativeApi = nativeBridge.api;
+        logger.log("ws.connecting", { wsUrl: server.wsUrl });
 
         setApi(nativeApi);
         const loadServerConfig = () =>
@@ -6393,8 +6404,17 @@ export function App({
     return () => clearInterval(timer);
   }, [hasPulsingThreadStatus]);
 
+  // Sync the draft provider/model/modes from the active thread's persisted
+  // settings. Snapshot refreshes hand activeThread a new object identity
+  // without changing these fields, so skip when the synced values are
+  // unchanged; otherwise a model the user just picked in the picker would be
+  // reset on every background refresh.
+  const draftThreadSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeThread) return;
+    if (!activeThread) {
+      draftThreadSyncKeyRef.current = null;
+      return;
+    }
     const nextProvider = activeThread.session?.providerName;
     const nextProviderInstanceId =
       activeThread.session?.providerInstanceId ??
@@ -6403,6 +6423,16 @@ export function App({
       nextProviderInstanceId !== undefined
         ? modelMenuEntryByInstanceId.get(nextProviderInstanceId)
         : undefined;
+    const syncKey = [
+      activeThread.id,
+      nextProviderInstanceId ?? "",
+      activeThread.model,
+      activeThread.runtimeMode,
+      activeThread.interactionMode,
+      sessionInstance !== undefined ? "resolved" : "unresolved",
+    ].join("|");
+    if (draftThreadSyncKeyRef.current === syncKey) return;
+    draftThreadSyncKeyRef.current = syncKey;
     const resolvedProvider =
       sessionInstance?.provider ??
       (nextProvider === "codex" || nextProvider === "claudeAgent" ? nextProvider : draftProvider);
