@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { KEYBINDING_GUIDE_SECTIONS, isCtrlC, shouldClearComposerOnCtrlC } from "./keyboardBehavior";
+import {
+  KEYBINDING_GUIDE_SECTIONS,
+  isCtrlC,
+  resolveInterruptAction,
+  shouldClearComposerOnCtrlC,
+} from "./keyboardBehavior";
 
 describe("keyboardBehavior", () => {
   it("detects ctrl-c", () => {
@@ -43,6 +48,46 @@ describe("keyboardBehavior", () => {
         hasComposerText: false,
       }),
     ).toBe(false);
+  });
+
+  it("confirms quit when the quit dialog is open", () => {
+    expect(
+      resolveInterruptAction({
+        quitDialogActive: true,
+        composerFocused: true,
+        hasComposerText: true,
+      }),
+    ).toBe("confirmQuit");
+  });
+
+  it("clears the composer when it is focused with text", () => {
+    expect(
+      resolveInterruptAction({
+        quitDialogActive: false,
+        composerFocused: true,
+        hasComposerText: true,
+      }),
+    ).toBe("clearComposer");
+  });
+
+  it("opens the quit dialog when the composer is not focused", () => {
+    expect(
+      resolveInterruptAction({
+        quitDialogActive: false,
+        composerFocused: false,
+        hasComposerText: true,
+      }),
+    ).toBe("openQuitDialog");
+  });
+
+  it("opens the quit dialog when the draft is empty", () => {
+    expect(
+      resolveInterruptAction({
+        quitDialogActive: false,
+        composerFocused: true,
+        hasComposerText: false,
+      }),
+    ).toBe("openQuitDialog");
   });
 
   it("documents the updated quit flow", () => {
