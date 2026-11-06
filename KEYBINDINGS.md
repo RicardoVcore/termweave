@@ -2,7 +2,7 @@
 
 Termweave reads keybindings from:
 
-- `~/.t3/keybindings.json`
+- `~/.termweave/userdata/keybindings.json`
 
 The file must be a JSON array of rules:
 
