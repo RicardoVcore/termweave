@@ -159,7 +159,15 @@ import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
 } from "@termweave/shared/projectScripts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useKeyboard } from "@opentui/react";
 import packageJson from "../package.json";
 import { CODE_BLOCK_TREE_SITTER_PARSERS } from "./codeBlockParsers";
@@ -2532,6 +2540,7 @@ const PLAN_MODE_SUBMIT_ICON = "󰄬";
 const COMPOSER_TEXTAREA_MAX_HEIGHT = 8;
 const COMPOSER_PATH_SUGGESTION_MAX_ITEMS = 5;
 const SEND_ANIMATION_INTERVAL_MS = 90;
+const PENDING_SENDS_PRUNE_INTERVAL_MS = 500;
 const SEND_PLACEHOLDER_MIN_DURATION_MS = 650;
 const SIDEBAR_STATUS_PULSE_INTERVAL_MS = 260;
 const SIDEBAR_THREAD_TITLE_WIDTH =
@@ -2818,6 +2827,57 @@ function WindowDots() {
   );
 }
 
+// Shared tick source for sidebar status dot pulse. One interval regardless of
+// how many dots are visible, so pulsing rows do not each start their own timer.
+const sidebarPulseTickStore = (() => {
+  let tick = 0;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const listeners = new Set<() => void>();
+
+  return {
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener);
+      if (timer === null) {
+        timer = setInterval(() => {
+          tick = (tick + 1) % Number.MAX_SAFE_INTEGER;
+          for (const listener of listeners) {
+            listener();
+          }
+        }, SIDEBAR_STATUS_PULSE_INTERVAL_MS);
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && timer !== null) {
+          clearInterval(timer);
+          timer = null;
+        }
+      };
+    },
+    getSnapshot(): number {
+      return tick;
+    },
+  };
+})();
+
+const noopSubscribe = () => () => {};
+
+function useSidebarPulseTick(enabled: boolean): number {
+  // Static dots skip the subscription so the shared tick does not re-render them.
+  return useSyncExternalStore(
+    enabled ? sidebarPulseTickStore.subscribe : noopSubscribe,
+    sidebarPulseTickStore.getSnapshot,
+  );
+}
+
+// Leaf: renders the sidebar status dot and reads the shared pulse tick so App
+// does not re-render on every pulse step. Not memoized: `status` is a fresh
+// object on every parent render, so memo would never skip anything.
+function SidebarStatusDot(props: { status: ThreadSidebarStatus; marginRight: number }) {
+  const tick = useSidebarPulseTick(props.status.pulse);
+  const color = resolveThreadStatusDotColor(props.status, tick);
+  return <text content="●" style={{ fg: color, flexShrink: 0, marginRight: props.marginRight }} />;
+}
+
 function renderAnimatedSendDots(
   tick: number,
 ): Array<{ key: string; character: string; color: TuiColor }> {
@@ -2831,6 +2891,41 @@ function renderAnimatedSendDots(
         : ACTIVE_TUI_THEME.colors.sendDotIdle,
   }));
 }
+
+// Leaf: owns the typing indicator animation interval so ticking does not
+// re-render App. Memo keeps parent re-renders from re-rendering the dots.
+const AssistantTypingIndicator = memo(function AssistantTypingIndicator() {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTick((current) => current + 1);
+    }, SEND_ANIMATION_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <box
+      style={{
+        width: "100%",
+        marginBottom: 1,
+        flexDirection: "column",
+        alignItems: "flex-start",
+      }}
+    >
+      <box
+        style={{
+          width: "auto",
+          maxWidth: "88%",
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        {renderAnimatedSendDots(tick).map((dot) => (
+          <text key={dot.key} content={dot.character} style={{ fg: dot.color }} />
+        ))}
+      </box>
+    </box>
+  );
+});
 
 function SectionLabel(props: {
   label: string;
@@ -3990,8 +4085,6 @@ export function App({
   const interruptInFlightRef = useRef(false);
   const [pendingSends, setPendingSends] = useState<PendingSendPreview[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
-  const [sendAnimationTick, setSendAnimationTick] = useState(0);
-  const [sidebarPulseTick, setSidebarPulseTick] = useState(0);
   const [projectPathDraft, setProjectPathDraft] = useState("");
   const [projectPathResetKey, setProjectPathResetKey] = useState(0);
   const projectPathRef = useRef<InputRenderable | null>(null);
@@ -5087,10 +5180,6 @@ export function App({
   );
   const activeProjectId = selectedProjectId ?? sortedProjects[0]?.id;
   const activeProject = sortedProjects.find((project) => project.id === activeProjectId) ?? null;
-  const hasPulsingThreadStatus = useMemo(
-    () => allThreads.some((thread) => isThreadSessionActivelyWorking(thread.session)),
-    [allThreads],
-  );
   const threadsByProject = useMemo(() => {
     const map = new Map<string, ThreadReadModel[]>();
     for (const project of projects) {
@@ -5172,9 +5261,16 @@ export function App({
       text: line,
     }));
   }, [terminalSession?.output]);
-  const workEntries = activeThread
-    ? deriveWorkLogEntries(activeThread.activities, activeThread.latestTurn?.turnId ?? undefined)
-    : [];
+  const workEntries = useMemo(
+    () =>
+      activeThread
+        ? deriveWorkLogEntries(
+            activeThread.activities,
+            activeThread.latestTurn?.turnId ?? undefined,
+          )
+        : [],
+    [activeThread],
+  );
   const activePlan = useMemo(
     () =>
       activeThread
@@ -5223,27 +5319,32 @@ export function App({
     ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
 
-  const timelineEntries = activeThread
-    ? deriveTimelineEntries(
-        activeThread.messages as unknown as Parameters<typeof deriveTimelineEntries>[0],
-        activeThread.proposedPlans as unknown as Parameters<typeof deriveTimelineEntries>[1],
-        workEntries,
-      )
-    : [];
-  const activePendingSends = activeThreadId
-    ? pendingSends
-        .filter((entry) => {
-          if (entry.threadId !== activeThreadId) {
-            return false;
-          }
-          const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
-          if (!thread) {
-            return true;
-          }
-          return !thread.messages.some((message) => message.id === entry.messageId);
-        })
-        .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
-    : [];
+  const timelineEntries = useMemo(
+    () =>
+      activeThread
+        ? deriveTimelineEntries(
+            activeThread.messages as unknown as Parameters<typeof deriveTimelineEntries>[0],
+            activeThread.proposedPlans as unknown as Parameters<typeof deriveTimelineEntries>[1],
+            workEntries,
+          )
+        : [],
+    [activeThread, workEntries],
+  );
+  const activePendingSends = useMemo(() => {
+    if (!activeThreadId) return [];
+    return pendingSends
+      .filter((entry) => {
+        if (entry.threadId !== activeThreadId) {
+          return false;
+        }
+        const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
+        if (!thread) {
+          return true;
+        }
+        return !thread.messages.some((message) => message.id === entry.messageId);
+      })
+      .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }, [activeThreadId, allThreads, pendingSends]);
   const showAssistantTyping = activeThreadIsRunning || activePendingSends.length > 0;
   const activeQueuedMessages = activeThreadId
     ? queueMessagesForThread(queuedMessages, activeThreadId)
@@ -6046,22 +6147,21 @@ export function App({
       })),
     [sortedProjects],
   );
-  const commandPaletteThreadItems = useMemo<CommandPaletteItem[]>(
-    () =>
-      allThreads.map((thread) => {
-        const project = projects.find((entry) => entry.id === thread.projectId);
-        return {
-          id: `thread:${thread.id}`,
-          section: "Threads",
-          icon: "󰭹",
-          label: thread.title,
-          description: project?.title ?? "Thread",
-          trailingLabel: formatRelativeTime(thread.updatedAt),
-          keywords: ["thread", "conversation", project?.workspaceRoot ?? ""],
-        };
-      }),
-    [allThreads, projects],
-  );
+  const commandPaletteThreadItems = useMemo<CommandPaletteItem[]>(() => {
+    const projectsById = new Map(projects.map((project) => [project.id, project]));
+    return allThreads.map((thread) => {
+      const project = projectsById.get(thread.projectId);
+      return {
+        id: `thread:${thread.id}`,
+        section: "Threads",
+        icon: "󰭹",
+        label: thread.title,
+        description: project?.title ?? "Thread",
+        trailingLabel: formatRelativeTime(thread.updatedAt),
+        keywords: ["thread", "conversation", project?.workspaceRoot ?? ""],
+      };
+    });
+  }, [allThreads, projects]);
   const commandPaletteItems = useMemo<CommandPaletteItem[]>(
     () => [
       ...commandPaletteStaticItems,
@@ -6352,12 +6452,13 @@ export function App({
     setSelectedThreadId(undefined);
   }, [activeProjectId, draftThreadsByProjectId, selectedThreadId]);
 
+  // Prune pending send previews. The visual tick lives in
+  // AssistantTypingIndicator, so this only needs to expire entries.
   useEffect(() => {
     if (!showAssistantTyping) return;
     const timer = setInterval(() => {
-      setSendAnimationTick((current) => current + 1);
-      setPendingSends((current) =>
-        current.filter((entry) => {
+      setPendingSends((current) => {
+        const next = current.filter((entry) => {
           const thread = allThreads.find((candidate) => candidate.id === entry.threadId);
           if (!thread) return true;
           const userMessagePersisted = thread.messages.some(
@@ -6371,9 +6472,10 @@ export function App({
             return Date.parse(message.createdAt) >= Date.parse(entry.createdAt);
           });
           return !assistantReplyStarted || Date.now() < entry.visibleUntil;
-        }),
-      );
-    }, SEND_ANIMATION_INTERVAL_MS);
+        });
+        return next.length === current.length ? current : next;
+      });
+    }, PENDING_SENDS_PRUNE_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [allThreads, showAssistantTyping]);
 
@@ -6445,14 +6547,6 @@ export function App({
     const timer = setTimeout(reconcile, nextDeadline - now + 1);
     return () => clearTimeout(timer);
   }, [allThreads, queuedMessages]);
-
-  useEffect(() => {
-    if (!hasPulsingThreadStatus) return;
-    const timer = setInterval(() => {
-      setSidebarPulseTick((current) => current + 1);
-    }, SIDEBAR_STATUS_PULSE_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [hasPulsingThreadStatus]);
 
   // Sync the draft provider/model/modes from the active thread's persisted
   // settings. Snapshot refreshes hand activeThread a new object identity
@@ -7208,13 +7302,15 @@ export function App({
   ]);
 
   useEffect(() => {
+    // The poll is only useful while the thread timeline is mounted.
+    if (mainView !== "thread") return;
     const interval = setInterval(() => {
       syncTimelineScrollState();
     }, 120);
     return () => {
       clearInterval(interval);
     };
-  }, [syncTimelineScrollState]);
+  }, [mainView, syncTimelineScrollState]);
 
   async function attachClipboardImage(): Promise<void> {
     if (activePendingUserInput) {
@@ -12481,25 +12577,21 @@ export function App({
                       openProjectContextMenu(project.id, event);
                     }}
                   >
-                    <text
-                      content={
-                        !isProjectExpanded && projectStatus ? "●" : isProjectExpanded ? "▾" : "▸"
-                      }
-                      style={{
-                        fg:
-                          !isProjectExpanded && projectStatus
-                            ? resolveThreadStatusDotColor(
-                                {
-                                  label: projectStatus.label,
-                                  dotColor: resolveThreadStatusColor(projectStatus.label),
-                                  pulse: projectStatus.pulse,
-                                },
-                                sidebarPulseTick,
-                              )
-                            : PALETTE.subtle,
-                        marginRight: 1,
-                      }}
-                    />
+                    {!isProjectExpanded && projectStatus ? (
+                      <SidebarStatusDot
+                        status={{
+                          label: projectStatus.label,
+                          dotColor: resolveThreadStatusColor(projectStatus.label),
+                          pulse: projectStatus.pulse,
+                        }}
+                        marginRight={1}
+                      />
+                    ) : (
+                      <text
+                        content={isProjectExpanded ? "▾" : "▸"}
+                        style={{ fg: PALETTE.subtle, marginRight: 1 }}
+                      />
+                    )}
                     <text content="󰉋" style={{ fg: PALETTE.muted, marginRight: 1 }} />
                     <text
                       content={project.title}
@@ -12565,13 +12657,7 @@ export function App({
                                   }}
                                 >
                                   {status ? (
-                                    <text
-                                      content="●"
-                                      style={{
-                                        fg: resolveThreadStatusDotColor(status, sidebarPulseTick),
-                                        flexShrink: 0,
-                                      }}
-                                    />
+                                    <SidebarStatusDot status={status} marginRight={0} />
                                   ) : null}
                                 </box>
                                 <box
@@ -16099,30 +16185,7 @@ export function App({
                     );
                   })}
 
-                  {showAssistantTyping ? (
-                    <box
-                      key="assistant-typing"
-                      style={{
-                        width: "100%",
-                        marginBottom: 1,
-                        flexDirection: "column",
-                        alignItems: "flex-start",
-                      }}
-                    >
-                      <box
-                        style={{
-                          width: "auto",
-                          maxWidth: "88%",
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                      >
-                        {renderAnimatedSendDots(sendAnimationTick).map((dot) => (
-                          <text key={dot.key} content={dot.character} style={{ fg: dot.color }} />
-                        ))}
-                      </box>
-                    </box>
-                  ) : null}
+                  {showAssistantTyping ? <AssistantTypingIndicator /> : null}
                 </scrollbox>
 
                 {showSlashCommandMenu ? (
