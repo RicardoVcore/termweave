@@ -2538,6 +2538,7 @@ const SIDEBAR_THREAD_TITLE_WIDTH =
 const COMPOSER_PLACEHOLDER = "Ask anything or @tag files/folders";
 const POPUP_MENU_WIDTH = 32;
 const MODEL_POPUP_WIDTH = 58;
+const MODEL_MENU_MAX_ROWS = 8;
 const MODEL_POPUP_PROVIDER_COLUMN_WIDTH = 22;
 const POPUP_TRAITS_MENU_BASE_HEIGHT = 4;
 const POPUP_FALLBACK_RIGHT_OFFSET = 2;
@@ -11913,7 +11914,7 @@ export function App({
   const modelVisibleOptionCount = isModelSearchActive
     ? visibleModelSearchResults.length
     : modelMenuRows.length;
-  const modelMenuHeight = Math.min(Math.max(modelVisibleOptionCount, 1), 8);
+  const modelMenuHeight = Math.min(Math.max(modelVisibleOptionCount, 1), MODEL_MENU_MAX_ROWS);
   const visibleModelSearchWindow = menuWindow(
     visibleModelSearchResults,
     modelMenuIndex,
@@ -11926,8 +11927,11 @@ export function App({
     (COMING_SOON_MODEL_PROVIDER_OPTIONS.length > 0
       ? 1 + COMING_SOON_MODEL_PROVIDER_OPTIONS.length
       : 0);
+  // Popup is anchored by its bottom edge, so its height must not depend on the focused
+  // provider's model count: otherwise hovering shifts rows under the cursor and the hover
+  // handler ping-pongs between providers in a render loop.
   const modelPopupHeight = modelSubmenuOpen
-    ? Math.max(modelMenuHeight + 3, modelProvidersHeight) + 2
+    ? Math.max(MODEL_MENU_MAX_ROWS + 3, modelProvidersHeight) + 2
     : modelProvidersHeight + 2;
   const modelPopupWidth = modelSubmenuOpen
     ? MODEL_POPUP_WIDTH
