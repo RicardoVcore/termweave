@@ -3,7 +3,7 @@ import { createModelCapabilities } from "@termweave/shared/model";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
-import { providerModelsFromSettings } from "./providerSnapshot.ts";
+import { parseGenericCliVersion, providerModelsFromSettings } from "./providerSnapshot.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
 
@@ -43,5 +43,19 @@ describe("providerModelsFromSettings", () => {
         capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
       },
     ]);
+  });
+});
+
+describe("parseGenericCliVersion", () => {
+  it("parses a v-prefixed version", () => {
+    expect(parseGenericCliVersion("opencode v2.2.5")).toBe("2.2.5");
+  });
+
+  it("parses a plain version", () => {
+    expect(parseGenericCliVersion("1.14.19")).toBe("1.14.19");
+  });
+
+  it("returns null when no version is present", () => {
+    expect(parseGenericCliVersion("no version")).toBeNull();
   });
 });

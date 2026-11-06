@@ -5298,6 +5298,13 @@ export function App({
       .filter((entry): entry is ModelMenuInstanceEntry => entry !== null);
     return entries.length > 0 ? entries : FALLBACK_MODEL_MENU_INSTANCE_ENTRIES;
   }, [providerSnapshots]);
+  const visibleComingSoonModelProviderOptions = useMemo(
+    () =>
+      COMING_SOON_MODEL_PROVIDER_OPTIONS.filter(
+        (option) => !modelMenuEntries.some((entry) => entry.driverKind === option.id),
+      ),
+    [modelMenuEntries],
+  );
   const modelMenuEntryByInstanceId = useMemo(
     () => new Map(modelMenuEntries.map((entry) => [entry.instanceId, entry])),
     [modelMenuEntries],
@@ -5338,6 +5345,10 @@ export function App({
     return optionsByInstance;
   }, [appSettings, modelMenuEntries, rawProviderModelOptionsByInstance]);
   const preferredModelOptions = providerModelOptionsByInstance.get(modelMenuInstanceId) ?? [];
+  const focusedProviderSnapshot = providerSnapshots.find(
+    (snapshot) => snapshot.instanceId === modelMenuInstanceId,
+  );
+  const focusedProviderEmptyMessage = focusedProviderSnapshot?.message ?? "No models available.";
   const currentModelOptions = preferredModelOptions.filter((option) => !option.isLegacy);
   const legacyModelOptions = preferredModelOptions.filter((option) => option.isLegacy);
   const modelMenuRows = buildModelMenuRows(
@@ -11923,8 +11934,8 @@ export function App({
   const modelProvidersHeight =
     2 +
     modelMenuEntries.length +
-    (COMING_SOON_MODEL_PROVIDER_OPTIONS.length > 0
-      ? 1 + COMING_SOON_MODEL_PROVIDER_OPTIONS.length
+    (visibleComingSoonModelProviderOptions.length > 0
+      ? 1 + visibleComingSoonModelProviderOptions.length
       : 0);
   const modelPopupHeight = modelSubmenuOpen
     ? Math.max(modelMenuHeight + 3, modelProvidersHeight) + 2
@@ -17190,9 +17201,9 @@ export function App({
                 onPress={() => focusModelProvider(entry.instanceId)}
               />
             ))}
-            {COMING_SOON_MODEL_PROVIDER_OPTIONS.length > 0 ? (
+            {visibleComingSoonModelProviderOptions.length > 0 ? (
               <>
-                {COMING_SOON_MODEL_PROVIDER_OPTIONS.map((option) => (
+                {visibleComingSoonModelProviderOptions.map((option) => (
                   <PopupRow
                     key={`provider-soon:${option.id}`}
                     icon={providerPickerIcon(option.id)}
@@ -17234,6 +17245,14 @@ export function App({
                 ) : (
                   <text content="No matching models." style={{ fg: PALETTE.muted }} />
                 )
+              ) : visibleModelMenuWindow.rows.length === 0 ? (
+                <text
+                  content={truncateToolbarLabel(
+                    focusedProviderEmptyMessage,
+                    MODEL_POPUP_WIDTH - MODEL_POPUP_PROVIDER_COLUMN_WIDTH - 3,
+                  )}
+                  style={{ fg: PALETTE.muted }}
+                />
               ) : (
                 visibleModelMenuWindow.rows.map((row, localIndex) => {
                   const index = visibleModelMenuWindow.startIndex + localIndex;
