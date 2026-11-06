@@ -91,11 +91,38 @@ export async function readPrefs(paths: TuiPaths): Promise<TuiPrefs> {
   }
 }
 
-export async function writePrefs(paths: TuiPaths, prefs: TuiPrefs): Promise<void> {
-  await fs.mkdir(path.dirname(paths.prefsPath), { recursive: true });
+// Serialized prefs writer: writes run one at a time in the order requested; a call made
+// while a write is pending coalesces into the latest pending prefs, so the newest state
+// always wins on disk.
+let latestWrite: { paths: TuiPaths; prefs: TuiPrefs } | null = null;
+let writeChain: Promise<void> = Promise.resolve();
+
+async function performWrite(paths: TuiPaths, prefs: TuiPrefs): Promise<void> {
   const persistedPrefs =
     "connectionProfiles" in prefs
       ? { ...prefs, connectionProfiles: normalizeConnectionProfiles(prefs.connectionProfiles) }
       : prefs;
-  await fs.writeFile(paths.prefsPath, JSON.stringify(persistedPrefs, null, 2));
+  const data = JSON.stringify(persistedPrefs, null, 2);
+  await fs.mkdir(path.dirname(paths.prefsPath), { recursive: true });
+  // Write to a temp file in the same directory, then rename: a crash mid-write never
+  // leaves a truncated prefs file.
+  const tempPath = `${paths.prefsPath}.tmp`;
+  await fs.writeFile(tempPath, data);
+  await fs.rename(tempPath, paths.prefsPath);
+}
+
+export function writePrefs(paths: TuiPaths, prefs: TuiPrefs): Promise<void> {
+  latestWrite = { paths, prefs };
+  const write = writeChain.then(() => {
+    const next = latestWrite;
+    latestWrite = null;
+    return next ? performWrite(next.paths, next.prefs) : undefined;
+  });
+  writeChain = write.catch(() => {});
+  return write;
+}
+
+/** Resolves once every prefs write requested so far has reached disk. */
+export function flushPrefs(): Promise<void> {
+  return writeChain;
 }

@@ -34,6 +34,7 @@ mock.module(import.meta.resolve("../tuiCli.ts"), () => ({
 mock.module(import.meta.resolve("../prefs.ts"), () => ({
   readPrefs: async () => ({}),
   writePrefs: async () => undefined,
+  flushPrefs: async () => undefined,
 }));
 
 // Park startup right after the SSH attach is live: the renderer never arrives.
