@@ -6,7 +6,7 @@ import { createRoot } from "@opentui/react";
 import React from "react";
 import { DEFAULT_APP_THEME } from "@termweave/client-core";
 import { resolveTuiPaths } from "./config";
-import { readPrefs } from "./prefs";
+import { flushPrefs, readPrefs } from "./prefs";
 import {
   normalizeRendererThemeMode,
   resolveTerminalPalette,
@@ -90,7 +90,14 @@ const shutdown = (code = 0, error?: unknown) => {
   } else {
     process.exitCode = code;
   }
-  setTimeout(() => process.exit(process.exitCode ?? code), 50).unref();
+  setTimeout(() => {
+    // The App unmount flushes pending prefs into the writer queue; drain it before exit
+    // so the last state (including drafts typed right before quitting) is not lost.
+    void flushPrefs().then(
+      () => process.exit(process.exitCode ?? code),
+      () => process.exit(process.exitCode ?? code),
+    );
+  }, 50).unref();
 };
 
 process.on("SIGINT", onSigint);

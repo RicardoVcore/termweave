@@ -459,6 +459,8 @@ const PROJECT_SCRIPT_ICON_OPTIONS = [
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const COMMAND_PALETTE_MAX_ITEMS = 12;
+/** Trailing debounce for prefs writes, so typing drafts does not rewrite the file per keystroke. */
+const PREFS_WRITE_DEBOUNCE_MS = 400;
 type T1Api = ReturnType<typeof createTransportNativeApi>["api"];
 type ThreadReadModel = OrchestrationReadModel["threads"][number];
 type ProjectReadModel = OrchestrationReadModel["projects"][number];
@@ -4942,6 +4944,10 @@ export function App({
     selectedThreadIdRef.current = selectedThreadId;
   }, [selectedThreadId]);
 
+  // Latest prefs computed by the persist effect below, held until the debounced write fires.
+  const pendingPrefsRef = useRef<TuiPrefs | null>(null);
+  const prefsWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!prefsReady) return;
     const prefs = {
@@ -4973,8 +4979,18 @@ export function App({
       ...(connectionProfiles.length > 0 ? { connectionProfiles } : {}),
       ...(defaultConnectionProfileId ? { defaultConnectionProfileId } : {}),
     } satisfies TuiPrefs;
-    void writePrefs(paths, prefs);
-    logger.log("prefs.saved", prefs as Record<string, unknown>);
+    pendingPrefsRef.current = prefs;
+    if (prefsWriteTimerRef.current) clearTimeout(prefsWriteTimerRef.current);
+    prefsWriteTimerRef.current = setTimeout(() => {
+      prefsWriteTimerRef.current = null;
+      const pending = pendingPrefsRef.current;
+      pendingPrefsRef.current = null;
+      if (!pending) return;
+      void writePrefs(paths, pending).catch((error: unknown) => {
+        logger.log("prefs.saveFailed", { error: String(error) });
+      });
+      logger.log("prefs.saved", pending as Record<string, unknown>);
+    }, PREFS_WRITE_DEBOUNCE_MS);
   }, [
     diffOpen,
     diffView,
@@ -5001,6 +5017,23 @@ export function App({
     selectedProjectId,
     selectedThreadId,
   ]);
+
+  // On unmount (app exit), write any pending prefs immediately instead of waiting for
+  // the debounce, so quitting never drops the last state.
+  useEffect(() => {
+    return () => {
+      if (prefsWriteTimerRef.current) {
+        clearTimeout(prefsWriteTimerRef.current);
+        prefsWriteTimerRef.current = null;
+      }
+      const pending = pendingPrefsRef.current;
+      pendingPrefsRef.current = null;
+      if (pending)
+        void writePrefs(paths, pending).catch((error: unknown) => {
+          logger.log("prefs.saveFailed", { error: String(error) });
+        });
+    };
+  }, [paths, logger]);
 
   const projects = useMemo(
     () => snapshot?.projects.filter((project) => project.deletedAt === null) ?? [],

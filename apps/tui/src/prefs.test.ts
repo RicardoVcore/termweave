@@ -165,4 +165,37 @@ describe("prefs", () => {
       },
     ]);
   });
+
+  it("coalesces concurrent writes so the latest prefs win on disk", async () => {
+    const { root, paths } = await makePaths();
+    tempRoots.push(root);
+
+    // Fired without awaiting so later calls land while the first write is still running.
+    const first = writePrefs(paths, { mainView: "settings" });
+    const second = writePrefs(paths, { mainView: "keybindings" });
+    const third = writePrefs(paths, { mainView: "archive", selectedThreadId: "thread-9" });
+    await Promise.all([first, second, third]);
+
+    const raw = await fs.readFile(paths.prefsPath, "utf8");
+    expect(JSON.parse(raw)).toEqual({ mainView: "archive", selectedThreadId: "thread-9" });
+    await expect(readPrefs(paths)).resolves.toEqual({
+      mainView: "archive",
+      selectedThreadId: "thread-9",
+    });
+    // Atomic temp-then-rename leaves no stray temp files behind.
+    await expect(fs.readdir(path.dirname(paths.prefsPath))).resolves.toEqual(["prefs.json"]);
+  });
+
+  it("leaves valid JSON on disk after each sequential write", async () => {
+    const { root, paths } = await makePaths();
+    tempRoots.push(root);
+
+    const views = ["settings", "keybindings", "archive"] as const;
+    for (const mainView of views) {
+      await writePrefs(paths, { mainView });
+      const raw = await fs.readFile(paths.prefsPath, "utf8");
+      expect(JSON.parse(raw)).toEqual({ mainView });
+    }
+    await expect(readPrefs(paths)).resolves.toEqual({ mainView: "archive" });
+  });
 });
