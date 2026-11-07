@@ -227,6 +227,8 @@ import {
   getProviderInstanceModelOptions,
   legacyProviderKindForDriver,
   normalizeProviderAccentColor,
+  pickDefaultModelSlug,
+  resolveProviderSwitchModel,
   sortProviderInstanceEntries,
 } from "./providerInstances";
 import { resolveUserMessageBubbleWidth } from "./messageLayout";
@@ -5585,11 +5587,10 @@ export function App({
     ) {
       return;
     }
-    const fallback =
-      draftProviderModelOptions.find((option) => option.isDefault && !option.isLegacy) ??
-      draftProviderModelOptions.find((option) => !option.isLegacy) ??
-      draftProviderModelOptions[0]!;
-    setDraftModel(fallback.slug);
+    const fallbackSlug = pickDefaultModelSlug(draftProviderModelOptions);
+    if (fallbackSlug) {
+      setDraftModel(fallbackSlug);
+    }
   }, [draftProviderModelOptions, draftModel]);
   const draftModelCapabilities = useMemo(
     () =>
@@ -6655,12 +6656,19 @@ export function App({
     if (!fallback) return;
     setDraftProvider(fallback.provider);
     setDraftProviderInstanceId(fallback.instanceId);
-    setDraftModel((current) => resolvePersistedModel(fallback.provider, current));
+    setDraftModel((current) =>
+      resolveProviderSwitchModel({
+        provider: fallback.provider,
+        currentModel: current,
+        options: providerModelOptionsByInstance.get(fallback.instanceId) ?? [],
+      }),
+    );
   }, [
     draftProvider,
     draftProviderInstanceId,
     modelMenuEntries,
     modelMenuEntryByInstanceId,
+    providerModelOptionsByInstance,
     providerSnapshots.length,
   ]);
 
@@ -10241,7 +10249,14 @@ export function App({
         const nextInstance =
           modelMenuEntries.find((entry) => entry.provider === nextProvider)?.instanceId ??
           (nextProvider === "claudeAgent" ? DEFAULT_CLAUDE_INSTANCE_ID : DEFAULT_CODEX_INSTANCE_ID);
-        applyDraftProviderModel(nextInstance, resolvePersistedModel(nextProvider, draftModel));
+        applyDraftProviderModel(
+          nextInstance,
+          resolveProviderSwitchModel({
+            provider: nextProvider,
+            currentModel: draftModel,
+            options: providerModelOptionsByInstance.get(nextInstance) ?? [],
+          }),
+        );
         return true;
       }
       case "runtime": {

@@ -627,6 +627,16 @@ function resolveClaudeDefaultModelSlug(
   if (!defaultEntry) return undefined;
   const resolvedModel = defaultEntry.resolvedModel?.trim();
   if (resolvedModel) return resolvedModel.replace(/\[[^\]]+\]$/u, "");
+  // Without a resolvedModel the recommendation maps to the sonnet family.
+  // Resolve it exactly like the discovered "sonnet" alias so the flagged
+  // default matches the slug that entry actually got - a bare alias the SDK
+  // keeps as "sonnet" must still get the isDefault flag.
+  const sonnetAlias = discoveredModels.find(
+    (model) => model.value.trim().toLowerCase() === "sonnet",
+  );
+  if (sonnetAlias) {
+    return resolveClaudeDiscoveredModelSlug(sonnetAlias, cachedModels, version);
+  }
   return findClaudeFamilyModelSlug("sonnet", cachedModels, version) ?? defaultEntry.value.trim();
 }
 

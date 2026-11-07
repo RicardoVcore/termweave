@@ -238,6 +238,58 @@ describe("ClaudeProvider", () => {
     assert.equal(defaults[0]?.slug, "claude-opus-5-5");
   });
 
+  it("flags the sonnet alias when the SDK default has no resolved model", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "default",
+          displayName: "Default",
+          description: "Recommended model",
+          supportsEffort: false,
+          supportedEffortLevels: [],
+          supportsAdaptiveThinking: false,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+        {
+          value: "opus",
+          displayName: "Opus",
+          description: "Opus alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+        {
+          value: "sonnet",
+          displayName: "Sonnet",
+          description: "Sonnet alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+      [
+        {
+          slug: "claude-sonnet-5-5",
+          name: "Sonnet 5.5",
+          isCustom: false,
+          capabilities: getClaudeModelCapabilities("claude-sonnet-5-5"),
+        },
+      ],
+    );
+
+    // Bare aliases stay aliases, so the sonnet entry resolves to "sonnet";
+    // the default recommendation must flag that same slug.
+    const defaults = models.filter((model) => model.isDefault);
+    assert.equal(defaults.length, 1);
+    assert.equal(defaults[0]?.slug, "sonnet");
+  });
+
   it("never appends built-in legacy models on top of a catalog", () => {
     const models = resolveClaudeProviderModels(
       [
