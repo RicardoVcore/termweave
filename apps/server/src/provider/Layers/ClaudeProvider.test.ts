@@ -163,6 +163,179 @@ describe("ClaudeProvider", () => {
     );
   });
 
+  it("prefers the catalog display name for a discovered slug", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "opus",
+          resolvedModel: "claude-opus-5-5",
+          displayName: "Opus",
+          description: "Versionless SDK name",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+      [
+        {
+          slug: "claude-opus-5-5",
+          name: "Opus 5.5",
+          isCustom: false,
+          capabilities: getClaudeModelCapabilities("claude-opus-5-5"),
+        },
+      ],
+    );
+
+    assert.equal(models[0]?.slug, "claude-opus-5-5");
+    assert.equal(models[0]?.name, "Opus 5.5");
+  });
+
+  it("flags the model the SDK default recommendation resolves to", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "default",
+          resolvedModel: "claude-opus-5-5",
+          displayName: "Default (recommended)",
+          description: "Default model alias",
+          supportsEffort: false,
+          supportedEffortLevels: [],
+          supportsAdaptiveThinking: false,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+        {
+          value: "opus",
+          resolvedModel: "claude-opus-5-5",
+          displayName: "Opus",
+          description: "Opus alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+        {
+          value: "sonnet",
+          resolvedModel: "claude-sonnet-5-5",
+          displayName: "Sonnet",
+          description: "Sonnet alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+    );
+
+    const defaults = models.filter((model) => model.isDefault);
+    assert.equal(defaults.length, 1);
+    assert.equal(defaults[0]?.slug, "claude-opus-5-5");
+  });
+
+  it("flags the sonnet alias when the SDK default has no resolved model", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "default",
+          displayName: "Default",
+          description: "Recommended model",
+          supportsEffort: false,
+          supportedEffortLevels: [],
+          supportsAdaptiveThinking: false,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+        {
+          value: "opus",
+          displayName: "Opus",
+          description: "Opus alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+        {
+          value: "sonnet",
+          displayName: "Sonnet",
+          description: "Sonnet alias",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+      [
+        {
+          slug: "claude-sonnet-5-5",
+          name: "Sonnet 5.5",
+          isCustom: false,
+          capabilities: getClaudeModelCapabilities("claude-sonnet-5-5"),
+        },
+      ],
+    );
+
+    // Bare aliases stay aliases, so the sonnet entry resolves to "sonnet";
+    // the default recommendation must flag that same slug.
+    const defaults = models.filter((model) => model.isDefault);
+    assert.equal(defaults.length, 1);
+    assert.equal(defaults[0]?.slug, "sonnet");
+  });
+
+  it("never appends built-in legacy models on top of a catalog", () => {
+    const models = resolveClaudeProviderModels(
+      [
+        {
+          value: "sonnet",
+          resolvedModel: "claude-sonnet-5-5",
+          displayName: "Sonnet 5.5",
+          description: "Current Sonnet model",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: true,
+        },
+      ],
+      "2.1.273",
+      [
+        {
+          slug: "claude-sonnet-5-5",
+          name: "Sonnet 5.5",
+          isCustom: false,
+          capabilities: getClaudeModelCapabilities("claude-sonnet-5-5"),
+        },
+        {
+          slug: "claude-opus-4-6",
+          name: "Opus 4.6",
+          isCustom: false,
+          isLegacy: true,
+          capabilities: getClaudeModelCapabilities("claude-opus-4-6"),
+        },
+      ],
+    );
+
+    // The catalog already marks its own legacy models; the built-in list must
+    // not re-add slugs the catalog no longer carries (e.g. claude-haiku-4-5).
+    assert.equal(
+      models.some((model) => model.slug === "claude-haiku-4-5"),
+      false,
+    );
+    assert.equal(models.length, 2);
+    assert.equal(models[0]?.slug, "claude-sonnet-5-5");
+    assert.equal(models[0]?.isLegacy, undefined);
+    assert.equal(models[1]?.slug, "claude-opus-4-6");
+    assert.equal(models[1]?.isLegacy, true);
+  });
+
   it("canonicalizes SDK aliases and prefers a named alias over default", () => {
     const models = resolveClaudeProviderModels(
       [

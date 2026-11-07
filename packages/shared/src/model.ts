@@ -1,8 +1,6 @@
 import {
   CLAUDE_CODE_EFFORT_OPTIONS,
   CODEX_REASONING_EFFORT_OPTIONS,
-  DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
@@ -22,36 +20,22 @@ import {
   type ModelSelection,
 } from "@termweave/contracts";
 
-const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
-  claudeAgent: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeAgent.map((option) => option.slug)),
-  codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
+const MODEL_SLUG_SET_BY_PROVIDER: Partial<Record<ProviderKind, ReadonlySet<ModelSlug>>> = {
+  codex: new Set((MODEL_OPTIONS_BY_PROVIDER.codex ?? []).map((option) => option.slug)),
 };
 
+// Slugs of models whose capability ladders below are still hand-tuned. Newer
+// Claude models get their capabilities from the server's live descriptors.
 const CLAUDE_OPUS_4_8_MODEL = "claude-opus-4-8";
 const CLAUDE_OPUS_4_7_MODEL = "claude-opus-4-7";
 const CLAUDE_OPUS_4_6_MODEL = "claude-opus-4-6";
 const CLAUDE_SONNET_4_6_MODEL = "claude-sonnet-4-6";
 const CLAUDE_HAIKU_4_5_MODEL = "claude-haiku-4-5";
+
 const CODEX_DRIVER_KIND = "codex" as ProviderDriverKind;
 const CLAUDE_DRIVER_KIND = "claudeAgent" as ProviderDriverKind;
 const CURSOR_DRIVER_KIND = "cursor" as ProviderDriverKind;
 const OPENCODE_DRIVER_KIND = "opencode" as ProviderDriverKind;
-
-export const DEFAULT_MODEL_BY_DRIVER: Partial<Record<ProviderDriverKind, string>> = {
-  [CODEX_DRIVER_KIND]: DEFAULT_MODEL_BY_PROVIDER.codex,
-  [CLAUDE_DRIVER_KIND]: DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
-  [CURSOR_DRIVER_KIND]: "auto",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
-};
-
-export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_DRIVER: Partial<
-  Record<ProviderDriverKind, string>
-> = {
-  [CODEX_DRIVER_KIND]: DEFAULT_GIT_TEXT_GENERATION_MODEL,
-  [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
-  [CURSOR_DRIVER_KIND]: "composer-2",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
-};
 
 export const PROVIDER_DISPLAY_NAMES_BY_DRIVER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "Codex",
@@ -291,27 +275,10 @@ export function getModelSelectionOptionDescriptors(
   });
 }
 
-export function getModelOptions(provider: ProviderKind = "codex") {
-  return MODEL_OPTIONS_BY_PROVIDER[provider];
-}
-
-export function getDefaultModel(provider: ProviderKind = "codex"): ModelSlug {
-  return DEFAULT_MODEL_BY_PROVIDER[provider];
-}
-
-export function getDefaultModelForDriver(
-  provider: ProviderDriverKind | ProviderKind = "codex",
-): string {
-  return DEFAULT_MODEL_BY_DRIVER[provider as ProviderDriverKind] ?? DEFAULT_MODEL_BY_PROVIDER.codex;
-}
-
-export function getDefaultGitTextGenerationModelForDriver(
-  provider: ProviderDriverKind | ProviderKind = "codex",
-): string {
-  return (
-    DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_DRIVER[provider as ProviderDriverKind] ??
-    DEFAULT_GIT_TEXT_GENERATION_MODEL
-  );
+export function getModelOptions(
+  provider: ProviderKind = "codex",
+): ReadonlyArray<SelectableModelOption> {
+  return MODEL_OPTIONS_BY_PROVIDER[provider] ?? [];
 }
 
 export function supportsClaudeFastMode(model: string | null | undefined): boolean {
@@ -416,38 +383,12 @@ export function resolveSelectableModel(
   return resolved ? resolved.slug : null;
 }
 
-export function resolveModelSlug(
-  model: string | null | undefined,
-  provider: ProviderKind = "codex",
-): ModelSlug {
-  const normalized = normalizeModelSlug(model, provider);
-  if (!normalized) {
-    return DEFAULT_MODEL_BY_PROVIDER[provider];
-  }
-
-  return MODEL_SLUG_SET_BY_PROVIDER[provider].has(normalized)
-    ? normalized
-    : DEFAULT_MODEL_BY_PROVIDER[provider];
-}
-
-export function resolveModelSlugForProvider(
-  provider: ProviderKind,
-  model: string | null | undefined,
-): ModelSlug {
-  return resolveModelSlug(model, provider);
-}
-
 export function inferProviderForModel(
   model: string | null | undefined,
   fallback: ProviderKind = "codex",
 ): ProviderKind {
-  const normalizedClaude = normalizeModelSlug(model, "claudeAgent");
-  if (normalizedClaude && MODEL_SLUG_SET_BY_PROVIDER.claudeAgent.has(normalizedClaude)) {
-    return "claudeAgent";
-  }
-
   const normalizedCodex = normalizeModelSlug(model, "codex");
-  if (normalizedCodex && MODEL_SLUG_SET_BY_PROVIDER.codex.has(normalizedCodex)) {
+  if (normalizedCodex && MODEL_SLUG_SET_BY_PROVIDER.codex?.has(normalizedCodex)) {
     return "codex";
   }
 

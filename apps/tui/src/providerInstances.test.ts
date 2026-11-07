@@ -12,12 +12,21 @@ import {
   getProviderInstanceModels,
   legacyProviderKindForDriver,
   normalizeProviderAccentColor,
+  pickDefaultModelSlug,
+  resolveProviderSwitchModel,
   resolveSelectableProviderInstance,
   sortProviderInstanceEntries,
 } from "./providerInstances";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
 const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
+
+const modelOption = (slug: string, flags: { isDefault?: boolean; isLegacy?: boolean } = {}) => ({
+  slug,
+  name: slug,
+  isCustom: false,
+  ...flags,
+});
 
 const model = (slug: string): ServerProviderModel => ({
   slug,
@@ -208,5 +217,83 @@ describe("providerInstances", () => {
       "claudeAgent",
     );
     expect(legacyProviderKindForDriver(decodeProviderDriverKind("cursor"))).toBeUndefined();
+  });
+
+  describe("pickDefaultModelSlug", () => {
+    it("picks the flagged non-legacy default, else the first non-legacy option", () => {
+      expect(pickDefaultModelSlug([])).toBeUndefined();
+      expect(pickDefaultModelSlug([modelOption("claude-sonnet-5-5")])).toBe("claude-sonnet-5-5");
+      expect(
+        pickDefaultModelSlug([
+          modelOption("claude-opus-4-6", { isLegacy: true }),
+          modelOption("claude-sonnet-5-5", { isDefault: true }),
+          modelOption("claude-haiku-4-5"),
+        ]),
+      ).toBe("claude-sonnet-5-5");
+      expect(
+        pickDefaultModelSlug([
+          modelOption("claude-sonnet-4-6", { isLegacy: true, isDefault: true }),
+          modelOption("claude-sonnet-5-5"),
+        ]),
+      ).toBe("claude-sonnet-5-5");
+      expect(pickDefaultModelSlug([modelOption("claude-sonnet-4-6", { isLegacy: true })])).toBe(
+        "claude-sonnet-4-6",
+      );
+    });
+  });
+
+  describe("resolveProviderSwitchModel", () => {
+    it("keeps a model the destination provider offers", () => {
+      expect(
+        resolveProviderSwitchModel({
+          provider: "claudeAgent",
+          currentModel: "claude-sonnet-5-5",
+          options: [
+            modelOption("claude-sonnet-5-5"),
+            modelOption("claude-opus-5-5", { isDefault: true }),
+          ],
+        }),
+      ).toBe("claude-sonnet-5-5");
+    });
+
+    it("replaces a model the destination does not offer, even if unknown to built-ins", () => {
+      expect(
+        resolveProviderSwitchModel({
+          provider: "claudeAgent",
+          currentModel: "gpt-5.5",
+          options: [modelOption("claude-opus-5-5", { isDefault: true })],
+        }),
+      ).toBe("claude-opus-5-5");
+    });
+
+    it("replaces a model from another provider with the destination default", () => {
+      expect(
+        resolveProviderSwitchModel({
+          provider: "claudeAgent",
+          currentModel: "gpt-5.4",
+          options: [
+            modelOption("claude-sonnet-5-5"),
+            modelOption("claude-opus-5-5", { isDefault: true }),
+          ],
+        }),
+      ).toBe("claude-opus-5-5");
+    });
+
+    it("falls back to the provider default without server options", () => {
+      expect(
+        resolveProviderSwitchModel({
+          provider: "claudeAgent",
+          currentModel: "gpt-5.4",
+          options: [],
+        }),
+      ).toBe("claude-sonnet-5-5");
+      expect(
+        resolveProviderSwitchModel({
+          provider: "codex",
+          currentModel: "  ",
+          options: [],
+        }),
+      ).toBe("gpt-5.4");
+    });
   });
 });

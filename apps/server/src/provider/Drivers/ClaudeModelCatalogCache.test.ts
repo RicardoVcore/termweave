@@ -6,11 +6,16 @@ const catalog = (models: unknown, surface = "cc", fetchedAt = 1) =>
   JSON.stringify({ fetchedAt, catalog: { surface, config: { models } } });
 
 describe("parseClaudeCatalogFile", () => {
-  it("maps cc-surface models and preserves hidden status", () => {
+  it("maps cc-surface models and derives legacy status from hidden and section", () => {
     const parsed = parseClaudeCatalogFile(
       catalog([
-        { id: "claude-opus-5", name: "Opus 5", thinking: { type: "effort" }, fast_mode: {} },
-        { id: "claude-haiku-4-5", name: "Haiku 4.5", thinking: { type: "none" } },
+        { id: "claude-opus-5-5", name: "Opus 5.5", thinking: { type: "effort" }, fast_mode: {} },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "Haiku 4.5",
+          thinking: { type: "none" },
+          section: "overflow",
+        },
         { id: "claude-internal", name: "Internal", hidden: true },
       ]),
     );
@@ -18,23 +23,23 @@ describe("parseClaudeCatalogFile", () => {
     expect(parsed?.fetchedAt).toBe(1);
     expect(parsed?.models).toEqual([
       {
-        slug: "claude-opus-5",
-        name: "Opus 5",
-        hidden: false,
+        slug: "claude-opus-5-5",
+        name: "Opus 5.5",
+        isLegacy: false,
         thinkingType: "effort",
         fastMode: true,
       },
       {
-        slug: "claude-haiku-4-5",
+        slug: "claude-haiku-4-5-20251001",
         name: "Haiku 4.5",
-        hidden: false,
+        isLegacy: true,
         thinkingType: "none",
         fastMode: false,
       },
       {
         slug: "claude-internal",
         name: "Internal",
-        hidden: true,
+        isLegacy: true,
         thinkingType: "none",
         fastMode: false,
       },

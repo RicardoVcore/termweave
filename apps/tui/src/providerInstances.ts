@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   type ProviderDriverKind,
   type ProviderKind,
@@ -28,6 +29,7 @@ export interface ProviderInstanceModelOption {
   readonly name: string;
   readonly shortName?: string;
   readonly subProvider?: string;
+  readonly isDefault?: boolean;
   readonly isLegacy?: boolean;
   readonly isCustom: boolean;
 }
@@ -170,6 +172,9 @@ export function getProviderInstanceModelOptions(
     if (model.subProvider) {
       Object.assign(option, { subProvider: model.subProvider });
     }
+    if (model.isDefault) {
+      Object.assign(option, { isDefault: true });
+    }
     if (model.isLegacy) {
       Object.assign(option, { isLegacy: true });
     }
@@ -198,4 +203,34 @@ export function resolveSelectableProviderInstance(
     if (selected) return selected.instanceId;
   }
   return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
+}
+
+/** Slug of the server-provided default model: the option flagged default (and
+ *  not legacy), else the first non-legacy option, else the first option.
+ *  Undefined when the option list is empty. */
+export function pickDefaultModelSlug(
+  options: ReadonlyArray<ProviderInstanceModelOption>,
+): string | undefined {
+  const fallback =
+    options.find((option) => option.isDefault && !option.isLegacy) ??
+    options.find((option) => !option.isLegacy) ??
+    options[0];
+  return fallback?.slug;
+}
+
+/** Model to select after switching to `provider`. The current model carries
+ *  over only when the destination's option list contains it; anything else
+ *  (e.g. a Codex model when switching to Claude) would be dispatched to the
+ *  wrong runtime, so it is replaced by the server-provided default for
+ *  `options`, else the provider's fallback model. */
+export function resolveProviderSwitchModel(input: {
+  readonly provider: ProviderKind;
+  readonly currentModel: string | undefined;
+  readonly options: ReadonlyArray<ProviderInstanceModelOption>;
+}): string {
+  const trimmed = input.currentModel?.trim();
+  if (trimmed && input.options.some((option) => option.slug === trimmed)) {
+    return trimmed;
+  }
+  return pickDefaultModelSlug(input.options) ?? DEFAULT_MODEL_BY_PROVIDER[input.provider];
 }
