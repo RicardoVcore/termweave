@@ -28,6 +28,7 @@ export interface ProviderInstanceModelOption {
   readonly name: string;
   readonly shortName?: string;
   readonly subProvider?: string;
+  readonly isDefault?: boolean;
   readonly isLegacy?: boolean;
   readonly isCustom: boolean;
 }
@@ -169,6 +170,9 @@ export function getProviderInstanceModelOptions(
     }
     if (model.subProvider) {
       Object.assign(option, { subProvider: model.subProvider });
+    }
+    if (model.isDefault) {
+      Object.assign(option, { isDefault: true });
     }
     if (model.isLegacy) {
       Object.assign(option, { isLegacy: true });

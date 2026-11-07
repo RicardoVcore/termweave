@@ -140,7 +140,7 @@ type ModelOption = {
   readonly name: string;
 };
 
-export const MODEL_OPTIONS_BY_PROVIDER = {
+export const MODEL_OPTIONS_BY_PROVIDER: Partial<Record<ProviderKind, readonly ModelOption[]>> = {
   codex: [
     { slug: "gpt-5.4", name: "GPT-5.4" },
     { slug: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
@@ -149,30 +149,29 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
-  claudeAgent: [
-    { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
-    { slug: "claude-opus-4-7", name: "Claude Opus 4.7" },
-    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
-  ],
-} as const satisfies Record<ProviderKind, readonly ModelOption[]>;
+  // Claude models are not hard-coded here: the server's live catalog /
+  // SDK discovery (with BUILT_IN_MODELS as offline fallback) is the single
+  // source for Claude model names and slugs.
+};
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
 
-type BuiltInModelSlug = (typeof MODEL_OPTIONS_BY_PROVIDER)[ProviderKind][number]["slug"];
-export type ModelSlug = BuiltInModelSlug | (string & {});
+export type ModelSlug = string;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, ModelSlug> = {
   codex: "gpt-5.4",
-  claudeAgent: "claude-sonnet-4-6",
+  // Single pre-server-response fallback for Claude; the TUI otherwise picks
+  // the server-provided default model.
+  claudeAgent: "claude-sonnet-5-5",
 };
 
 // Backward compatibility for existing Codex-only call sites.
-export const MODEL_OPTIONS = MODEL_OPTIONS_BY_PROVIDER.codex;
+export const MODEL_OPTIONS: readonly ModelOption[] = MODEL_OPTIONS_BY_PROVIDER.codex ?? [];
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini" as const;
 
-export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
+export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
+  Record<ProviderKind, Record<string, ModelSlug>>
+> = {
   codex: {
     "gpt-5-codex": "gpt-5.4",
     "5.4": "gpt-5.4",
@@ -180,24 +179,6 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "gpt-5.3": "gpt-5.3-codex",
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
-  },
-  claudeAgent: {
-    opus: "claude-opus-4-6",
-    "opus-4.8": "claude-opus-4-8",
-    "claude-opus-4.8": "claude-opus-4-8",
-    "opus-4.7": "claude-opus-4-7",
-    "claude-opus-4.7": "claude-opus-4-7",
-    "opus-4.6": "claude-opus-4-6",
-    "claude-opus-4.6": "claude-opus-4-6",
-    "claude-opus-4-6-20251117": "claude-opus-4-6",
-    sonnet: "claude-sonnet-4-6",
-    "sonnet-4.6": "claude-sonnet-4-6",
-    "claude-sonnet-4.6": "claude-sonnet-4-6",
-    "claude-sonnet-4-6-20251117": "claude-sonnet-4-6",
-    haiku: "claude-haiku-4-5",
-    "haiku-4.5": "claude-haiku-4-5",
-    "claude-haiku-4.5": "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
 };
 

@@ -298,7 +298,7 @@ function claudeCatalogModels(
   return entries.map((entry) => ({
     slug: entry.slug,
     name: entry.name,
-    ...(entry.hidden ? { isLegacy: true } : {}),
+    ...(entry.isLegacy ? { isLegacy: true } : {}),
     isCustom: false,
     capabilities: claudeCatalogModelCapabilities(entry),
   }));
@@ -541,13 +541,13 @@ export function resolveClaudeProviderModels(
   version: string | null | undefined,
   cachedModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
+  // Without live discovery the catalog (or, absent one, the built-in fallback
+  // list) is all we know; its own isLegacy flags drive the picker grouping.
   if (!discoveredModels || discoveredModels.length === 0) {
-    return appendKnownClaudeLegacyModels(
-      cachedModels.length > 0 ? cachedModels : getBuiltInClaudeModelsForVersion(version),
-      version,
-    );
+    return cachedModels.length > 0 ? cachedModels : getBuiltInClaudeModelsForVersion(version);
   }
 
+  const defaultSlug = resolveClaudeDefaultModelSlug(discoveredModels, cachedModels, version);
   const discoveredBySlug = new Map<string, ServerProviderModel>();
   for (const model of discoveredModels) {
     const rawValue = model.value.trim();
@@ -565,16 +565,17 @@ export function resolveClaudeProviderModels(
       continue;
     }
     const slug = resolveClaudeDiscoveredModelSlug(model, cachedModels, version);
-    const name = model.displayName.trim();
-    if (!slug || !name) continue;
-
+    if (!slug) continue;
     const key = canonicalClaudeModelSlug(slug);
     const existing = discoveredBySlug.get(key);
     if (existing && model.value === "default") continue;
+    // Prefer the catalog display name for the resolved slug: the SDK reports
+    // version-less names ("Opus") while the catalog tracks "Opus 5.5".
+    const name = findClaudeCachedModel(slug, cachedModels)?.name ?? model.displayName.trim();
+    if (!name) continue;
+
+    const cached = findClaudeCachedModel(slug, cachedModels);
     const builtIn = BUILT_IN_MODELS.find(
-      (candidate) => canonicalClaudeModelSlug(candidate.slug) === key,
-    );
-    const cached = cachedModels.find(
       (candidate) => canonicalClaudeModelSlug(candidate.slug) === key,
     );
     const discoveredCapabilities = capabilitiesFromClaudeModelInfo(model);
@@ -582,6 +583,11 @@ export function resolveClaudeProviderModels(
       slug,
       name,
       ...(model.description.trim() ? { description: model.description.trim() } : {}),
+      ...(defaultSlug !== undefined &&
+      !cached?.isLegacy &&
+      canonicalClaudeModelSlug(defaultSlug) === key
+        ? { isDefault: true }
+        : {}),
       isCustom: false,
       capabilities: mergeClaudeModelCapabilities(
         builtIn?.capabilities ?? cached?.capabilities,
@@ -592,10 +598,44 @@ export function resolveClaudeProviderModels(
 
   const discovered = [...discoveredBySlug.values()];
   const seen = new Set(discovered.map((model) => canonicalClaudeModelSlug(model.slug)));
-  const hiddenCachedModels = cachedModels.filter(
+  // Catalog models the SDK did not report stay visible as legacy. Built-ins
+  // are only an offline fallback: never re-add them on top of a catalog.
+  const legacyModels = cachedModels.filter(
     (model) => model.isLegacy && !seen.has(canonicalClaudeModelSlug(model.slug)),
   );
-  return appendKnownClaudeLegacyModels([...discovered, ...hiddenCachedModels], version);
+  if (cachedModels.length > 0) {
+    return [...discovered, ...legacyModels];
+  }
+  const builtInLegacy: ServerProviderModel[] = [];
+  for (const model of getBuiltInClaudeModelsForVersion(version)) {
+    if (!seen.has(canonicalClaudeModelSlug(model.slug))) {
+      builtInLegacy.push({ ...model, isLegacy: true });
+    }
+  }
+  return [...discovered, ...builtInLegacy];
+}
+
+/** The slug the SDK's "default" recommendation resolves to, if any. */
+function resolveClaudeDefaultModelSlug(
+  discoveredModels: ReadonlyArray<ClaudeModelInfo & { readonly resolvedModel?: string }>,
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+  version: string | null | undefined,
+): string | undefined {
+  const defaultEntry = discoveredModels.find(
+    (model) => model.value.trim().toLowerCase() === "default",
+  );
+  if (!defaultEntry) return undefined;
+  const resolvedModel = defaultEntry.resolvedModel?.trim();
+  if (resolvedModel) return resolvedModel.replace(/\[[^\]]+\]$/u, "");
+  return findClaudeFamilyModelSlug("sonnet", cachedModels, version) ?? defaultEntry.value.trim();
+}
+
+function findClaudeCachedModel(
+  slug: string,
+  cachedModels: ReadonlyArray<ServerProviderModel>,
+): ServerProviderModel | undefined {
+  const canonical = canonicalClaudeModelSlug(slug);
+  return cachedModels.find((candidate) => canonicalClaudeModelSlug(candidate.slug) === canonical);
 }
 
 function resolveClaudeDiscoveredModelSlug(
@@ -680,21 +720,6 @@ function canonicalClaudeModelSlug(slug: string): string {
     .trim()
     .toLowerCase()
     .replace(/\[[^\]]+\]$/u, "");
-}
-
-function appendKnownClaudeLegacyModels(
-  discovered: ReadonlyArray<ServerProviderModel>,
-  version: string | null | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  const seen = new Set(discovered.map((model) => canonicalClaudeModelSlug(model.slug)));
-  const legacyModels: ServerProviderModel[] = [];
-  for (const model of getBuiltInClaudeModelsForVersion(version)) {
-    if (!seen.has(canonicalClaudeModelSlug(model.slug))) {
-      legacyModels.push({ ...model, isLegacy: true });
-    }
-  }
-
-  return [...discovered, ...legacyModels];
 }
 
 function parseClaudeInitializationCommands(

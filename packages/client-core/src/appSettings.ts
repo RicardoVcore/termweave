@@ -6,12 +6,7 @@ import {
   type ProviderKind,
   type ProviderStartOptions,
 } from "@termweave/contracts";
-import {
-  getDefaultModel,
-  getModelOptions,
-  normalizeModelSlug,
-  resolveSelectableModel,
-} from "@termweave/shared/model";
+import { getModelOptions, normalizeModelSlug } from "@termweave/shared/model";
 
 export const APP_SETTINGS_STORAGE_KEY = "termweave:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -63,7 +58,9 @@ export type ProviderCustomModelConfig = {
 
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
-  claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
+  // Claude models come from the server's live catalog, so nothing is
+  // built in client-side.
+  claudeAgent: new Set(),
 };
 
 const withDefaults =
@@ -273,26 +270,6 @@ export function getAppModelOptions(
   }
 
   return options;
-}
-
-export function resolveAppModelSelection(
-  provider: ProviderKind,
-  customModels: Record<ProviderKind, readonly string[]>,
-  selectedModel: string | null | undefined,
-): string {
-  const customModelsForProvider = customModels[provider];
-  const options = getAppModelOptions(provider, customModelsForProvider, selectedModel);
-  return resolveSelectableModel(provider, selectedModel, options) ?? getDefaultModel(provider);
-}
-
-export function getCustomModelOptionsByProvider(
-  settings: Pick<AppSettings, CustomModelSettingsKey>,
-): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
-  const customModelsByProvider = getCustomModelsByProvider(settings);
-  return {
-    codex: getAppModelOptions("codex", customModelsByProvider.codex),
-    claudeAgent: getAppModelOptions("claudeAgent", customModelsByProvider.claudeAgent),
-  };
 }
 
 export function getProviderStartOptions(

@@ -29,7 +29,6 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  MODEL_OPTIONS_BY_PROVIDER,
   ORCHESTRATION_WS_METHODS,
   defaultInstanceIdForDriver,
   type ClientOrchestrationCommand,
@@ -221,7 +220,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "./keybindings";
-import { buildModelMenuRows, menuWindow } from "./modelMenuNavigation";
+import { buildModelMenuRows, menuWindow, modelSlugLabel } from "./modelMenuNavigation";
 import { createT1Logger } from "./log";
 import {
   deriveProviderInstanceEntries,
@@ -1282,7 +1281,7 @@ function modelControlLabel(
     readonly slug: string;
     readonly name: string;
     readonly shortName?: string;
-  }> = MODEL_OPTIONS_BY_PROVIDER[provider],
+  }> = getModelOptions(provider),
 ): string {
   const resolvedModel = resolveSelectableModel(provider, model, options) ?? model;
   const selectedOption = options.find((option) => option.slug === resolvedModel);
@@ -1293,16 +1292,20 @@ function modelControlLabel(
 
   if (provider === "codex") {
     return resolveModelName(provider, resolvedModel, options);
-  } else {
-    if (resolvedModel === "claude-opus-4-6") return "Opus 4.6";
-    if (resolvedModel === "claude-sonnet-4-6") return "Sonnet 4.6";
-    if (resolvedModel === "claude-haiku-4-5") return "Haiku 4.5";
+  }
+
+  if (provider === "claudeAgent") {
+    const name = resolveModelName(provider, resolvedModel, options);
+    // Slugs without a server-provided name (e.g. saved thread models that the
+    // current catalog no longer lists) get a slug-derived label.
+    return name === resolvedModel
+      ? modelSlugLabel(resolvedModel)
+      : name.replace(/^Claude\s+/i, "").trim();
   }
 
   return resolveModelName(provider, resolvedModel, options)
     .replace(/^GPT-/i, "GPT ")
     .replace(/-codex$/i, "")
-    .replace(/^Claude\s+/i, "")
     .replace(/\s+Codex(?:\s+Spark)?$/i, "")
     .trim();
 }
@@ -1431,7 +1434,7 @@ function resolveModelName(
   options: ReadonlyArray<{
     readonly slug: string;
     readonly name: string;
-  }> = MODEL_OPTIONS_BY_PROVIDER[provider],
+  }> = getModelOptions(provider),
 ): string {
   return options.find((option) => option.slug === model)?.name ?? model;
 }
@@ -2595,6 +2598,7 @@ type ModelMenuOption = {
   readonly name: string;
   readonly shortName?: string;
   readonly subProvider?: string;
+  readonly isDefault?: boolean;
   readonly isLegacy?: boolean;
   readonly isCustom: boolean;
 };
@@ -2614,6 +2618,11 @@ type ModelSearchMenuItem = {
 
 function modelMenuDisplayName(option: ModelMenuOption, options?: { preferShortName?: boolean }) {
   if (options?.preferShortName && option.shortName) return option.shortName;
+  // Custom Claude entries without a server name are saved slugs the current
+  // catalog no longer lists; derive a readable label from the slug.
+  if (option.isCustom && option.name === option.slug && /^claude-/i.test(option.slug)) {
+    return modelSlugLabel(option.slug);
+  }
   return option.name;
 }
 
@@ -2757,10 +2766,11 @@ function normalizePersistedInteractionMode(value: string | undefined): "default"
 }
 
 function resolvePersistedModel(provider: ProviderKind, model: string | undefined): string {
-  return (
-    resolveSelectableModel(provider, model, MODEL_OPTIONS_BY_PROVIDER[provider]) ??
-    DEFAULT_MODEL_BY_PROVIDER[provider]
-  );
+  const trimmed = model?.trim();
+  if (!trimmed) return DEFAULT_MODEL_BY_PROVIDER[provider];
+  // Saved slugs (including Claude models the live catalog no longer lists)
+  // pass through unchanged so threads keep dispatching what they saved.
+  return resolveSelectableModel(provider, trimmed, getModelOptions(provider)) ?? trimmed;
 }
 
 function groupThreadsByProject(
@@ -3353,6 +3363,27 @@ function PopupRow(props: {
         </>
       ) : null}
     </box>
+  );
+}
+
+function ModelMenuMoreRow({
+  displayRow,
+}: {
+  displayRow:
+    | { readonly kind: "moreAbove"; readonly count: number }
+    | { readonly kind: "moreBelow"; readonly count: number };
+}) {
+  return (
+    <PopupRow
+      icon=" "
+      label={
+        displayRow.kind === "moreAbove"
+          ? `↑ ${displayRow.count} more`
+          : `↓ ${displayRow.count} more`
+      }
+      disabled
+      onPress={() => {}}
+    />
   );
 }
 
@@ -4156,6 +4187,7 @@ export function App({
     useState<ProviderInstanceId>(DEFAULT_CODEX_INSTANCE_ID);
   const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
   const [modelMenuIndex, setModelMenuIndex] = useState(0);
+  const [modelMenuStartIndex, setModelMenuStartIndex] = useState(0);
   const [legacyModelsExpanded, setLegacyModelsExpanded] = useState(false);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
@@ -5542,15 +5574,22 @@ export function App({
     [providerModelOptionsByInstance, draftProviderInstanceId],
   );
   useEffect(() => {
-    // The persisted/default model can be absent from the live (cache-backed)
-    // catalog - e.g. a hard-coded default that the account no longer serves.
-    // Snap to the first available model so new turns don't dispatch a dead one.
+    // The persisted/default model can be absent from the live (server-provided)
+    // list - e.g. a hard-coded fallback that the account no longer serves.
+    // Snap to the server-provided default (a model flagged default, else the
+    // first non-legacy model) so new turns don't dispatch a dead one. Saved
+    // slugs are kept in the list (as custom entries) and never rewritten.
     if (
-      draftProviderModelOptions.length > 0 &&
-      !draftProviderModelOptions.some((option) => option.slug === draftModel)
+      draftProviderModelOptions.length === 0 ||
+      draftProviderModelOptions.some((option) => option.slug === draftModel)
     ) {
-      setDraftModel(draftProviderModelOptions[0]!.slug);
+      return;
     }
+    const fallback =
+      draftProviderModelOptions.find((option) => option.isDefault && !option.isLegacy) ??
+      draftProviderModelOptions.find((option) => !option.isLegacy) ??
+      draftProviderModelOptions[0]!;
+    setDraftModel(fallback.slug);
   }, [draftProviderModelOptions, draftModel]);
   const draftModelCapabilities = useMemo(
     () =>
@@ -8317,16 +8356,19 @@ export function App({
         setModelSearchQuery((current) => `${current}${printableSequence}`);
         setModelSubmenuOpen(true);
         setModelMenuIndex(0);
+        setModelMenuStartIndex(0);
         return;
       }
       if (key.name === "backspace" || key.name === "delete") {
         setModelSearchQuery((current) => current.slice(0, -1));
         setModelMenuIndex(0);
+        setModelMenuStartIndex(0);
         return;
       }
       if (key.ctrl && key.name === "u") {
         setModelSearchQuery("");
         setModelMenuIndex(0);
+        setModelMenuStartIndex(0);
         return;
       }
       const currentInstanceIndex = Math.max(
@@ -10876,6 +10918,7 @@ export function App({
     setModelMenuInstanceId(nextInstanceId);
     setModelSubmenuOpen(openSubmenu);
     setLegacyModelsExpanded(selectedLegacyIndex >= 0);
+    setModelMenuStartIndex(0);
     setModelMenuIndex(
       selectedLegacyIndex >= 0
         ? nextCurrentOptions.length + 1 + selectedLegacyIndex
@@ -12091,16 +12134,24 @@ export function App({
     }
   }, [focusArea, logger, overlayMenu]);
 
-  const modelVisibleOptionCount = isModelSearchActive
+  const modelMenuRowCount = isModelSearchActive
     ? visibleModelSearchResults.length
     : modelMenuRows.length;
-  const modelMenuHeight = Math.min(Math.max(modelVisibleOptionCount, 1), MODEL_MENU_MAX_ROWS);
+  // One shared keep-in-view window for both the model list and the search
+  // results; the start index only follows the selection, never mouse hover.
   const visibleModelSearchWindow = menuWindow(
     visibleModelSearchResults,
     modelMenuIndex,
-    modelMenuHeight,
+    MODEL_MENU_MAX_ROWS,
+    modelMenuStartIndex,
   );
-  const visibleModelMenuWindow = menuWindow(modelMenuRows, modelMenuIndex, modelMenuHeight);
+  const visibleModelMenuWindow = menuWindow(
+    modelMenuRows,
+    modelMenuIndex,
+    MODEL_MENU_MAX_ROWS,
+    modelMenuStartIndex,
+  );
+  const activeMenuWindow = isModelSearchActive ? visibleModelSearchWindow : visibleModelMenuWindow;
   const modelProvidersHeight =
     2 +
     modelMenuEntries.length +
@@ -12109,7 +12160,8 @@ export function App({
       : 0);
   // Popup is anchored by its bottom edge, so its height must not depend on the focused
   // provider's model count: otherwise hovering shifts rows under the cursor and the hover
-  // handler ping-pongs between providers in a render loop.
+  // handler ping-pongs between providers in a render loop. Scroll hint rows are carved
+  // out of the MODEL_MENU_MAX_ROWS window and never grow the popup.
   const modelPopupHeight = modelSubmenuOpen
     ? Math.max(MODEL_MENU_MAX_ROWS + 3, modelProvidersHeight) + 2
     : modelProvidersHeight + 2;
@@ -12117,8 +12169,13 @@ export function App({
     ? MODEL_POPUP_WIDTH
     : MODEL_POPUP_PROVIDER_COLUMN_WIDTH + 2;
   useEffect(() => {
-    setModelMenuIndex((current) => Math.min(current, Math.max(modelVisibleOptionCount - 1, 0)));
-  }, [modelVisibleOptionCount]);
+    setModelMenuIndex((current) => Math.min(current, Math.max(modelMenuRowCount - 1, 0)));
+  }, [modelMenuRowCount]);
+  useEffect(() => {
+    // Persist the computed keep-in-view start index; hover cannot change
+    // modelMenuIndex, so this never scrolls on its own.
+    setModelMenuStartIndex(activeMenuWindow.startIndex);
+  }, [activeMenuWindow.startIndex]);
   const settingsSelectMenuHeight = Math.min(Math.max(settingsSelectItems.length, 1), 6);
   const settingsSelectPopupHeight = 3 + settingsSelectMenuHeight;
   const composerEnvPopupWidth = Math.max(
@@ -17357,15 +17414,32 @@ export function App({
             ) : null}
           </box>
           {modelSubmenuOpen ? (
-            <box style={{ flexGrow: 1, flexDirection: "column", paddingLeft: 1 }}>
+            <box
+              style={{ flexGrow: 1, flexDirection: "column", paddingLeft: 1 }}
+              onMouseScroll={(event) => {
+                const direction = event.scroll?.direction;
+                if (direction !== "up" && direction !== "down") return;
+                // Wheel moves the selection like the arrow keys; the
+                // keep-in-view window follows the selection.
+                setModelMenuIndex((current) =>
+                  direction === "up"
+                    ? Math.max(0, current - 1)
+                    : Math.min(Math.max(modelMenuRowCount - 1, 0), current + 1),
+                );
+              }}
+            >
               <text
                 content={isModelSearchActive ? `Search: ${modelSearchQuery}` : "Type to search"}
                 style={{ fg: isModelSearchActive ? PALETTE.text : PALETTE.subtle, marginBottom: 1 }}
               />
               {isModelSearchActive ? (
                 visibleModelSearchResults.length > 0 ? (
-                  visibleModelSearchWindow.rows.map((item, localIndex) => {
-                    const index = visibleModelSearchWindow.startIndex + localIndex;
+                  visibleModelSearchWindow?.rows.map((displayRow) => {
+                    if (displayRow.kind !== "row") {
+                      return <ModelMenuMoreRow key={displayRow.kind} displayRow={displayRow} />;
+                    }
+                    const item = displayRow.row;
+                    const index = displayRow.index;
                     return (
                       <PopupRow
                         key={`model-search:${item.instanceId}:${item.slug}`}
@@ -17394,8 +17468,12 @@ export function App({
                   style={{ fg: PALETTE.muted }}
                 />
               ) : (
-                visibleModelMenuWindow.rows.map((row, localIndex) => {
-                  const index = visibleModelMenuWindow.startIndex + localIndex;
+                visibleModelMenuWindow.rows.map((displayRow) => {
+                  if (displayRow.kind !== "row") {
+                    return <ModelMenuMoreRow key={displayRow.kind} displayRow={displayRow} />;
+                  }
+                  const index = displayRow.index;
+                  const row = displayRow.row;
                   if (row.kind === "legacyHeader") {
                     return (
                       <PopupRow

@@ -16,7 +16,7 @@ const CLAUDE_CODE_SURFACE = "cc";
 export type ClaudeCatalogModel = {
   readonly slug: string;
   readonly name: string;
-  readonly hidden: boolean;
+  readonly isLegacy: boolean;
   readonly thinkingType: "effort" | "none";
   readonly fastMode: boolean;
 };
@@ -25,6 +25,7 @@ type RawCatalogModel = {
   readonly id?: unknown;
   readonly name?: unknown;
   readonly hidden?: unknown;
+  readonly section?: unknown;
   readonly thinking?: { readonly type?: unknown } | null;
   readonly fast_mode?: unknown;
 };
@@ -66,7 +67,10 @@ export function parseClaudeCatalogFile(
     models.push({
       slug,
       name: typeof model.name === "string" && model.name.length > 0 ? model.name : slug,
-      hidden: model.hidden === true,
+      // The catalog groups current models under "main" and files superseded
+      // ones under other sections (e.g. "overflow"); it never uses `hidden`.
+      isLegacy:
+        model.hidden === true || (typeof model.section === "string" && model.section !== "main"),
       thinkingType: model.thinking?.type === "effort" ? "effort" : "none",
       // `fast_mode` is a config object when supported, absent otherwise; a
       // literal `false` means off.

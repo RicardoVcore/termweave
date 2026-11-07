@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_MODEL,
-  DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_REASONING_EFFORT_BY_PROVIDER,
   MODEL_OPTIONS,
-  MODEL_OPTIONS_BY_PROVIDER,
   ProviderInstanceId,
   type ProviderDriverKind,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
@@ -18,9 +14,6 @@ import {
   createModelSelection,
   buildProviderOptionSelectionsFromDescriptors,
   getEffectiveClaudeCodeEffort,
-  getDefaultGitTextGenerationModelForDriver,
-  getDefaultModel,
-  getDefaultModelForDriver,
   getDefaultReasoningEffort,
   getModelSelectionOptionDescriptors,
   getModelSelectionBooleanOptionValue,
@@ -38,8 +31,6 @@ import {
   resolveReasoningEffortForProvider,
   resolvePromptInjectedEffort,
   resolveSelectableModel,
-  resolveModelSlug,
-  resolveModelSlugForProvider,
   supportsClaudeAdaptiveReasoning,
   supportsClaudeFastMode,
   supportsClaudeMaxEffort,
@@ -81,10 +72,12 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("constructor")).toBe("constructor");
   });
 
-  it("uses provider-specific aliases", () => {
-    expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
-    expect(normalizeModelSlug("opus-4.6", "claudeAgent")).toBe("claude-opus-4-6");
-    expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeAgent")).toBe("claude-haiku-4-5");
+  it("passes Claude slugs through now that model knowledge lives on the server", () => {
+    expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("sonnet");
+    expect(normalizeModelSlug("claude-sonnet-4-6", "claudeAgent")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeAgent")).toBe(
+      "claude-haiku-4-5-20251001",
+    );
   });
 
   it("uses open-provider driver aliases without constraining custom slugs", () => {
@@ -94,24 +87,6 @@ describe("normalizeModelSlug", () => {
     );
     expect(normalizeModelSlug("openai/gpt-5", "opencode" as ProviderDriverKind)).toBe(
       "openai/gpt-5",
-    );
-  });
-});
-
-describe("driver model defaults", () => {
-  it("returns provider defaults for built-in drivers", () => {
-    expect(getDefaultModelForDriver("codex")).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-    expect(getDefaultModelForDriver("claudeAgent")).toBe(DEFAULT_MODEL_BY_PROVIDER.claudeAgent);
-    expect(getDefaultGitTextGenerationModelForDriver("codex")).toBe(
-      DEFAULT_GIT_TEXT_GENERATION_MODEL,
-    );
-  });
-
-  it("returns open-provider defaults for known external drivers", () => {
-    expect(getDefaultModelForDriver("cursor" as ProviderDriverKind)).toBe("auto");
-    expect(getDefaultModelForDriver("opencode" as ProviderDriverKind)).toBe("openai/gpt-5");
-    expect(getDefaultGitTextGenerationModelForDriver("cursor" as ProviderDriverKind)).toBe(
-      "composer-2",
     );
   });
 });
@@ -272,39 +247,10 @@ describe("resolvePromptInjectedEffort", () => {
   });
 });
 
-describe("resolveModelSlug", () => {
-  it("returns default only when the model is missing", () => {
-    expect(resolveModelSlug(undefined)).toBe(DEFAULT_MODEL);
-    expect(resolveModelSlug(null)).toBe(DEFAULT_MODEL);
-  });
-
-  it("preserves unknown custom models", () => {
-    expect(resolveModelSlug("gpt-4.1")).toBe(DEFAULT_MODEL);
-    expect(resolveModelSlug("custom/internal-model")).toBe(DEFAULT_MODEL);
-  });
-
-  it("resolves only supported model options", () => {
-    for (const model of MODEL_OPTIONS) {
-      expect(resolveModelSlug(model.slug)).toBe(model.slug);
-    }
-  });
-
-  it("supports provider-aware resolution", () => {
-    expect(resolveModelSlugForProvider("claudeAgent", undefined)).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
-    );
-    expect(resolveModelSlugForProvider("claudeAgent", "opus")).toBe("claude-opus-4-6");
-    expect(resolveModelSlugForProvider("claudeAgent", "sonnet")).toBe("claude-sonnet-4-6");
-    expect(resolveModelSlugForProvider("claudeAgent", "opus-4.8")).toBe("claude-opus-4-8");
-    expect(resolveModelSlugForProvider("claudeAgent", "gpt-5.3-codex")).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
-    );
-  });
-
-  it("keeps codex defaults for backward compatibility", () => {
-    expect(getDefaultModel()).toBe(DEFAULT_MODEL);
+describe("getModelOptions", () => {
+  it("keeps codex models and leaves Claude models to the server", () => {
     expect(getModelOptions()).toEqual(MODEL_OPTIONS);
-    expect(getModelOptions("claudeAgent")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeAgent);
+    expect(getModelOptions("claudeAgent")).toEqual([]);
   });
 });
 
@@ -334,12 +280,6 @@ describe("resolveSelectableModel", () => {
         { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
       ]),
     ).toBe("gpt-5.4");
-    expect(
-      resolveSelectableModel("claudeAgent", "sonnet", [
-        { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-        { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-      ]),
-    ).toBe("claude-sonnet-4-6");
   });
 
   it("returns null for empty input", () => {
@@ -372,6 +312,14 @@ describe("resolveSelectableModel", () => {
     ).toBeNull();
     expect(
       resolveSelectableModel("claudeAgent", "5.3", [
+        { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("passes Claude slugs through now that client-side aliases are gone", () => {
+    expect(
+      resolveSelectableModel("claudeAgent", "sonnet", [
         { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
       ]),
     ).toBeNull();
@@ -433,16 +381,18 @@ describe("inferProviderForModel", () => {
   it("detects known provider model slugs", () => {
     expect(inferProviderForModel("gpt-5.3-codex")).toBe("codex");
     expect(inferProviderForModel("claude-sonnet-4-6")).toBe("claudeAgent");
-    expect(inferProviderForModel("sonnet")).toBe("claudeAgent");
   });
 
   it("falls back when the model is unknown", () => {
     expect(inferProviderForModel("custom/internal-model")).toBe("codex");
     expect(inferProviderForModel("custom/internal-model", "claudeAgent")).toBe("claudeAgent");
+    expect(inferProviderForModel("sonnet")).toBe("codex");
+    expect(inferProviderForModel("sonnet", "claudeAgent")).toBe("claudeAgent");
   });
 
-  it("treats claude-prefixed custom slugs as claude", () => {
+  it("treats any claude-prefixed slug as claudeAgent without a hard-coded model list", () => {
     expect(inferProviderForModel("claude-custom-internal")).toBe("claudeAgent");
+    expect(inferProviderForModel("claude-future-model-99", "codex")).toBe("claudeAgent");
   });
 });
 
@@ -572,7 +522,6 @@ describe("supportsClaudeUltracodeEffort", () => {
 describe("supportsClaudeFastMode", () => {
   it("only enables Claude fast mode for Opus 4.6", () => {
     expect(supportsClaudeFastMode("claude-opus-4-6")).toBe(true);
-    expect(supportsClaudeFastMode("opus-4.6")).toBe(true);
     expect(supportsClaudeFastMode("claude-sonnet-4-6")).toBe(false);
     expect(supportsClaudeFastMode("claude-haiku-4-5")).toBe(false);
     expect(supportsClaudeFastMode(undefined)).toBe(false);
@@ -594,7 +543,6 @@ describe("supportsClaudeThinkingToggle", () => {
     expect(supportsClaudeThinkingToggle("claude-opus-4-6")).toBe(false);
     expect(supportsClaudeThinkingToggle("claude-sonnet-4-6")).toBe(false);
     expect(supportsClaudeThinkingToggle("claude-haiku-4-5")).toBe(true);
-    expect(supportsClaudeThinkingToggle("haiku")).toBe(true);
     expect(supportsClaudeThinkingToggle(undefined)).toBe(false);
   });
 });
