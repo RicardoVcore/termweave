@@ -40,56 +40,13 @@ import {
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
 
-function getOpenCodePromptErrorMessage(error: unknown): string | null {
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-
-  const message =
-    "data" in error &&
-    error.data &&
-    typeof error.data === "object" &&
-    "message" in error.data &&
-    typeof error.data.message === "string"
-      ? error.data.message.trim()
-      : "";
-  if (message.length > 0) {
-    return message;
-  }
-
-  if ("name" in error && typeof error.name === "string") {
-    const name = error.name.trim();
-    return name.length > 0 ? name : null;
-  }
-
-  return null;
-}
-
-function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): string {
-  return (parts ?? [])
-    .flatMap((part) => {
-      if (!part || typeof part !== "object") {
-        return [];
-      }
-      if (!("type" in part) || part.type !== "text") {
-        return [];
-      }
-      if (!("text" in part) || typeof part.text !== "string") {
-        return [];
-      }
-      return [part.text];
-    })
-    .join("")
-    .trim();
-}
-
 interface SharedOpenCodeTextGenerationServerState {
   server: OpenCodeServerProcess | null;
   /**
    * The scope that owns the shared server's lifetime. Closing this scope
    * terminates the OpenCode child process and interrupts any fibers the
    * runtime forked during startup. We don't hold a `close()` function on
-   * the server handle anymore — the scope is the only lifecycle handle.
+   * the server handle anymore - the scope is the only lifecycle handle.
    */
   serverScope: Scope.Closeable | null;
   binaryPath: string | null;
@@ -285,52 +242,74 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       });
     }
 
+    const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
+    const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
     const fileParts = toOpenCodeFileParts({
       attachments: input.attachments,
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
     });
 
-    const runAgainstServer = (server: Pick<OpenCodeServerConnection, "url">) =>
+    const runAgainstServer = (server: Pick<OpenCodeServerConnection, "url" | "password">) =>
       Effect.tryPromise({
         try: async () => {
           const client = openCodeRuntime.createOpenCodeSdkClient({
             baseUrl: server.url,
-            directory: input.cwd,
-            ...(openCodeSettings.serverUrl.length > 0 && openCodeSettings.serverPassword
-              ? { serverPassword: openCodeSettings.serverPassword }
-              : {}),
+            ...(server.password ? { serverPassword: server.password } : {}),
           });
+
+          // One throwaway session per request: the model (and variant) is fixed
+          // at creation, the agent is session state, `session.prompt` +
+          // `experimental.session.wait` block until the turn completes, then
+          // the final assistant message carries the text. 2.x has no blocking
+          // one-shot prompt that accepts file attachments, so this is the
+          // uniform path for prompts with and without attachments.
           const session = await client.session.create({
             title: `Termweave ${input.operation}`,
-            permission: [{ permission: "*", pattern: "*", action: "deny" }],
+            location: { directory: input.cwd },
+            model: {
+              providerID: parsedModel.providerID,
+              id: parsedModel.modelID,
+              ...(selectedVariant ? { variant: selectedVariant } : {}),
+            },
+            permissions: [{ action: "*", resource: "*", effect: "deny" }],
           });
-          if (!session.data) {
-            throw new Error("OpenCode session.create returned no session payload.");
-          }
-          const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-          const selectedVariant = getModelSelectionStringOptionValue(
-            input.modelSelection,
-            "variant",
-          );
+          try {
+            if (selectedAgent) {
+              await client.session.switchAgent({
+                sessionID: session.id,
+                agent: selectedAgent,
+              });
+            }
+            await client.session.prompt({
+              sessionID: session.id,
+              text: input.prompt,
+              ...(fileParts.length > 0 ? { files: fileParts } : {}),
+            });
+            await client.experimental.session.wait({ sessionID: session.id });
 
-          const result = await client.session.prompt({
-            sessionID: session.data.id,
-            model: parsedModel,
-            ...(selectedAgent ? { agent: selectedAgent } : {}),
-            ...(selectedVariant ? { variant: selectedVariant } : {}),
-            parts: [{ type: "text", text: input.prompt }, ...fileParts],
-          });
-          const info = result.data?.info;
-          const errorMessage = getOpenCodePromptErrorMessage(info?.error);
-          if (errorMessage) {
-            throw new Error(errorMessage);
+            const messages = await client.session.context({ sessionID: session.id });
+            const assistant = messages.toReversed().find((message) => message.type === "assistant");
+            if (!assistant) {
+              throw new Error("OpenCode session produced no assistant message.");
+            }
+            const errorMessage = assistant.error ? assistant.error.message : undefined;
+            if (errorMessage && errorMessage.trim().length > 0) {
+              throw new Error(errorMessage);
+            }
+            const rawText = assistant.content
+              .flatMap((part) => (part.type === "text" ? [part.text] : []))
+              .join("")
+              .trim();
+            if (rawText.length === 0) {
+              throw new Error("OpenCode returned empty output.");
+            }
+            return rawText;
+          } finally {
+            // One-shot session: delete it so it never shows up in the user's
+            // OpenCode history. Best effort only.
+            await client.session.remove({ sessionID: session.id }).catch(() => undefined);
           }
-          const rawText = getOpenCodeTextResponse(result.data?.parts);
-          if (rawText.length === 0) {
-            throw new Error("OpenCode returned empty output.");
-          }
-          return rawText;
         },
         catch: (cause) =>
           new TextGenerationError({
@@ -342,7 +321,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
     const rawOutput =
       openCodeSettings.serverUrl.length > 0
-        ? yield* runAgainstServer({ url: openCodeSettings.serverUrl })
+        ? yield* runAgainstServer({
+            url: openCodeSettings.serverUrl,
+            password: openCodeSettings.serverPassword || null,
+          })
         : yield* Effect.acquireUseRelease(
             acquireSharedServer({
               binaryPath: openCodeSettings.binaryPath,
