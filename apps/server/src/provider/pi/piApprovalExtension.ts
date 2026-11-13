@@ -22,10 +22,11 @@ const READ_ONLY_BUILT_INS = new Set(["read", "grep", "find", "ls"]);
 export default function termweaveApproval(pi: ExtensionAPI) {
   const allowedForSession = new Set<string>();
   const needsApproval = (toolName: string): boolean => {
-    if (READ_ONLY_BUILT_INS.has(toolName) || allowedForSession.has(toolName)) return false;
-    // Same rule Pi documents for Codex-equivalent approvals (MCP annotation defaults).
+    // A replacement read-only tool that declares itself destructive must still ask.
     const hints = pi.getAllTools().find((tool) => tool.name === toolName)?.annotations;
     if (hints?.destructiveHint === true) return true;
+    if (READ_ONLY_BUILT_INS.has(toolName) || allowedForSession.has(toolName)) return false;
+    // Same rule Pi documents for Codex-equivalent approvals (MCP annotation defaults).
     return (
       !hints?.readOnlyHint && ((hints?.destructiveHint ?? true) || (hints?.openWorldHint ?? true))
     );

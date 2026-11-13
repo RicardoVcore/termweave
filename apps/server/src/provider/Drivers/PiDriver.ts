@@ -36,22 +36,26 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   makeProviderMaintenanceCapabilities,
-  makeStaticProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type ProviderMaintenanceCapabilitiesResolver,
 } from "../providerMaintenance.ts";
 const decodePiSettings = Schema.decodeSync(PiSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("pi");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
-const UPDATE = makeStaticProviderMaintenanceResolver(
-  makeProviderMaintenanceCapabilities({
-    provider: DRIVER_KIND,
-    packageName: null,
-    updateExecutable: "pi",
-    updateArgs: ["update"],
-    updateLockKey: "pi",
-  }),
-);
+// One-click Update must target the instance's own binary, so resolve from the
+// settings' `binaryPath` (or the resolved/real command path) instead of a
+// static `pi` on the server PATH.
+const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
+  resolve: (options) =>
+    makeProviderMaintenanceCapabilities({
+      provider: DRIVER_KIND,
+      packageName: null,
+      updateExecutable: options?.realCommandPath ?? options?.binaryPath ?? "pi",
+      updateArgs: ["update"],
+      updateLockKey: "pi",
+    }),
+};
 
 export type PiDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner

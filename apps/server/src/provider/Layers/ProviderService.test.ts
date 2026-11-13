@@ -562,6 +562,17 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+
+      // The rollback persists the recovered session binding with the rollback
+      // marker, so the (possibly re-forked) resume cursor survives.
+      const directory = yield* ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(initial.threadId);
+      const runtimePayload = Option.getOrNull(binding)?.runtimePayload as {
+        lastRuntimeEvent?: string;
+        lastRuntimeEventAt?: string;
+      } | null;
+      assert.equal(runtimePayload?.lastRuntimeEvent, "provider.rollback");
+      assert.equal(typeof runtimePayload?.lastRuntimeEventAt, "string");
     }),
   );
 

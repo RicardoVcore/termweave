@@ -396,6 +396,73 @@ describe("PiAdapter", () => {
     ),
   );
 
+  // Regression: answering an approval with `cancel` forks the abort sequence,
+  // and the cancelled tool settles the run on its own. A client sending the
+  // next turn right after `turn.completed` used to write its `prompt` before
+  // the still-in-flight `abort`, so Pi aborted the new turn instead. Pi reads
+  // stdin commands in order, so `abort` must precede the second `prompt`.
+  it.live("cancelled approval sends abort before the next turn's prompt", () =>
+    withAdapter({ fixture: "c3b-session-allow" }, (adapter, fake, queue) =>
+      Effect.gen(function* () {
+        const threadId = asThreadId("thread-c3b-cancel-race");
+        yield* adapter.startSession({
+          provider: "pi",
+          cwd: process.cwd(),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+
+        yield* adapter.sendTurn({ threadId, input: "run the command" });
+        const opened = yield* takeUntil(queue, (event) => event.type === "request.opened").pipe(
+          Effect.map((events) => events.at(-1)),
+        );
+        assert.ok(opened && opened.type === "request.opened");
+        assert.ok(typeof opened.requestId === "string");
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(opened.requestId),
+          "cancel",
+        );
+
+        yield* takeUntil(queue, (event) => event.type === "turn.completed");
+
+        // The abort may still be in flight when the turn settles; the second
+        // sendTurn must wait for it before writing its prompt.
+        const second = yield* adapter.sendTurn({ threadId, input: "run the command again" });
+
+        // The fixture's write-tool approval can open at any point relative to
+        // the second turn's replayed events, so accept it whenever it shows up
+        // and stop at the second turn's `turn.completed`.
+        let completed = false;
+        while (!completed) {
+          const event = yield* Queue.take(queue).pipe(Effect.timeout("10 seconds"));
+          if (event.type === "turn.completed" && event.turnId === second.turnId) {
+            completed = true;
+          } else if (event.type === "request.opened" && typeof event.requestId === "string") {
+            yield* adapter.respondToRequest(
+              threadId,
+              ApprovalRequestId.make(event.requestId),
+              "accept",
+            );
+          }
+        }
+
+        const received = fake.readReceived();
+        const promptIndexes = received.reduce<Array<number>>(
+          (acc, line, index) => (line === "prompt" ? [...acc, index] : acc),
+          [],
+        );
+        const abortIndex = received.indexOf("abort");
+        assert.ok(promptIndexes.length >= 2, "two prompts must be sent");
+        assert.ok(abortIndex > promptIndexes[0]!, "abort must follow the first prompt");
+        assert.ok(
+          promptIndexes[1]! > abortIndex,
+          `second prompt must come after abort, got ${JSON.stringify(received)}`,
+        );
+      }),
+    ),
+  );
+
   it.live("rejects sendTurn while a turn is active", () =>
     withAdapter({ fixture: "c3b-session-allow" }, (adapter, _fake, queue) =>
       Effect.gen(function* () {

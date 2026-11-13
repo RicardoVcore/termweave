@@ -51,6 +51,9 @@ interface AssistantBlock {
   accumulated: string;
 }
 
+/** Longest suffix of the previous bash snapshot used to anchor truncation. */
+const COMMAND_OUTPUT_OVERLAP_LIMIT = 256;
+
 const canonicalItemTypeForTool = (toolName: string): ToolItemType => {
   if (toolName === "bash" || toolName === "powershell") {
     return "command_execution";
@@ -132,9 +135,17 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
   let interruptRequested = false;
   let lastAssistantStopReason: string | undefined;
   let lastAssistantErrorMessage: string | undefined;
+  // Set when a terminal `runtime.error` was already emitted this turn
+  // (`auto_retry_end` with `success: false`), so `agent_settled` does not
+  // emit a duplicate for the same failure.
+  let emittedTerminalRuntimeError = false;
   const blocks = new Map<number, AssistantBlock>();
+  // Content indexes of the current assistant message that already produced an
+  // `item.completed` (reset on `message_start`); used to reconcile blocks that
+  // never streamed when `message_end` arrives.
+  const completedBlockIndexes = new Set<number>();
   const tools = new Map<string, ToolItemState>();
-  const toolOutputLengths = new Map<string, number>();
+  const toolOutputSnapshots = new Map<string, string>();
   const declinedToolCallIds = new Set<string>();
 
   const raw = piEventRaw;
@@ -208,16 +219,16 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
     if (role === "assistant") {
       if (record.type === "message_start") {
         assistantMessageCount += 1;
+        completedBlockIndexes.clear();
         return [];
       }
       lastAssistantStopReason =
         typeof record.message?.stopReason === "string" ? record.message.stopReason : undefined;
       lastAssistantErrorMessage =
         typeof record.message?.errorMessage === "string" ? record.message.errorMessage : undefined;
-      if (lastAssistantStopReason !== "error") {
-        return [];
-      }
-      return [runtimeError(trimNonEmpty(lastAssistantErrorMessage) ?? "Pi provider error", record)];
+      // A recoverable failure (`auto_retry_start` follows) must not surface as
+      // `runtime.error` yet; the terminal emission happens at `agent_settled`.
+      return mapNeverStreamedBlocks(record);
     }
     // system/user/toolResult messages are ignored (Termweave owns the user
     // message; toolResults duplicate tool_execution_end).
@@ -227,6 +238,61 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
   const assistantItemId = (blockKind: "text" | "thinking", contentIndex: number): string => {
     const suffix = blockKind === "text" ? "t" : "r";
     return `${turnId}:a${assistantMessageCount - 1}:${suffix}${contentIndex}`;
+  };
+
+  /**
+   * `message_end.message` is authoritative, but `*_end` block events are only
+   * sent for blocks that actually streamed. Emit `item.started` +
+   * `item.completed` for every final content block that never produced an
+   * `item.completed` in this message.
+   */
+  const mapNeverStreamedBlocks = (record: PiMessageEvent): ReadonlyArray<PiRuntimeEventDraft> => {
+    const content = record.message?.content;
+    if (!Array.isArray(content)) {
+      return [];
+    }
+    const drafts: Array<PiRuntimeEventDraft> = [];
+    content.forEach((entry, contentIndex) => {
+      if (completedBlockIndexes.has(contentIndex)) {
+        return;
+      }
+      const block = entry as { type?: unknown; text?: unknown; thinking?: unknown };
+      const blockKind: "text" | "thinking" | undefined =
+        block.type === "text" ? "text" : block.type === "thinking" ? "thinking" : undefined;
+      if (blockKind === undefined) {
+        return;
+      }
+      const detail = trimNonEmpty(
+        blockKind === "text"
+          ? typeof block.text === "string"
+            ? block.text
+            : undefined
+          : typeof block.thinking === "string"
+            ? block.thinking
+            : undefined,
+      );
+      if (detail === undefined) {
+        return;
+      }
+      const itemType = blockKind === "text" ? "assistant_message" : "reasoning";
+      drafts.push(
+        itemEvent(
+          "item.started",
+          assistantItemId(blockKind, contentIndex),
+          { itemType, status: "inProgress" },
+          record,
+          false,
+        ),
+        itemEvent(
+          "item.completed",
+          assistantItemId(blockKind, contentIndex),
+          { itemType, status: "completed", detail },
+          record,
+          false,
+        ),
+      );
+    });
+    return drafts;
   };
 
   const mapAssistantBlockEvent = (record: PiMessageEvent): ReadonlyArray<PiRuntimeEventDraft> => {
@@ -270,6 +336,7 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
       case "thinking_end": {
         const block = blocks.get(contentIndex);
         blocks.delete(contentIndex);
+        completedBlockIndexes.add(contentIndex);
         const itemType = blockKind === "text" ? "assistant_message" : "reasoning";
         const detail = trimNonEmpty(
           typeof event.content === "string" ? event.content : block?.accumulated,
@@ -313,7 +380,10 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
     ];
   };
 
-  // bash `partialResult` content is cumulative; emit only the new suffix.
+  // bash `partialResult` content is cumulative; emit only the part after the
+  // previous snapshot. When Pi truncates the head or replaces the snapshot,
+  // anchor on the longest kept suffix of the previous snapshot (capped, so a
+  // resync that shares no overlap resends the snapshot in full).
   const mapToolUpdate = (
     record: PiToolExecutionUpdateEvent,
   ): ReadonlyArray<PiRuntimeEventDraft> => {
@@ -321,20 +391,33 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
     if (state === undefined || state.itemType !== "command_execution") {
       return [];
     }
-    const text = textOfToolResult(record.partialResult);
-    const lastLength = toolOutputLengths.get(record.toolCallId) ?? 0;
-    toolOutputLengths.set(record.toolCallId, text.length);
-    const suffix = text.length > lastLength ? text.slice(lastLength) : "";
-    if (suffix.length === 0) {
+    const next = textOfToolResult(record.partialResult);
+    const prev = toolOutputSnapshots.get(record.toolCallId) ?? "";
+    toolOutputSnapshots.set(record.toolCallId, next);
+    let delta: string;
+    if (next.startsWith(prev)) {
+      delta = next.slice(prev.length);
+    } else {
+      let overlap = 0;
+      const maxOverlap = Math.min(prev.length, COMMAND_OUTPUT_OVERLAP_LIMIT);
+      for (let length = maxOverlap; length > 0; length -= 1) {
+        if (next.startsWith(prev.slice(prev.length - length))) {
+          overlap = length;
+          break;
+        }
+      }
+      delta = next.slice(overlap);
+    }
+    if (delta.length === 0) {
       return [];
     }
-    return [contentDelta("command_output", suffix, record.toolCallId)];
+    return [contentDelta("command_output", delta, record.toolCallId)];
   };
 
   const mapToolEnd = (record: PiToolExecutionEndEvent): ReadonlyArray<PiRuntimeEventDraft> => {
     const state = tools.get(record.toolCallId);
     tools.delete(record.toolCallId);
-    toolOutputLengths.delete(record.toolCallId);
+    toolOutputSnapshots.delete(record.toolCallId);
     const itemType = state?.itemType ?? canonicalItemTypeForTool(record.toolName);
     const status = declinedToolCallIds.has(record.toolCallId)
       ? "declined"
@@ -385,18 +468,22 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
           : lastAssistantStopReason === "aborted"
             ? "interrupted"
             : "completed";
-    return [
-      {
-        type: "turn.completed",
-        turnId,
-        payload: {
-          state,
-          stopReason: lastAssistantStopReason ?? null,
-          ...(errorMessage ? { errorMessage } : {}),
-        },
-        raw: raw(record),
-      } satisfies PiRuntimeEventDraft,
-    ];
+    const drafts: Array<PiRuntimeEventDraft> = [];
+    if (state === "failed" && !emittedTerminalRuntimeError) {
+      emittedTerminalRuntimeError = true;
+      drafts.push(runtimeError(errorMessage ?? "Pi provider error", record));
+    }
+    drafts.push({
+      type: "turn.completed",
+      turnId,
+      payload: {
+        state,
+        stopReason: lastAssistantStopReason ?? null,
+        ...(errorMessage ? { errorMessage } : {}),
+      },
+      raw: raw(record),
+    } satisfies PiRuntimeEventDraft);
+    return drafts;
   };
 
   const mapAutoRetryStart = (record: PiAutoRetryStartEvent): ReadonlyArray<PiRuntimeEventDraft> => {
@@ -416,6 +503,9 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
     if (record.success !== false) {
       return [];
     }
+    // Retries exhausted: the terminal error is emitted here, so
+    // `agent_settled` must not repeat it for the same failure.
+    emittedTerminalRuntimeError = true;
     return [runtimeError(trimNonEmpty(record.finalError) ?? "Retries exhausted", record)];
   };
 

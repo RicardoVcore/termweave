@@ -191,7 +191,7 @@ Ordering quirk **[verified]**: `*_end` events can arrive after the next block ha
 
 `message_update.usage` is the cumulative usage for that assistant message. It can stay 0 until the end for some providers. Per-message `usage.input` excludes cached tokens (`cacheRead` holds them, ~17k for the system prompt on Venice), so use `get_session_stats` for totals, not a sum of messages.
 
-`AssistantMessage.stopReason`: `"pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"`, plus `errorMessage?`. On `message_end` with `stopReason:"error"`, emit `runtime.error` (class `provider_error`) with `errorMessage`, unless an `auto_retry_start` follows (retry pending).
+`AssistantMessage.stopReason`: `"pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"`, plus `errorMessage?`. A `message_end` with `stopReason:"error"` may be recoverable (`auto_retry_start` follows), so only remember it; emit `runtime.error` (class `provider_error`) with `errorMessage` at `agent_settled` when the turn failed, unless `auto_retry_end{success:false}` already emitted the terminal error for this turn (retry notices stay warnings).
 
 Observed provider error **[verified]** (Venice 403, key IP allowlist): the prompt is accepted (`started`), then one assistant `message_start`/`message_end` with `stopReason:"error"`, `errorMessage:"403 \"This API key is restricted to configured IP addresses, ...\""`, zero usage, no deltas, no `auto_retry_*` (4xx is not retried) -> `turn_end` -> `agent_end{willRetry:false}` -> `agent_settled{aborted:false}`. The turn fails with that text.
 
@@ -277,10 +277,11 @@ const READ_ONLY_BUILT_INS = new Set(["read", "grep", "find", "ls"]);
 export default function termweaveApproval(pi: ExtensionAPI) {
   const allowedForSession = new Set<string>();
   const needsApproval = (toolName: string): boolean => {
-    if (READ_ONLY_BUILT_INS.has(toolName) || allowedForSession.has(toolName)) return false;
-    // Same rule Pi documents for Codex-equivalent approvals (MCP annotation defaults).
+    // A replacement read-only tool that declares itself destructive must still ask.
     const hints = pi.getAllTools().find((tool) => tool.name === toolName)?.annotations;
     if (hints?.destructiveHint === true) return true;
+    if (READ_ONLY_BUILT_INS.has(toolName) || allowedForSession.has(toolName)) return false;
+    // Same rule Pi documents for Codex-equivalent approvals (MCP annotation defaults).
     return (
       !hints?.readOnlyHint && ((hints?.destructiveHint ?? true) || (hints?.openWorldHint ?? true))
     );
@@ -314,7 +315,7 @@ Adapter side, for `extension_ui_request` with `method:"select"` and `title` star
 3. `respondToRequest(threadId, requestId, decision)` -> write `{"type":"extension_ui_response","id":requestId,"value":decision}` (decision is already one of the four strings). Emit `request.resolved` with the decision.
 4. Remember `toolCallId`s that got `decline`/`cancel`, so their `tool_execution_end` completes with `status:"declined"`.
 
-`terminate:true` on cancel stops the agent after this batch, so `cancel` = stop the turn and `decline` = tell the model and continue. This matches Codex semantics.
+`terminate:true` alone does **not** stop the agent: Pi only stops a batch when every tool result has `terminate === true`, so cancelling one tool in a batch with non-terminating results lets the model continue. The adapter therefore runs the interrupt sequence (`clear_queue` + `abort`, section 4) when the user cancels, so `cancel` = stop the turn and `decline` = tell the model and continue. This matches Codex semantics.
 
 Observed **[verified]**:
 
@@ -333,8 +334,8 @@ Dialogs block Pi until answered:
 | -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `select` (no prefix) | `title`, `options: string[]`, `timeout?` | `user-input.requested`, one question, options = `options` (description = label). Answer -> `{value: <label>}` |
 | `confirm`            | `title`, `message`, `timeout?`           | `user-input.requested` with options Yes/No -> `{confirmed: bool}`                                             |
-| `input`              | `title`, `placeholder?`, `timeout?`      | `user-input.requested` free text -> `{value}`                                                                 |
-| `editor`             | `title`, `prefill?`                      | Same as `input` -> `{value}`                                                                                  |
+| `input`              | `title`, `placeholder?`, `timeout?`      | Cancelled immediately -> `{"cancelled":true}` (the TUI has no free-text dialog yet)                           |
+| `editor`             | `title`, `prefill?`                      | Same as `input` -> `{"cancelled":true}`                                                                       |
 
 Any of these can be dismissed with `{"type":"extension_ui_response","id","cancelled":true}`. When `timeout` is set, Pi auto-resolves on its own, so the adapter should drop the pending request once the timeout has elapsed.
 

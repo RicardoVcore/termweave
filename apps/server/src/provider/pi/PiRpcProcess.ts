@@ -6,9 +6,12 @@
  * sending anything, then use `request` for commands and `send` for
  * fire-and-forget records (extension UI responses). Closing stdin with
  * `closeStdin` shuts Pi down in an orderly way; `exited` completes with the
- * exit code. Pending `request`s fail with `PiRpcError` when the process exits.
+ * exit code, or fails when the exit code itself is unavailable (signal exit).
+ * Every transport death (exit, signal, stdout or stdin failure) runs the same
+ * idempotent terminal cleanup, so pending `request`s fail with `PiRpcError`
+ * and `records` completes instead of hanging.
  */
-import { Cause, Data, Deferred, Effect, Queue, Ref, Scope, Stream } from "effect";
+import { Cause, Data, Deferred, Effect, Fiber, Queue, Ref, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -85,11 +88,6 @@ export const makePiRpcProcess: (
 
   // stdin is a queue of encoded JSONL lines; `Queue.end` closes the pipe.
   const stdin = yield* Queue.unbounded<Uint8Array, Cause.Done>();
-  yield* Stream.fromQueue(stdin).pipe(
-    Stream.run(child.stdin),
-    Effect.catchCause(() => Effect.void),
-    Effect.forkIn(scope),
-  );
 
   // Records emitted before the adapter subscribes must be buffered, so the
   // stream is backed by a queue drained by one consumer.
@@ -98,7 +96,6 @@ export const makePiRpcProcess: (
   const exitedRef = yield* Ref.make(false);
   const exited = yield* Deferred.make<number, PiRpcError>();
   const stderrTailRef = yield* Ref.make("");
-
   const failPending = (detail: string, cause?: unknown) =>
     Ref.getAndSet(pendingRef, new Map<string, PendingResponse>()).pipe(
       Effect.flatMap((pending) =>
@@ -111,38 +108,25 @@ export const makePiRpcProcess: (
       ),
     );
 
-  yield* child.exitCode.pipe(
-    Effect.flatMap((code) =>
-      Effect.gen(function* () {
-        yield* Ref.set(exitedRef, true);
-        const stderrTail = yield* Ref.get(stderrTailRef);
-        yield* Effect.logDebug("Pi process exited", {
-          exitCode: code,
-          ...(stderrTail.trim().length > 0 ? { stderr: stderrTail } : {}),
-        });
-        yield* failPending(`Pi process exited with code ${Number(code)}`);
-        yield* Deferred.succeed(exited, Number(code));
-        yield* Queue.end(recordQueue);
-      }),
-    ),
-    Effect.catchCause((cause) =>
-      Deferred.fail(
-        exited,
-        new PiRpcError({ detail: "Failed to read Pi process exit code", cause }),
-      ),
-    ),
-    Effect.forkIn(scope),
-  );
-
-  // stderr is diagnostics only: keep a tail for error reports, never parse it.
-  yield* child.stderr.pipe(
-    Stream.decodeText(),
-    Stream.runForEach((chunk) =>
-      Ref.update(stderrTailRef, (current) => (current + chunk).slice(-STDERR_TAIL_LIMIT)),
-    ),
-    Effect.catchCause(() => Effect.void),
-    Effect.forkIn(scope),
-  );
+  /**
+   * One terminal cleanup for every way the transport dies: fail pending
+   * requests, end the record and stdin queues, and settle `exited`. Idempotent
+   * so concurrent failure paths (exit watcher, pipe readers) are no-ops after
+   * the first one wins.
+   */
+  const terminate = (detail: string, code: number | undefined) =>
+    Effect.gen(function* () {
+      if (yield* Ref.get(exitedRef)) return;
+      yield* Ref.set(exitedRef, true);
+      yield* failPending(detail);
+      yield* Queue.end(recordQueue);
+      yield* Queue.end(stdin);
+      if (code === undefined) {
+        yield* Deferred.fail(exited, new PiRpcError({ detail }));
+        return;
+      }
+      yield* Deferred.succeed(exited, code);
+    });
 
   const handleResponse = (response: PiResponse) =>
     Effect.gen(function* () {
@@ -175,7 +159,19 @@ export const makePiRpcProcess: (
       yield* Deferred.succeed(deferred, response.data).pipe(Effect.ignore);
     });
 
-  yield* child.stdout.pipe(
+  yield* Stream.fromQueue(stdin).pipe(
+    Stream.run(child.stdin),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Pi stdin writer failed", { cause }).pipe(
+        Effect.andThen(terminate("Pi stdin failed", undefined)),
+      ),
+    ),
+    Effect.forkIn(scope),
+  );
+
+  // stdout reader is forked first so the exit watcher can drain it: responses
+  // and records emitted just before exit must not be dropped.
+  const stdoutFiber = yield* child.stdout.pipe(
     Stream.decodeText(),
     Stream.splitLines,
     Stream.runForEach((line) => {
@@ -190,7 +186,41 @@ export const makePiRpcProcess: (
       }
       return Queue.offer(recordQueue, record).pipe(Effect.asVoid);
     }),
-    Effect.catchCause((cause) => Effect.logWarning("Pi stdout reader failed", { cause })),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Pi stdout reader failed", { cause }).pipe(
+        Effect.andThen(terminate("Pi stdout failed", undefined)),
+      ),
+    ),
+    Effect.forkIn(scope),
+  );
+
+  yield* child.exitCode.pipe(
+    Effect.flatMap((code) =>
+      Effect.gen(function* () {
+        const stderrTail = yield* Ref.get(stderrTailRef);
+        yield* Effect.logDebug("Pi process exited", {
+          exitCode: code,
+          ...(stderrTail.trim().length > 0 ? { stderr: stderrTail } : {}),
+        });
+        // Drain buffered stdout before cleanup: Node reports `exit` while the
+        // final responses and records may still be in flight on the pipe.
+        yield* Fiber.await(stdoutFiber).pipe(Effect.timeoutOption("2 seconds"), Effect.asVoid);
+        yield* terminate(`Pi process exited with code ${Number(code)}`, Number(code));
+      }),
+    ),
+    Effect.catchCause((cause) =>
+      terminate(`Pi process terminated: ${Cause.pretty(cause)}`, undefined),
+    ),
+    Effect.forkIn(scope),
+  );
+
+  // stderr is diagnostics only: keep a tail for error reports, never parse it.
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) =>
+      Ref.update(stderrTailRef, (current) => (current + chunk).slice(-STDERR_TAIL_LIMIT)),
+    ),
+    Effect.catchCause(() => Effect.void),
     Effect.forkIn(scope),
   );
 

@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { TextGenerationError, type ModelSelection, type PiSettings } from "@termweave/contracts";
+import { getModelSelectionStringOptionValue } from "@termweave/shared/model";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@termweave/shared/git";
 import { extractJsonObject } from "@termweave/shared/schemaJson";
 
@@ -24,6 +25,7 @@ import {
   type PiRpcCommandError,
   type PiRpcError,
 } from "../provider/pi/PiRpcProcess.ts";
+import type { PiMessageEvent } from "../provider/pi/piRpcProtocol.ts";
 import { type ThreadTitleGenerationResult, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -130,12 +132,41 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
               mapPiError(operation, `Failed to set the Pi model: ${piErrorText(cause)}`, cause),
             ),
           );
+        const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+        if (thinking !== undefined) {
+          yield* pi
+            .request({ type: "set_thinking_level", level: thinking })
+            .pipe(
+              Effect.mapError((cause) =>
+                mapPiError(
+                  operation,
+                  `Failed to set the Pi thinking level: ${piErrorText(cause)}`,
+                  cause,
+                ),
+              ),
+            );
+        }
 
         // `agent_settled` is the only reliable end-of-turn marker, so subscribe
-        // before prompting and await the first settle afterwards (doc section 5).
+        // before prompting and fold the records until it arrives (doc section
+        // 5). The last assistant `message_end` failure is kept so provider
+        // errors surface instead of an "empty output" message.
         const settledFiber = yield* Effect.forkChild(
-          Stream.runHead(
-            pi.records.pipe(Stream.filter((record) => record.type === "agent_settled")),
+          pi.records.pipe(
+            Stream.takeWhile((record) => record.type !== "agent_settled"),
+            Stream.runFold(
+              () => undefined as string | undefined,
+              (providerError, record) => {
+                if (record.type !== "message_end") return providerError;
+                const message = (record as PiMessageEvent).message;
+                if (message?.role !== "assistant") return providerError;
+                // A later successful message (after an auto-retry) clears the error.
+                if (message.stopReason !== "error") return undefined;
+                return typeof message.errorMessage === "string"
+                  ? message.errorMessage
+                  : providerError;
+              },
+            ),
           ),
         );
 
@@ -155,7 +186,13 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           });
         }
 
-        yield* Fiber.join(settledFiber);
+        const providerError = yield* Fiber.join(settledFiber);
+        if (providerError !== undefined) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: `Pi provider error: ${providerError}`,
+          });
+        }
         const last = yield* pi
           .request({ type: "get_last_assistant_text" })
           .pipe(

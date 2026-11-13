@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TurnId } from "@termweave/contracts";
+import { RuntimeItemId, TurnId } from "@termweave/contracts";
 import { describe, expect, it } from "vitest";
 
 import { parsePiApprovalTitle } from "./piApprovalExtension.ts";
@@ -245,6 +245,9 @@ describe("PiTurnMapper", () => {
       message: errorMessage,
       class: "provider_error",
     });
+    // The buffered error is emitted at agent_settled, right before the turn
+    // completes.
+    expect(errors[0] === drafts.at(-2)).toBe(true);
 
     const turnCompleted = drafts.filter((draft) => draft.type === "turn.completed");
     expect(turnCompleted).toHaveLength(1);
@@ -252,5 +255,92 @@ describe("PiTurnMapper", () => {
       state: "failed",
       errorMessage,
     });
+  });
+
+  it("does not emit runtime.error for an assistant error when retries exhausted first", () => {
+    const records = [
+      { type: "agent_start" },
+      {
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage: "boom" },
+      },
+      { type: "auto_retry_start", attempt: 1, maxAttempts: 2, errorMessage: "boom" },
+      {
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage: "boom" },
+      },
+      { type: "auto_retry_end", success: false, attempt: 2, finalError: "boom" },
+      { type: "agent_settled", aborted: false },
+    ] as ReadonlyArray<PiRecord>;
+
+    const mapper = createPiTurnMapper({ turnId: TurnId.make("turn-retry") });
+    const drafts = records.flatMap((record) => mapper.map(record));
+
+    const errors = drafts.filter((draft) => draft.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.payload).toMatchObject({ message: "boom", class: "provider_error" });
+    expect(drafts.filter((draft) => draft.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("emits command output deltas across a head-truncated snapshot", () => {
+    const toolCallId = "bash-truncated";
+    const records = [
+      { type: "tool_execution_start", toolCallId, toolName: "bash", args: { command: "ls" } },
+      {
+        type: "tool_execution_update",
+        toolCallId,
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: "a\nb\n" }] },
+      },
+      {
+        type: "tool_execution_update",
+        toolCallId,
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: "b\nc\n" }] },
+      },
+      { type: "tool_execution_end", toolCallId, toolName: "bash", result: {} },
+    ] as ReadonlyArray<PiRecord>;
+
+    const mapper = createPiTurnMapper({ turnId: TurnId.make("turn-truncated") });
+    const drafts = records.flatMap((record) => mapper.map(record));
+
+    const deltas = drafts
+      .filter((draft) => draft.type === "content.delta")
+      .filter((draft) => draft.payload.streamKind === "command_output")
+      .map((draft) => draft.payload.delta);
+    expect(deltas.join("")).toBe("a\nb\nc\n");
+  });
+
+  it("emits item events for final assistant content blocks that never streamed", () => {
+    const records = [
+      {
+        type: "message_start",
+        message: { role: "assistant", stopReason: "pending", content: [] },
+      },
+      {
+        type: "message_end",
+        message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "hi" }] },
+      },
+    ] as ReadonlyArray<PiRecord>;
+
+    const mapper = createPiTurnMapper({ turnId: TurnId.make("turn-never-streamed") });
+    const drafts = records.flatMap((record) => mapper.map(record));
+
+    const started = drafts.filter((draft) => draft.type === "item.started");
+    expect(started).toHaveLength(1);
+    expect(started[0]?.payload).toMatchObject({
+      itemType: "assistant_message",
+      status: "inProgress",
+    });
+    expect(started[0]?.itemId).toBe(RuntimeItemId.make("turn-never-streamed:a0:t0"));
+
+    const completed = drafts.filter((draft) => draft.type === "item.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.payload).toMatchObject({
+      itemType: "assistant_message",
+      status: "completed",
+      detail: "hi",
+    });
+    expect(drafts.filter((draft) => draft.type === "content.delta")).toHaveLength(0);
   });
 });

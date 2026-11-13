@@ -36,6 +36,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -114,6 +115,12 @@ interface PiSessionContext {
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   turn: ActiveTurn | undefined;
+  /**
+   * Abort sequence currently in flight (see `abortActiveTurn`). `sendTurn`
+   * waits for it before writing the next prompt so a late `abort` can never
+   * kill a turn that Pi already settled and the client restarted.
+   */
+  abortInFlight: Fiber.Fiber<void, never> | undefined;
   thinkingLevel: string | undefined;
   stopped: boolean;
 }
@@ -196,6 +203,7 @@ function piUserInputResponse(
   return { value: String(answers.answer) };
 }
 
+/** Only `select` and `confirm` dialogs reach this: the TUI drops zero-option questions. */
 function piUserInputQuestion(record: PiExtensionUiRequest): {
   readonly id: "answer";
   readonly header: "Pi extension";
@@ -210,12 +218,10 @@ function piUserInputQuestion(record: PiExtensionUiRequest): {
       ? (record.options ?? [])
           .filter((option): option is string => typeof option === "string")
           .map((option) => ({ label: option, description: option }))
-      : method === "confirm"
-        ? [
-            { label: "Yes", description: "Yes" },
-            { label: "No", description: "No" },
-          ]
-        : [];
+      : [
+          { label: "Yes", description: "Yes" },
+          { label: "No", description: "No" },
+        ];
   const question =
     method === "confirm"
       ? [title, message].filter((part) => part.trim().length > 0).join("\n")
@@ -422,8 +428,7 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
       Effect.gen(function* () {
         const decision = yield* Deferred.await(pending.decision);
         // When the entry is gone the dialog was cancelled by interrupt/stop or
-        // dropped by its timeout, which already sent `cancelled: true` and
-        // emitted the resolved event.
+        // dropped by its timeout, which already emitted the resolved event.
         if (ctx.pendingApprovals.get(requestId) === pending) {
           ctx.pendingApprovals.delete(requestId);
           yield* Effect.ignore(
@@ -446,6 +451,15 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
             type: "session.state.changed",
             payload: { state: "running" },
           });
+          if (decision === "cancel") {
+            // Pi only stops a tool batch when every result is terminating, so
+            // cancelling one approval alongside others would not stop the
+            // turn: run the interrupt sequence for it. Not awaited here: the
+            // cancelled tool settles the run on its own, and awaiting would
+            // make the `request.resolved` publisher race the abort instead of
+            // `sendTurn`, which awaits `ctx.abortInFlight` itself.
+            yield* abortActiveTurn(ctx);
+          }
         }
       });
 
@@ -522,14 +536,24 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
         });
         yield* approvalDecisionFiber(ctx, requestId, pending).pipe(Effect.forkIn(ctx.scope));
         // Pi auto-resolves dialogs opened with a `timeout`, so drop the entry
-        // when it elapses; late answers then fail as unknown requests.
+        // when it elapses; late answers then fail as unknown requests. The
+        // answer fiber skips the resolved event once the entry is gone, so
+        // publish it here (without `extension_ui_response`: Pi already
+        // resolved the dialog itself).
         const timeoutMs = record.timeout;
         if (typeof timeoutMs === "number" && timeoutMs > 0) {
           yield* Effect.gen(function* () {
             yield* Effect.sleep(timeoutMs);
             if (ctx.pendingApprovals.get(requestId) === pending) {
               ctx.pendingApprovals.delete(requestId);
+              ctx.turn?.mapper.markDeclined(pending.toolCallId);
               yield* Effect.ignore(Deferred.succeed(pending.decision, "cancel"));
+              yield* publish(ctx.threadId, {
+                type: "request.resolved",
+                turnId: ctx.turn?.turnId,
+                requestId: RuntimeRequestId.make(requestId),
+                payload: { requestType: pending.requestType, decision: "cancel" },
+              });
             }
           }).pipe(Effect.forkIn(ctx.scope));
         }
@@ -557,6 +581,11 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
           payload: { questions: [piUserInputQuestion(record)] },
         });
         yield* userInputAnswerFiber(ctx, requestId, pending).pipe(Effect.forkIn(ctx.scope));
+        // Pi auto-resolves dialogs opened with a `timeout`, so drop the entry
+        // when it elapses; late answers then fail as unknown requests. The
+        // answer fiber skips the resolved event once the entry is gone, so
+        // publish it here (without `extension_ui_response`: Pi already
+        // resolved the dialog itself).
         const timeoutMs = record.timeout;
         if (typeof timeoutMs === "number" && timeoutMs > 0) {
           yield* Effect.gen(function* () {
@@ -564,6 +593,12 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
             if (ctx.pendingUserInputs.get(requestId) === pending) {
               ctx.pendingUserInputs.delete(requestId);
               yield* Effect.ignore(Deferred.succeed(pending.answers, {}));
+              yield* publish(ctx.threadId, {
+                type: "user-input.resolved",
+                turnId: ctx.turn?.turnId,
+                requestId: RuntimeRequestId.make(requestId),
+                payload: { answers: {} },
+              });
             }
           }).pipe(Effect.forkIn(ctx.scope));
         }
@@ -589,6 +624,38 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
         yield* Effect.logDebug("Pi extension notification", { notifyType, message });
       });
 
+    /**
+     * The TUI has no free-text dialog yet (the client drops zero-option
+     * questions), so `input`/`editor` dialogs could never be answered and
+     * would block Pi forever: cancel them immediately.
+     */
+    const handleUnsupportedInputRequest = (ctx: PiSessionContext, record: PiExtensionUiRequest) =>
+      Effect.gen(function* () {
+        if (record.id !== undefined) {
+          yield* Effect.ignore(
+            ctx.pi.send({ type: "extension_ui_response", id: record.id, cancelled: true }),
+          );
+        }
+        const title =
+          typeof record.title === "string" && record.title.trim()
+            ? record.title.trim()
+            : "Pi extension dialog";
+        if (ctx.turn) {
+          yield* publish(ctx.threadId, {
+            type: "runtime.warning",
+            turnId: ctx.turn.turnId,
+            payload: {
+              message: `Pi extension asked for free-text input (${title}), which Termweave does not support yet; cancelled.`,
+            },
+          });
+          return;
+        }
+        yield* Effect.logWarning("Cancelled unsupported Pi free-text dialog", {
+          method: record.method,
+          title,
+        });
+      });
+
     const handleExtensionUiRequest = (ctx: PiSessionContext, record: PiExtensionUiRequest) => {
       const method = record.method ?? "";
       if (
@@ -598,13 +665,11 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
       ) {
         return handleApprovalRequest(ctx, record);
       }
-      if (
-        method === "select" ||
-        method === "confirm" ||
-        method === "input" ||
-        method === "editor"
-      ) {
+      if (method === "select" || method === "confirm") {
         return handleUserInputRequest(ctx, record);
+      }
+      if (method === "input" || method === "editor") {
+        return handleUnsupportedInputRequest(ctx, record);
       }
       if (method === "notify") return handleNotify(ctx, record);
       // setStatus / setWidget / setTitle / set_editor_text and unknown methods.
@@ -825,6 +890,7 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
             pendingApprovals: new Map(),
             pendingUserInputs: new Map(),
             turn: undefined,
+            abortInFlight: undefined,
             thinkingLevel: undefined,
             stopped: false,
           };
@@ -979,6 +1045,13 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
             detail: "A Pi turn is already running.",
           });
         }
+        // The previous turn may have been cancelled or interrupted and its
+        // `abort` round trip may still be in flight. Pi settles the aborted
+        // turn on its own, so the client can already send the next turn while
+        // the abort is still being written; Pi processes stdin commands in
+        // order, so the abort must go out before the new prompt or it kills
+        // the new turn instead of the old one.
+        if (ctx.abortInFlight !== undefined) yield* Fiber.await(ctx.abortInFlight);
         yield* applyModelSelection(
           ctx,
           input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined,
@@ -1037,24 +1110,65 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
         return { threadId: input.threadId, turnId, resumeCursor: ctx.session.resumeCursor };
       });
 
+    /**
+     * Doc section 4 interrupt sequence: mark the turn interrupted, cancel open
+     * dialogs (Pi blocks abort while one is open), drop queued turns and
+     * abort. Shared by `interruptTurn` and cancelled approvals, since Pi only
+     * stops a tool batch when every result is terminating.
+     *
+     * Forked into the session scope and tracked as `ctx.abortInFlight`:
+     * callers may fire-and-forget it (cancelled approvals, where the aborted
+     * tool settles the run on its own), while `sendTurn` awaits the tracker so
+     * the late `abort` is always written before the next `prompt`.
+     */
+    const abortActiveTurn = (
+      ctx: PiSessionContext,
+    ): Effect.Effect<Fiber.Fiber<void, never> | undefined> =>
+      Effect.gen(function* () {
+        const turn = ctx.turn;
+        if (!turn) return undefined;
+        let fiber: Fiber.Fiber<void, never> | undefined;
+        const sequence = Effect.gen(function* () {
+          turn.mapper.markInterruptRequested();
+          // Dialog-cancel bookkeeping publishes events and can fail on event
+          // stamping; swallowed so the forked fiber stays `Fiber<void, never>`
+          // and the `abort` below is still sent.
+          yield* cancelPendingDialogs(ctx).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to cancel pending Pi dialogs", { cause }),
+            ),
+          );
+          yield* Effect.ignore(ctx.pi.request({ type: "clear_queue" }));
+          yield* ctx.pi.request({ type: "abort" }).pipe(
+            Effect.timeoutOption(INTERRUPT_ABORT_TIMEOUT),
+            Effect.tap((aborted) =>
+              Option.isNone(aborted)
+                ? Effect.logWarning("Pi abort did not respond within the interrupt timeout", {
+                    threadId: ctx.threadId,
+                  })
+                : Effect.void,
+            ),
+            Effect.ignore,
+          );
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (fiber !== undefined && ctx.abortInFlight === fiber) {
+                ctx.abortInFlight = undefined;
+              }
+            }),
+          ),
+        );
+        fiber = yield* sequence.pipe(Effect.forkIn(ctx.scope));
+        ctx.abortInFlight = fiber;
+        return fiber;
+      });
+
     const interruptTurn: PiAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
-        if (!ctx.turn) return;
-        ctx.turn.mapper.markInterruptRequested();
-        yield* cancelPendingDialogs(ctx);
-        yield* Effect.ignore(ctx.pi.request({ type: "clear_queue" }));
-        yield* ctx.pi.request({ type: "abort" }).pipe(
-          Effect.timeoutOption(INTERRUPT_ABORT_TIMEOUT),
-          Effect.tap((aborted) =>
-            Option.isNone(aborted)
-              ? Effect.logWarning("Pi abort did not respond within the interrupt timeout", {
-                  threadId,
-                })
-              : Effect.void,
-          ),
-          Effect.ignore,
-        );
+        const fiber = yield* abortActiveTurn(ctx);
+        if (fiber !== undefined) yield* Fiber.await(fiber);
       });
 
     const respondToRequest: PiAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
