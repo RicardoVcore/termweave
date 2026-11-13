@@ -1260,7 +1260,7 @@ function providerPickerIcon(provider: string): string {
   if (provider === "githubCopilot") return "";
   if (provider === "gemini") return "◇";
   if (provider === "acpRegistry") return "󰕮";
-  if (provider === "piAgent") return "π";
+  if (provider === "pi") return "π";
   return "󰚩";
 }
 
@@ -4991,7 +4991,10 @@ export function App({
                     settings,
                     INSTALL_PROVIDER_SETTINGS[3]!,
                   ),
-                  pi: false,
+                  pi: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[4]!,
+                  ),
                 });
               }
             })
@@ -6158,7 +6161,7 @@ export function App({
         label: "Switch model",
         description: "Open provider and model picker",
         trailingLabel: "mod+shift+m",
-        keywords: ["provider", "codex", "claude", "cursor", "opencode"],
+        keywords: ["provider", "codex", "claude", "cursor", "opencode", "pi"],
       },
       {
         id: "thread:view",

@@ -14,7 +14,7 @@ import { ProviderInstanceRegistryMutator } from "../Services/ProviderInstanceReg
 import { ProviderInstanceRegistryMutableLayer } from "./ProviderInstanceRegistryLive.ts";
 
 const decodeProviderDriverKind = Schema.decodeUnknownSync(ProviderDriverKind);
-const LEGACY_SETTINGS_DRIVER_KEYS = ["codex", "claudeAgent", "cursor", "opencode"] as const;
+const LEGACY_SETTINGS_DRIVER_KEYS = ["codex", "claudeAgent", "cursor", "opencode", "pi"] as const;
 const LEGACY_SETTINGS_DRIVERS = LEGACY_SETTINGS_DRIVER_KEYS.map((driver) =>
   decodeProviderDriverKind(driver),
 );

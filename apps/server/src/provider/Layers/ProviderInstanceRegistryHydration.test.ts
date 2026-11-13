@@ -58,7 +58,7 @@ describe("ProviderInstanceRegistryHydration", () => {
         const instances = yield* registry.listInstances;
         assert.deepEqual(
           instances.map((instance) => instance.instanceId),
-          ["codex", "claudeAgent", "cursor", "opencode"],
+          ["codex", "claudeAgent", "cursor", "opencode", "pi"],
         );
         const unavailable = yield* registry.listUnavailable;
         assert.deepEqual(

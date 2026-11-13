@@ -20,7 +20,7 @@ import type {
   TurnDiffSummary,
 } from "./types";
 
-export type ProviderPickerKind = ProviderKind | "cursor" | "opencode";
+export type ProviderPickerKind = ProviderKind | "cursor" | "opencode" | "pi";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
@@ -31,6 +31,7 @@ export const PROVIDER_OPTIONS: Array<{
   { value: "claudeAgent", label: "Claude", available: true },
   { value: "cursor", label: "Cursor", available: false },
   { value: "opencode", label: "OpenCode", available: false },
+  { value: "pi", label: "Pi", available: false },
 ];
 
 export interface WorkLogEntry {

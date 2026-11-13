@@ -256,6 +256,7 @@ export type PiCommand =
   | { readonly type: "get_session_stats" }
   | { readonly type: "get_messages" }
   | { readonly type: "get_fork_messages" }
+  | { readonly type: "get_last_assistant_text" }
   | { readonly type: "fork"; readonly entryId: string };
 
 /** Response `data` shape per command, keyed on the sent command. */
@@ -275,9 +276,11 @@ export type PiResponseData<C extends PiCommand> = C extends { readonly type: "pr
               ? { readonly messages: ReadonlyArray<unknown> }
               : C extends { readonly type: "get_fork_messages" }
                 ? { readonly messages: ReadonlyArray<PiForkMessage> }
-                : C extends { readonly type: "fork" }
-                  ? { readonly text: string; readonly cancelled: boolean }
-                  : void;
+                : C extends { readonly type: "get_last_assistant_text" }
+                  ? { readonly text: string | null }
+                  : C extends { readonly type: "fork" }
+                    ? { readonly text: string; readonly cancelled: boolean }
+                    : void;
 
 /**
  * Parse one JSONL line from Pi's stdout. Returns undefined for blank or

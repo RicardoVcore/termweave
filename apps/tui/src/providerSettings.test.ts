@@ -58,11 +58,20 @@ describe("providerSettings", () => {
         badgeLabel: null,
         fields: ["binaryPath", "serverUrl", "serverPassword"],
       },
+      {
+        provider: "pi",
+        badgeLabel: null,
+        fields: ["binaryPath"],
+      },
     ]);
     expect(INSTALL_PROVIDER_SETTINGS[3]?.fields[2]).toMatchObject({
       key: "serverPassword",
       label: "Server password",
       placeholder: "Optional",
+    });
+    expect(INSTALL_PROVIDER_SETTINGS[4]?.provider).toBe("pi");
+    expect(INSTALL_PROVIDER_SETTINGS[4]?.fields[0]).toMatchObject({
+      key: "binaryPath",
     });
   });
 
@@ -76,7 +85,6 @@ describe("providerSettings", () => {
       { provider: "githubCopilot", title: "GitHub Copilot" },
       { provider: "gemini", title: "Gemini" },
       { provider: "acpRegistry", title: "ACP Registry" },
-      { provider: "piAgent", title: "Pi Agent" },
     ]);
   });
 

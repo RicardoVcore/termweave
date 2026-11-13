@@ -380,11 +380,14 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
         if (ctx.turn !== turn) return;
         ctx.turn = undefined;
         ctx.session = { ...ctx.session, activeTurnId: undefined, updatedAt: yield* nowIso };
-        yield* emitTokenUsage(ctx);
+        // Publish `ready` before the stats round trip: `sendTurn` gates on
+        // `ctx.turn`, so a fast follow-up turn can start between the two and
+        // would otherwise be announced running and then stamped idle.
         yield* publish(ctx.threadId, {
           type: "session.state.changed",
           payload: { state: "ready" },
         });
+        yield* emitTokenUsage(ctx);
       });
 
     const handleRecord = (ctx: PiSessionContext, record: PiRecord) =>

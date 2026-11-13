@@ -235,20 +235,25 @@ describe("PiAdapter", () => {
         });
 
         const events = yield* takeUntil(queue, (event) => event.type === "turn.completed");
-        // The usage event is published right after the turn completes.
-        const usageEvents = yield* takeUntil(
+        // `ready` is published before the stats round trip so a fast follow-up
+        // turn is never stamped idle while it runs. Events taken after
+        // `turn.completed` (FIFO) therefore must show `ready` before usage.
+        const afterCompleted = yield* takeUntil(
           queue,
           (event) => event.type === "thread.token-usage.updated",
         );
-        const all = [...events, ...usageEvents];
+        const all = [...events, ...afterCompleted];
         const types = all.map((event) => event.type);
+        const afterTypes = afterCompleted.map((event) => event.type);
 
         const startedIndex = types.indexOf("turn.started");
         const completedIndex = types.indexOf("turn.completed");
-        const usageIndex = types.indexOf("thread.token-usage.updated");
+        const readyIndex = afterTypes.indexOf("session.state.changed");
+        const usageIndex = afterTypes.indexOf("thread.token-usage.updated");
         assert.ok(startedIndex >= 0);
         assert.ok(completedIndex > startedIndex, "turn.completed must follow turn.started");
-        assert.ok(usageIndex > completedIndex, "token usage must follow turn.completed");
+        assert.ok(readyIndex >= 0, "session ready must follow turn.completed");
+        assert.ok(usageIndex > readyIndex, "token usage must follow session ready");
 
         // `turn.started` must be the first event carrying the turn's id.
         const started = all.find((event) => event.type === "turn.started");

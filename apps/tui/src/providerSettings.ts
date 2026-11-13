@@ -4,6 +4,7 @@ import {
   CursorSettings,
   DEFAULT_SERVER_SETTINGS,
   OpenCodeSettings,
+  PiSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   defaultInstanceIdForDriver,
@@ -98,6 +99,11 @@ const PROVIDER_SETTINGS_DEFINITIONS: readonly ProviderSettingsDefinition[] = [
     title: "OpenCode",
     schema: OpenCodeSettings,
   },
+  {
+    provider: "pi",
+    title: "Pi",
+    schema: PiSettings,
+  },
 ] as const;
 
 function titleizeFieldKey(key: string): string {
@@ -185,10 +191,6 @@ export const COMING_SOON_INSTALL_PROVIDER_OPTIONS: readonly ComingSoonInstallPro
   {
     provider: decodeProviderDriverKind("acpRegistry"),
     title: "ACP Registry",
-  },
-  {
-    provider: decodeProviderDriverKind("piAgent"),
-    title: "Pi Agent",
   },
 ];
 

@@ -13,7 +13,7 @@ describe("sessionLogic", () => {
   it("exposes unavailable provider picker options from shared metadata", () => {
     expect(
       PROVIDER_OPTIONS.filter((option) => !option.available).map((option) => option.value),
-    ).toEqual(["cursor", "opencode"]);
+    ).toEqual(["cursor", "opencode", "pi"]);
   });
 
   it("detects unseen completion when the latest turn finished after the last visit", () => {
