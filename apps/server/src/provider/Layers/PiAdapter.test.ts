@@ -325,6 +325,10 @@ describe("PiAdapter", () => {
         assert.ok(argv[extensionFlag + 1]?.endsWith("termweave-approval.ts"));
 
         yield* adapter.sendTurn({ threadId, input: "run the command" });
+        // The open dialog keeps the turn active, so the status must already
+        // read `running` when sendTurn returns.
+        const running = yield* adapter.listSessions();
+        assert.equal(running[0]?.status, "running");
         const opened = yield* takeUntil(queue, (event) => event.type === "request.opened").pipe(
           Effect.map((events) => events.at(-1)),
         );
@@ -352,6 +356,15 @@ describe("PiAdapter", () => {
           completed.at(-1)?.type === "turn.completed" ? "turn.completed" : "",
           "turn.completed",
         );
+        // `completeTurn` flips the status to `ready` before it publishes the
+        // ready `session.state.changed`, so waiting for that event makes the
+        // assertion deterministic.
+        yield* takeUntil(
+          queue,
+          (event) => event.type === "session.state.changed" && event.payload.state === "ready",
+        );
+        const settled = yield* adapter.listSessions();
+        assert.equal(settled[0]?.status, "ready");
       }),
     ),
   );

@@ -380,6 +380,34 @@ describe("PiTurnMapper", () => {
     });
     expect(drafts.filter((draft) => draft.type === "content.delta")).toHaveLength(0);
   });
+
+  it("keeps the original text of a never-streamed block, including whitespace", () => {
+    const records = [
+      {
+        type: "message_start",
+        message: { role: "assistant", stopReason: "pending", content: [] },
+      },
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text: "    return value\n" }],
+        },
+      },
+    ] as ReadonlyArray<PiRecord>;
+
+    const mapper = createPiTurnMapper({ turnId: TurnId.make("turn-never-streamed-ws") });
+    const drafts = records.flatMap((record) => mapper.map(record));
+
+    const completed = drafts.filter((draft) => draft.type === "item.completed");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]?.payload).toMatchObject({
+      itemType: "assistant_message",
+      status: "completed",
+      detail: "    return value\n",
+    });
+  });
 });
 
 describe("longestPrefixSuffixOverlap", () => {

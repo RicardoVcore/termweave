@@ -25,7 +25,7 @@ import {
   type PiRpcCommandError,
   type PiRpcError,
 } from "../provider/pi/PiRpcProcess.ts";
-import type { PiMessageEvent } from "../provider/pi/piRpcProtocol.ts";
+import type { PiExtensionUiRequest, PiMessageEvent } from "../provider/pi/piRpcProtocol.ts";
 import { type ThreadTitleGenerationResult, type TextGenerationShape } from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -125,6 +125,53 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           ),
         );
 
+        // Start the records consumer before any commands: Pi loads the user's
+        // whole extension toolchain, and an extension dialog during startup or
+        // `before_agent_start` would otherwise block `set_model`/`prompt` on
+        // this fold until the timeout. The fold cancels dialogs it can never
+        // answer, and keeps the last assistant `message_end` failure so
+        // provider errors surface instead of an "empty output" message (doc
+        // section 5).
+        const settledFiber = yield* Effect.forkChild(
+          pi.records.pipe(
+            Stream.takeWhile((record) => record.type !== "agent_settled"),
+            Stream.runFoldEffect(
+              () => undefined as string | undefined,
+              (providerError, record) => {
+                if (record.type === "extension_ui_request") {
+                  // `PiUnknownEvent` carries a string `type`, so the check
+                  // above does not narrow the union on its own.
+                  const request = record as PiExtensionUiRequest;
+                  const method = request.method ?? "";
+                  if (
+                    (method === "select" ||
+                      method === "confirm" ||
+                      method === "input" ||
+                      method === "editor") &&
+                    request.id !== undefined
+                  ) {
+                    return Effect.ignore(
+                      pi.send({ type: "extension_ui_response", id: request.id, cancelled: true }),
+                    ).pipe(Effect.as(providerError));
+                  }
+                  return Effect.succeed(providerError);
+                }
+                if (record.type !== "message_end") return Effect.succeed(providerError);
+                const message = (record as PiMessageEvent).message;
+                if (message?.role !== "assistant") return Effect.succeed(providerError);
+                // A later successful message (after an auto-retry) clears the error.
+                const nextError =
+                  message.stopReason !== "error"
+                    ? undefined
+                    : typeof message.errorMessage === "string"
+                      ? message.errorMessage
+                      : providerError;
+                return Effect.succeed(nextError);
+              },
+            ),
+          ),
+        );
+
         yield* pi
           .request({ type: "set_model", provider: split.provider, modelId: split.modelId })
           .pipe(
@@ -146,29 +193,6 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
               ),
             );
         }
-
-        // `agent_settled` is the only reliable end-of-turn marker, so subscribe
-        // before prompting and fold the records until it arrives (doc section
-        // 5). The last assistant `message_end` failure is kept so provider
-        // errors surface instead of an "empty output" message.
-        const settledFiber = yield* Effect.forkChild(
-          pi.records.pipe(
-            Stream.takeWhile((record) => record.type !== "agent_settled"),
-            Stream.runFold(
-              () => undefined as string | undefined,
-              (providerError, record) => {
-                if (record.type !== "message_end") return providerError;
-                const message = (record as PiMessageEvent).message;
-                if (message?.role !== "assistant") return providerError;
-                // A later successful message (after an auto-retry) clears the error.
-                if (message.stopReason !== "error") return undefined;
-                return typeof message.errorMessage === "string"
-                  ? message.errorMessage
-                  : providerError;
-              },
-            ),
-          ),
-        );
 
         const result = yield* pi
           .request({ type: "prompt", message })

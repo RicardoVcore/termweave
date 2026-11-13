@@ -96,6 +96,14 @@ const trimNonEmpty = (value: string | undefined): string | undefined => {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 };
 
+/**
+ * Assistant/reasoning `detail` keeps the original text (trimming would strip
+ * meaningful leading/trailing whitespace, e.g. indented code); trimming only
+ * decides whether the block is blank.
+ */
+const detailUnlessBlank = (value: string | undefined): string | undefined =>
+  value !== undefined && value.trim().length > 0 ? value : undefined;
+
 const readField = (value: unknown, key: string): unknown =>
   typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
 
@@ -279,7 +287,7 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
       if (blockKind === undefined) {
         return;
       }
-      const detail = trimNonEmpty(
+      const detail = detailUnlessBlank(
         blockKind === "text"
           ? typeof block.text === "string"
             ? block.text
@@ -355,7 +363,7 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
         blocks.delete(contentIndex);
         completedBlockIndexes.add(contentIndex);
         const itemType = blockKind === "text" ? "assistant_message" : "reasoning";
-        const detail = trimNonEmpty(
+        const detail = detailUnlessBlank(
           typeof event.content === "string" ? event.content : block?.accumulated,
         );
         return [

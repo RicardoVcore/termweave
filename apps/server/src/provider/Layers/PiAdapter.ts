@@ -30,6 +30,7 @@ import {
   type ThreadId,
 } from "@termweave/contracts";
 import { getModelSelectionStringOptionValue } from "@termweave/shared/model";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -172,6 +173,13 @@ function piApprovalDetail(payload: PiApprovalPayload): string | undefined {
 
 function piErrorText(error: PiRpcError | PiRpcCommandError): string {
   return error._tag === "PiRpcCommandError" ? error.error : error.detail;
+}
+
+/** Reason text for a failed `exited` watcher: prefer the `PiRpcError` detail. */
+function exitWatcherReason(cause: Cause.Cause<PiRpcError | ProviderAdapterRequestError>): string {
+  const reason = cause.reasons[0];
+  const error = reason !== undefined && reason._tag === "Fail" ? reason.error : undefined;
+  return error instanceof PiRpcError ? error.detail : Cause.pretty(cause);
 }
 
 function roundNonNegative(value: unknown): number | undefined {
@@ -385,7 +393,12 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
       Effect.gen(function* () {
         if (ctx.turn !== turn) return;
         ctx.turn = undefined;
-        ctx.session = { ...ctx.session, activeTurnId: undefined, updatedAt: yield* nowIso };
+        ctx.session = {
+          ...ctx.session,
+          activeTurnId: undefined,
+          status: "ready",
+          updatedAt: yield* nowIso,
+        };
         // Publish `ready` before the stats round trip: `sendTurn` gates on
         // `ctx.turn`, so a fast follow-up turn can start between the two and
         // would otherwise be announced running and then stamped idle.
@@ -676,14 +689,14 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
       return Effect.logDebug("Ignoring Pi extension UI record", { method });
     };
 
-    const handleProcessExit = (ctx: PiSessionContext, code: number) =>
+    const handleProcessExit = (ctx: PiSessionContext, reason: string) =>
       Effect.gen(function* () {
         // Only the registered session reports an unexpected exit; a context
         // whose startSession failed (or that was replaced) is already handled.
         if (ctx.stopped || sessions.get(ctx.threadId) !== ctx) return;
         ctx.stopped = true;
         sessions.delete(ctx.threadId);
-        const reason = `Pi exited with code ${code}`;
+        ctx.session = { ...ctx.session, status: "error", lastError: reason };
         yield* publish(ctx.threadId, {
           type: "session.exited",
           payload: { exitKind: "error", reason },
@@ -708,6 +721,7 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        ctx.session = { ...ctx.session, status: "closed" };
         yield* cancelPendingDialogs(ctx);
         yield* Effect.ignore(ctx.pi.closeStdin);
         yield* ctx.pi.exited.pipe(
@@ -904,10 +918,16 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
           ).pipe(Effect.forkIn(sessionScope));
           // The exit watcher must survive a scope close (it closes the scope
           // itself on an unexpected exit), so it runs detached. It exits as
-          // soon as the process does, so it cannot leak.
+          // soon as the process does, so it cannot leak. `exited` fails on a
+          // signal exit or transport death, so both outcomes must run the
+          // same cleanup.
           yield* pi.exited.pipe(
-            Effect.flatMap((code) => handleProcessExit(ctx, code)),
-            Effect.catchCause(() => Effect.void),
+            Effect.flatMap((code) => handleProcessExit(ctx, `Pi exited with code ${code}`)),
+            Effect.catchCause((cause) =>
+              handleProcessExit(ctx, `Pi process terminated: ${exitWatcherReason(cause)}`).pipe(
+                Effect.catch(() => Effect.void),
+              ),
+            ),
             Effect.forkDetach,
           );
 
@@ -977,7 +997,7 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
         const text = piErrorText(cause);
         if (ctx.turn?.turnId === turnId) {
           ctx.turn = undefined;
-          ctx.session = { ...ctx.session, activeTurnId: undefined };
+          ctx.session = { ...ctx.session, activeTurnId: undefined, status: "ready" };
         }
         yield* publish(ctx.threadId, {
           type: "runtime.error",
@@ -1077,7 +1097,12 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
         }
         // Set before the prompt is written so no record can arrive unmapped.
         ctx.turn = { turnId, mapper: createPiTurnMapper({ turnId }) };
-        ctx.session = { ...ctx.session, activeTurnId: turnId, updatedAt: yield* nowIso };
+        ctx.session = {
+          ...ctx.session,
+          activeTurnId: turnId,
+          status: "running",
+          updatedAt: yield* nowIso,
+        };
         // Ingestion expects `turn.started` first: the record loop publishes
         // turn events as soon as `ctx.turn` is set, so announce the turn
         // before the prompt is written.
@@ -1099,7 +1124,7 @@ export function makePiAdapter(settings: PiSettings, options?: PiAdapterLiveOptio
           // no `agent_settled` will arrive, so complete the turn here.
           if (ctx.turn?.turnId === turnId) {
             ctx.turn = undefined;
-            ctx.session = { ...ctx.session, activeTurnId: undefined };
+            ctx.session = { ...ctx.session, activeTurnId: undefined, status: "ready" };
           }
           yield* publish(input.threadId, {
             type: "turn.completed",
