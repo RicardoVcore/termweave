@@ -4246,6 +4246,7 @@ export function App({
     claudeAgent: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
     cursor: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
     opencode: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
+    pi: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
   });
   const [providerEnvironmentDraftByInstance, setProviderEnvironmentDraftByInstance] =
     useState<ProviderEnvironmentDraftMap>({});
@@ -4273,6 +4274,7 @@ export function App({
     claudeAgent: false,
     cursor: false,
     opencode: false,
+    pi: false,
   });
   const [showAllProjectThreads, setShowAllProjectThreads] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -4819,6 +4821,7 @@ export function App({
             claudeAgent: Boolean(prefs.appSettings.claudeBinaryPath),
             cursor: false,
             opencode: false,
+            pi: false,
           });
         }
         const persistedProvider = normalizePersistedProvider(prefs.draftProvider);
@@ -4988,6 +4991,7 @@ export function App({
                     settings,
                     INSTALL_PROVIDER_SETTINGS[3]!,
                   ),
+                  pi: false,
                 });
               }
             })
@@ -9265,7 +9269,13 @@ export function App({
         : current,
     );
     setTuiThemeId(DEFAULT_TUI_THEME_ID);
-    setOpenInstallProviders({ codex: false, claudeAgent: false, cursor: false, opencode: false });
+    setOpenInstallProviders({
+      codex: false,
+      claudeAgent: false,
+      cursor: false,
+      opencode: false,
+      pi: false,
+    });
     setSelectedCustomModelProvider("codex");
     setCustomModelInputByProvider({ codex: "", claudeAgent: "" });
     setCustomModelErrorByProvider({});
@@ -9803,6 +9813,7 @@ export function App({
       claudeAgent: false,
       cursor: false,
       opencode: false,
+      pi: false,
     });
   }
 
