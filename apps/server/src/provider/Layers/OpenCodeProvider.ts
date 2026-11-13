@@ -223,13 +223,17 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
+/** Usable upstream model: chat type and not disabled by the upstream provider. */
+const isOpenCodeModelUsable = (model: ModelInfo): boolean =>
+  (model.type ?? "chat") === "chat" && model.enabled !== false;
+
 export function flattenOpenCodeModels(
   input: OpenCodeInventory,
 ): ReadonlyArray<ServerProviderModel> {
   const models: Array<ServerProviderModel> = [];
 
   for (const model of input.models) {
-    if ((model.type ?? "chat") !== "chat" || model.enabled === false) {
+    if (!isOpenCodeModelUsable(model)) {
       continue;
     }
 
@@ -242,6 +246,8 @@ export function flattenOpenCodeModels(
       // Split on the first `/` only, so ids containing `/` survive round-trips.
       slug: `${model.providerID}/${model.id}`,
       name,
+      // Distinguish same-named models coming from different upstreams in the picker.
+      subProvider: model.providerID,
       isCustom: false,
       capabilities: openCodeCapabilitiesForModel({
         providerID: model.providerID,
@@ -444,8 +450,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  // "Connected" upstreams are now the distinct providerIDs that exposed usable models.
-  const connectedCount = new Set(inventoryExit.value.models.map((model) => model.providerID)).size;
+  // "Connected" upstreams are the distinct providerIDs that exposed usable
+  // models (chat + enabled - the usability filter `flattenOpenCodeModels`
+  // applies before its extra name check).
+  const connectedCount = new Set(
+    inventoryExit.value.models.filter(isOpenCodeModelUsable).map((model) => model.providerID),
+  ).size;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,

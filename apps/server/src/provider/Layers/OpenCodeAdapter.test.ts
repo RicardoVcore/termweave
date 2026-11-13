@@ -140,6 +140,26 @@ const scriptedTurnEvents: Array<OpenCodeEvent> = [
     content: [{ type: "text", text: "pong" }],
     executed: true,
   }),
+  // The session id lives on `data.form`, not directly on `data`.
+  opencodeEvent("form.created", {
+    form: {
+      id: "form_1",
+      sessionID: SESSION_ID,
+      title: "Follow-up",
+      fields: [
+        { key: "confirm", type: "boolean", title: "Confirm" },
+        {
+          key: "tags",
+          type: "multiselect",
+          title: "Tags",
+          options: [
+            { value: "alpha", label: "Alpha" },
+            { value: "beta", label: "Beta" },
+          ],
+        },
+      ],
+    },
+  }),
   opencodeEvent("session.execution.succeeded", { sessionID: SESSION_ID }),
   // Trailing markers that must NOT complete the turn a second time.
   opencodeEvent("session.idle", { sessionID: SESSION_ID }),
@@ -221,6 +241,7 @@ describe("OpenCodeAdapter 2.x event mapping", () => {
           "item.started",
           "item.updated",
           "item.completed",
+          "user-input.requested",
           "turn.completed",
         ]);
 
@@ -259,6 +280,29 @@ describe("OpenCodeAdapter 2.x event mapping", () => {
           throw new Error("expected turn.completed");
         }
         assert.equal(turnCompleted[0].payload.state, "completed");
+
+        // form.created must surface as a user-input request even though its
+        // session id lives on `data.form`.
+        const userInputRequested = collected.filter(
+          (event) => event.type === "user-input.requested",
+        );
+        assert.equal(userInputRequested.length, 1);
+        const userInput = userInputRequested[0];
+        if (userInput?.type !== "user-input.requested") {
+          throw new Error("expected user-input.requested");
+        }
+        assert.equal(String(userInput.requestId), "form_1");
+        const questions = userInput.payload.questions;
+        assert.equal(questions.length, 2);
+        assert.deepEqual(
+          questions[0]?.options.map((option) => option.label),
+          ["Yes", "No"],
+        );
+        assert.equal(questions[1]?.multiSelect, true);
+        assert.deepEqual(
+          questions[1]?.options.map((option) => option.label),
+          ["Alpha", "Beta"],
+        );
       }),
     ),
   );

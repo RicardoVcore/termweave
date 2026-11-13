@@ -1,11 +1,25 @@
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@termweave/contracts";
+import type {
+  ChatAttachment,
+  ProviderApprovalDecision,
+  RuntimeMode,
+  UserInputQuestion,
+  UserInputQuestionOption,
+} from "@termweave/contracts";
 import {
   OpenCode,
   type AgentInfo,
+  type FormBooleanField1,
   type FormField1,
+  type FormInfo1,
+  type FormIntegerField1,
+  type FormMultiselectField1,
+  type FormNumberField1,
+  type FormOption,
+  type FormValue1,
+  type FormWhen1,
   type ModelInfo,
   type OpenCodeClient,
 } from "@opencode/client";
@@ -257,32 +271,304 @@ export function openCodeFormFieldId(field: FormField1, index: number): string {
   return key.length > 0 ? key : `field-${index}`;
 }
 
-function isFormAnswerValue(
-  value: unknown,
-): value is string | number | boolean | ReadonlyArray<string> {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+/**
+ * A single 2.x form field answer could not be derived from the TUI's string
+ * answer. `fieldKey` names the offending field so callers can surface a
+ * validation error instead of sending an invalid reply to the server.
+ */
+export class OpenCodeFormAnswerError extends Data.TaggedError("OpenCodeFormAnswerError")<{
+  readonly fieldKey: string;
+  readonly reason: string;
+}> {
+  static readonly is = (u: unknown): u is OpenCodeFormAnswerError =>
+    P.isTagged(u, "OpenCodeFormAnswerError");
+}
+
+const openCodeFormAnswerError = (field: FormField1, reason: string) =>
+  new OpenCodeFormAnswerError({ fieldKey: field.key, reason });
+
+/** Answer words accepted for a 2.x boolean field, mapped onto `true`. */
+const BOOLEAN_TRUE_ANSWERS = new Set(["yes", "true", "y"]);
+/** Answer words accepted for a 2.x boolean field, mapped onto `false`. */
+const BOOLEAN_FALSE_ANSWERS = new Set(["no", "false", "n"]);
+
+const BOOLEAN_FORM_OPTIONS: ReadonlyArray<UserInputQuestionOption> = [
+  { label: "Yes", description: "Yes" },
+  { label: "No", description: "No" },
+];
+
+/**
+ * Resolve a TUI answer string against a field's option list. TUI answers carry
+ * the option LABEL, so we map back onto the 2.x option `value` (exact match,
+ * then case-insensitive). Free text is kept only when the field allows custom
+ * answers.
+ */
+function convertOptionFormAnswer(
+  fieldKey: string,
+  options: ReadonlyArray<FormOption>,
+  allowCustom: boolean,
+  raw: string,
+): string {
+  const option =
+    options.find((candidate) => candidate.label === raw) ??
+    options.find((candidate) => candidate.label.toLowerCase() === raw.toLowerCase());
+  if (option) {
+    return option.value;
+  }
+  if (allowCustom || options.length === 0) {
+    return raw;
+  }
+  throw new OpenCodeFormAnswerError({
+    fieldKey,
+    reason: `"${raw}" is not one of the offered options`,
+  });
+}
+
+function convertNumberFormAnswer(field: FormNumberField1, raw: string): number {
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed.length === 0 || !Number.isFinite(value)) {
+    throw openCodeFormAnswerError(field, `"${raw}" is not a number`);
+  }
+  return value;
+}
+
+function convertIntegerFormAnswer(field: FormIntegerField1, raw: string): number {
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed.length === 0 || !Number.isInteger(value)) {
+    throw openCodeFormAnswerError(field, `"${raw}" is not an integer`);
+  }
+  return value;
+}
+
+function convertBooleanFormAnswer(field: FormBooleanField1, raw: string): boolean {
+  const normalized = raw.trim().toLowerCase();
+  if (BOOLEAN_TRUE_ANSWERS.has(normalized)) {
     return true;
   }
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+  if (BOOLEAN_FALSE_ANSWERS.has(normalized)) {
+    return false;
+  }
+  throw openCodeFormAnswerError(field, `"${raw}" is not a yes/no answer`);
+}
+
+const isStringArray = (value: unknown): value is ReadonlyArray<string> =>
+  Array.isArray(value) && value.every((entry) => typeof entry === "string");
+
+/** Shared multiselect core: map already-split labels onto option values. */
+function convertMultiselectLabels(
+  field: FormMultiselectField1,
+  labels: ReadonlyArray<string>,
+): Array<string> {
+  const values = labels.map((label) =>
+    convertOptionFormAnswer(field.key, field.options, field.custom === true, label),
+  );
+  if (values.length === 0) {
+    throw openCodeFormAnswerError(field, "no options selected");
+  }
+  return values;
+}
+
+function convertMultiselectFormAnswer(field: FormMultiselectField1, raw: string): Array<string> {
+  // The TUI sends a comma-joined label list. An exact single-option label
+  // match wins first, so labels that themselves contain commas survive.
+  const exact = field.options.find((option) => option.label === raw);
+  const labels = exact
+    ? [raw]
+    : raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+  return convertMultiselectLabels(field, labels);
+}
+
+function convertFormFieldAnswer(field: FormField1, raw: unknown): FormValue1 {
+  if (typeof raw !== "string") {
+    // Remote clients may send multiselect answers as an array of labels.
+    if (field.type === "multiselect" && isStringArray(raw)) {
+      return convertMultiselectLabels(field, raw);
+    }
+    throw openCodeFormAnswerError(field, "answer must be text");
+  }
+  switch (field.type) {
+    case "string":
+      return convertOptionFormAnswer(field.key, field.options ?? [], field.custom === true, raw);
+    case "number":
+      return convertNumberFormAnswer(field, raw);
+    case "integer":
+      return convertIntegerFormAnswer(field, raw);
+    case "boolean":
+      return convertBooleanFormAnswer(field, raw);
+    case "multiselect":
+      return convertMultiselectFormAnswer(field, raw);
+    case "external":
+      throw openCodeFormAnswerError(field, "external fields cannot be answered from the TUI");
+  }
+}
+
+/** One `when` condition holds when the referenced converted answer matches. */
+function formWhenConditionHolds(
+  condition: FormWhen1,
+  answers: Record<string, FormValue1>,
+): boolean {
+  const answer = answers[condition.key];
+  if (answer === undefined) {
+    return false;
+  }
+  const candidates = Array.isArray(answer) ? answer : [answer];
+  const matches = candidates.some(
+    (candidate) => candidate === condition.value || String(candidate) === String(condition.value),
+  );
+  return condition.op === "eq" ? matches : !matches;
+}
+
+/** All conditions must hold for a field to be active; missing references make it inactive. */
+function formFieldWhen(field: FormField1): ReadonlyArray<FormWhen1> | undefined {
+  return field.type === "external" ? undefined : field.when;
+}
+
+function formWhenActive(
+  when: ReadonlyArray<FormWhen1> | undefined,
+  answers: Record<string, FormValue1>,
+): boolean {
+  return (when ?? []).every((condition) => formWhenConditionHolds(condition, answers));
+}
+
+function convertOpenCodeFormAnswers(
+  fields: ReadonlyArray<FormField1>,
+  answers: Record<string, unknown>,
+): Record<string, FormValue1> {
+  // First pass: convert every answered field up front so `when` conditions can
+  // reference fields declared later in the form. A field whose answer cannot
+  // be converted is recorded and only reported if the field turns out active,
+  // so a stray inactive answer can never fail the whole form.
+  const converted: Record<string, FormValue1> = {};
+  const failures = new Map<string, OpenCodeFormAnswerError>();
+  for (const [index, field] of fields.entries()) {
+    const raw = answers[openCodeFormFieldId(field, index)];
+    if (raw === undefined) {
+      // Unanswered (e.g. hidden) fields still feed `when` through their default.
+      if (field.type !== "external" && field.default !== undefined) {
+        converted[field.key] = field.default;
+      }
+      continue;
+    }
+    try {
+      converted[field.key] = convertFormFieldAnswer(field, raw);
+    } catch (cause) {
+      if (!OpenCodeFormAnswerError.is(cause)) {
+        throw cause;
+      }
+      failures.set(field.key, cause);
+    }
+  }
+
+  // Second pass: keep only fields whose `when` conditions hold.
+  const active: Record<string, FormValue1> = {};
+  for (const field of fields) {
+    if (!formWhenActive(formFieldWhen(field), converted)) {
+      continue;
+    }
+    const failure = failures.get(field.key);
+    if (failure) {
+      throw failure;
+    }
+    const value = converted[field.key];
+    if (value !== undefined) {
+      active[field.key] = value;
+    }
+  }
+  return active;
 }
 
 /**
  * Map TUI answers (keyed by `openCodeFormFieldId`) onto the 2.x form answer
- * record consumed by `client.session.form.reply`.
+ * record consumed by `client.session.form.reply`. Answers for fields whose
+ * `when` conditions do not hold are omitted. Fails with
+ * `OpenCodeFormAnswerError` naming the field when an active answer cannot be
+ * converted.
  */
-export function toOpenCodeFormAnswers(
+export const toOpenCodeFormAnswers = (
   fields: ReadonlyArray<FormField1>,
   answers: Record<string, unknown>,
-): Record<string, string | number | boolean | ReadonlyArray<string>> {
-  const result: Record<string, string | number | boolean | ReadonlyArray<string>> = {};
-  fields.forEach((field, index) => {
-    const raw = answers[openCodeFormFieldId(field, index)];
-    if (!isFormAnswerValue(raw)) {
-      return;
-    }
-    result[field.key] = Array.isArray(raw) ? raw.filter((entry) => entry.length > 0) : raw;
+): Effect.Effect<Record<string, FormValue1>, OpenCodeFormAnswerError> =>
+  Effect.try({
+    try: () => convertOpenCodeFormAnswers(fields, answers),
+    catch: (cause) =>
+      OpenCodeFormAnswerError.is(cause)
+        ? cause
+        : new OpenCodeFormAnswerError({
+            fieldKey: "",
+            reason: openCodeRuntimeErrorDetail(cause),
+          }),
   });
-  return result;
+
+/** Short suffix shown in the TUI so users know a question may not apply. */
+function openCodeFormWhenSuffix(when: ReadonlyArray<FormWhen1> | undefined): string {
+  if (!when || when.length === 0) {
+    return "";
+  }
+  const conditions = when
+    .map((condition) => `${condition.key} = ${String(condition.value)}`)
+    .join(" and ");
+  return ` (only applies if ${conditions})`;
+}
+
+function openCodeFormQuestionOptions(field: FormField1): ReadonlyArray<UserInputQuestionOption> {
+  if (field.type === "boolean") {
+    return BOOLEAN_FORM_OPTIONS;
+  }
+  if (field.type === "string" || field.type === "multiselect") {
+    return (field.options ?? []).map((option) => ({
+      label: option.label,
+      description: option.description ?? option.label,
+    }));
+  }
+  return [];
+}
+
+function toOpenCodeFormQuestion(field: FormField1, index: number): UserInputQuestion | undefined {
+  // External fields open a URL in the client; neither is user-answerable.
+  if (field.type === "external") {
+    return undefined;
+  }
+  if (field.hidden) {
+    return undefined;
+  }
+  return {
+    id: openCodeFormFieldId(field, index),
+    header: field.title ?? field.key,
+    question: `${field.description ?? field.title ?? field.key}${openCodeFormWhenSuffix(formFieldWhen(field))}`,
+    options: openCodeFormQuestionOptions(field),
+    ...(field.type === "multiselect" ? { multiSelect: true } : {}),
+  };
+}
+
+/**
+ * Map a 2.x form onto the TUI user-input questions. `hidden` and `external`
+ * fields are skipped; boolean fields become Yes/No options; fields with `when`
+ * conditions get a suffix explaining when they apply.
+ */
+export function toOpenCodeFormQuestions(form: FormInfo1): ReadonlyArray<UserInputQuestion> {
+  return form.fields.flatMap((field, index) => {
+    const question = toOpenCodeFormQuestion(field, index);
+    return question ? [question] : [];
+  });
+}
+
+/** Render a 2.x form answer value as a single TUI-facing display string. */
+export function openCodeFormAnswerToDisplay(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.filter((entry) => typeof entry === "string").join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
 }
 
 function ensureRuntimeError(

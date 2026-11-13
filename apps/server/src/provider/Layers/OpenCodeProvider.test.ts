@@ -82,6 +82,7 @@ describe("flattenOpenCodeModels", () => {
     }
     expect(model.slug).toBe("openrouter/google/gemini-4-hydrogen");
     expect(model.name).toBe("Gemini 4 Hydrogen");
+    expect(model.subProvider).toBe("openrouter");
     expect(model.isCustom).toBe(false);
 
     const options = optionDescriptorsFor(model);

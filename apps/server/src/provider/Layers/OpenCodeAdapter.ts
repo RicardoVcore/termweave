@@ -10,7 +10,6 @@ import {
   type ToolLifecycleItemType,
   ThreadId,
   TurnId,
-  type UserInputQuestion,
 } from "@termweave/contracts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -39,12 +38,14 @@ import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  openCodeFormAnswerToDisplay,
   openCodeFormFieldId,
   openCodeRuntimeErrorDetail,
   parseOpenCodeModelSlug,
   runOpenCodeSdk,
   toOpenCodeFileParts,
   toOpenCodeFormAnswers,
+  toOpenCodeFormQuestions,
   toOpenCodePermissionReply,
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
@@ -248,34 +249,6 @@ function ensureSessionContext(
     });
   }
   return session;
-}
-
-function formAnswerToDisplay(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.filter((entry) => typeof entry === "string").join(", ");
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
-}
-
-function toOpenCodeFormQuestions(form: OpenCodeForm): ReadonlyArray<UserInputQuestion> {
-  return form.fields.map((field, index) => ({
-    id: openCodeFormFieldId(field, index),
-    header: field.title ?? field.key,
-    question: field.description ?? field.title ?? field.key,
-    options: (
-      (field.type === "string" || field.type === "multiselect" ? field.options : undefined) ?? []
-    ).map((option) => ({
-      label: option.label,
-      description: option.description ?? option.label,
-    })),
-    ...(field.type === "multiselect" ? { multiSelect: true } : {}),
-  }));
 }
 
 function sessionErrorMessage(error: unknown): string {
@@ -836,7 +809,7 @@ export function makeOpenCodeAdapter(
           const answers = Object.fromEntries(
             (form?.fields ?? []).map((field, index) => [
               openCodeFormFieldId(field, index),
-              formAnswerToDisplay(event.data.answer[field.key]),
+              openCodeFormAnswerToDisplay(event.data.answer[field.key]),
             ]),
           );
           yield* emit({
@@ -873,10 +846,14 @@ export function makeOpenCodeAdapter(
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
     ) {
+      // `form.created` carries the session id inside `data.form`; every other
+      // relevant event puts it directly on `data`.
       const payloadSessionId =
-        "sessionID" in event.data && typeof event.data.sessionID === "string"
-          ? event.data.sessionID
-          : undefined;
+        event.type === "form.created"
+          ? event.data.form.sessionID
+          : "sessionID" in event.data && typeof event.data.sessionID === "string"
+            ? event.data.sessionID
+            : undefined;
       if (payloadSessionId !== context.openCodeSessionId) {
         return;
       }
@@ -1343,11 +1320,25 @@ export function makeOpenCodeAdapter(
 
       // 2.x replaces 1.x questions with forms; TUI answers are keyed by
       // `openCodeFormFieldId`, which we map back onto the form field keys.
+      // `toOpenCodeFormAnswers` omits inactive `when` fields and fails with a
+      // per-field error when an answer cannot be converted - surface that as a
+      // validation error instead of sending an invalid reply to the server.
+      const answer = yield* toOpenCodeFormAnswers(form.fields, answers).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "form.reply",
+              issue: `Field "${cause.fieldKey}" could not be converted: ${cause.reason}`,
+              cause,
+            }),
+        ),
+      );
       yield* runOpenCodeSdk("form.reply", () =>
         context.client.session.form.reply({
           sessionID: context.openCodeSessionId,
           formID: requestId,
-          answer: toOpenCodeFormAnswers(form.fields, answers),
+          answer,
         }),
       ).pipe(Effect.mapError(toRequestError));
     });
