@@ -1,5 +1,5 @@
 import * as Http from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -56,13 +56,35 @@ const testLayer = Layer.mergeAll(
 const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
   Command.runWith(termweaveCli, { version: "0.0.0-test" })(args).pipe(
     Effect.provide(
-      ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: testHomeDir, ...env } })),
+      ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: { T3CODE_HOME: testHomeDir, T3CODE_TELEMETRY_ENABLED: "false", ...env },
+        }),
+      ),
     ),
   );
+
+/**
+ * Keeps the CLI tests hermetic: with providers enabled, startup probes any
+ * provider CLI installed on the machine (e.g. `opencode serve`), and their
+ * shutdown finalizers sleep, which never finishes under the TestClock.
+ */
+const writeDisabledProviderSettings = (homeDir: string) => {
+  const stateDir = join(homeDir, "userdata");
+  mkdirSync(stateDir, { recursive: true });
+  const disabled = { enabled: false };
+  writeFileSync(
+    join(stateDir, "settings.json"),
+    JSON.stringify({
+      providers: { codex: disabled, claudeAgent: disabled, cursor: disabled, opencode: disabled },
+    }),
+  );
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   testHomeDir = mkdtempSync(join(tmpdir(), "termweave-main-test-"));
+  writeDisabledProviderSettings(testHomeDir);
   resolvedConfig = null;
 });
 
