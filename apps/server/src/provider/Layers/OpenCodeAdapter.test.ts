@@ -9,7 +9,7 @@ import {
 import { createModelSelection } from "@termweave/shared/model";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, vi } from "@effect/vitest";
-import { Effect, Layer, Option, Queue, Schema, Stream } from "effect";
+import { Effect, Exit, Layer, Option, Queue, Schema, Stream } from "effect";
 import type { OpenCodeClient, OpenCodeEvent } from "@opencode/client";
 
 import { ServerConfig } from "../../config.ts";
@@ -21,10 +21,14 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const SESSION_ID = "ses_test";
 
 /** Minimal async event source backing the fake `event.subscribe` iterable. */
-function makeAsyncEventSource() {
+function makeAsyncEventSource({ leadWithConnected = true }: { leadWithConnected?: boolean } = {}) {
   const pending: OpenCodeEvent[] = [];
   let waiter: ((result: IteratorResult<OpenCodeEvent>) => void) | null = null;
   let closed = false;
+  // The real server always leads with `server.connected` as soon as the lazy
+  // `event.subscribe` iterable is consumed; emit it on the first `next()`.
+  const serverConnected: OpenCodeEvent = opencodeEvent("server.connected", {});
+  let connectedSent = false;
   const offer = (event: OpenCodeEvent) => {
     if (waiter) {
       const resolve = waiter;
@@ -36,19 +40,22 @@ function makeAsyncEventSource() {
   };
   const iterable: AsyncIterable<OpenCodeEvent> = {
     [Symbol.asyncIterator]: () => ({
-      next: () =>
-        new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
-          const buffered = pending.shift();
-          if (buffered) {
-            resolve({ value: buffered, done: false });
-            return;
-          }
-          if (closed) {
-            resolve({ done: true, value: undefined as never });
-            return;
-          }
+      next: async () => {
+        if (leadWithConnected && !connectedSent) {
+          connectedSent = true;
+          return { value: serverConnected, done: false };
+        }
+        const buffered = pending.shift();
+        if (buffered) {
+          return { value: buffered, done: false };
+        }
+        if (closed) {
+          return { done: true, value: undefined as never };
+        }
+        return new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
           waiter = resolve;
-        }),
+        });
+      },
     }),
   };
   const close = () => {
@@ -62,8 +69,10 @@ function makeAsyncEventSource() {
   return { offer, close, iterable };
 }
 
-function makeFakeOpenCodeRuntime() {
-  const source = makeAsyncEventSource();
+function makeFakeOpenCodeRuntime({
+  leadWithConnected = true,
+}: { leadWithConnected?: boolean } = {}) {
+  const source = makeAsyncEventSource({ leadWithConnected });
   const shape: OpenCodeRuntimeShape = {
     startOpenCodeServerProcess: () => Effect.die("not used in test"),
     connectToOpenCodeServer: () =>
@@ -303,6 +312,108 @@ describe("OpenCodeAdapter 2.x event mapping", () => {
           questions[1]?.options.map((option) => option.label),
           ["Alpha", "Beta"],
         );
+      }),
+    ),
+  );
+
+  it.live("emits runtime.error and session.exited when the event stream ends cleanly", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fakeRuntime = makeFakeOpenCodeRuntime();
+        const adapter = yield* makeOpenCodeAdapter(
+          decodeOpenCodeSettings({ binaryPath: "opencode", serverUrl: "", serverPassword: "" }),
+          { instanceId: ProviderInstanceId.make("opencode") },
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(OpenCodeRuntime, fakeRuntime.shape),
+              ServerConfig.layerTest(process.cwd(), process.cwd()),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
+        );
+
+        const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+        yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) => Queue.offer(runtimeEvents, event)),
+          Effect.forkScoped,
+        );
+
+        const session = yield* adapter.startSession({
+          provider: "opencode",
+          threadId: asThreadId("thread-eof"),
+          runtimeMode: "full-access",
+        });
+        assert.equal(session.provider, "opencode");
+
+        // A clean EOF (no stream failure) of the event source must still be
+        // treated as an unexpected exit.
+        fakeRuntime.source.close();
+
+        const collected: Array<ProviderRuntimeEvent> = [];
+        yield* Effect.gen(function* () {
+          while (!collected.some((event) => event.type === "session.exited")) {
+            collected.push(yield* Queue.take(runtimeEvents));
+          }
+        }).pipe(Effect.timeout("10 seconds"));
+
+        assert.deepEqual(
+          collected.map((event) => event.type),
+          ["session.started", "thread.started", "runtime.error", "session.exited"],
+        );
+        const runtimeError = collected.find((event) => event.type === "runtime.error");
+        if (runtimeError?.type !== "runtime.error") {
+          throw new Error("expected a runtime.error event");
+        }
+        assert.equal(runtimeError.payload.message, "OpenCode event stream ended unexpectedly.");
+        assert.equal(runtimeError.payload.class, "transport_error");
+        const exited = collected.find((event) => event.type === "session.exited");
+        if (exited?.type !== "session.exited") {
+          throw new Error("expected a session.exited event");
+        }
+        assert.equal(exited.payload.reason, "OpenCode event stream ended unexpectedly.");
+        assert.equal(exited.payload.exitKind, "error");
+        assert.equal(exited.payload.recoverable, false);
+      }),
+    ),
+  );
+
+  it.live("fails startSession without session.exited when the pump ends before connecting", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fakeRuntime = makeFakeOpenCodeRuntime({ leadWithConnected: false });
+        const adapter = yield* makeOpenCodeAdapter(
+          decodeOpenCodeSettings({ binaryPath: "opencode", serverUrl: "", serverPassword: "" }),
+          { instanceId: ProviderInstanceId.make("opencode") },
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(OpenCodeRuntime, fakeRuntime.shape),
+              ServerConfig.layerTest(process.cwd(), process.cwd()),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
+        );
+
+        const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+        yield* adapter.streamEvents.pipe(
+          Stream.runForEach((event) => Queue.offer(runtimeEvents, event)),
+          Effect.forkScoped,
+        );
+
+        // A clean EOF (no stream failure) before `server.connected` must fail
+        // the startup instead of waiting out the connect timeout.
+        fakeRuntime.source.close();
+        const startedExit = yield* Effect.exit(
+          adapter.startSession({
+            provider: "opencode",
+            threadId: asThreadId("thread-eof-before-connected"),
+            runtimeMode: "full-access",
+          }),
+        );
+        assert.equal(Exit.isFailure(startedExit), true);
+
+        // The session never started, so no lifecycle events were emitted.
+        yield* Effect.sleep("200 millis");
+        assert.equal(Option.isNone(yield* Queue.poll(runtimeEvents)), true);
       }),
     ),
   );

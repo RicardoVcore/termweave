@@ -14,8 +14,10 @@ import {
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -921,6 +923,12 @@ export function makeOpenCodeAdapter(
         Effect.sync(() => eventsAbortController.abort()),
       );
 
+      // `event.subscribe` is lazy: the HTTP stream connects only once the
+      // iterator is consumed, and the server always leads with a
+      // `server.connected` event. Wait for that first event before returning,
+      // or an immediate `sendTurn` could lose early events.
+      const connected = yield* Deferred.make<void, OpenCodeRuntimeError>();
+
       // Fibers forked into `context.sessionScope` are interrupted
       // automatically when the scope closes - no bookkeeping required.
       // 2.x `event.subscribe` returns the AsyncIterable directly and shares
@@ -933,27 +941,66 @@ export function makeOpenCodeAdapter(
             detail: openCodeRuntimeErrorDetail(cause),
             cause,
           }),
-      )
-        .pipe(Stream.runForEach((event) => handleSubscribedEvent(context, event)))
-        .pipe(
-          Effect.exit,
-          Effect.flatMap((exit) =>
-            Effect.gen(function* () {
-              // Expected paths: caller aborted the fetch or the session
-              // has already been marked stopped. Treat as a clean exit.
-              if (eventsAbortController.signal.aborted || (yield* Ref.get(context.stopped))) {
-                return;
-              }
-              if (Exit.isFailure(exit)) {
-                yield* emitUnexpectedExit(
-                  context,
-                  openCodeRuntimeErrorDetail(Cause.squash(exit.cause)),
-                );
-              }
-            }),
-          ),
-          Effect.forkIn(context.sessionScope),
-        );
+      ).pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            if (event.type === "server.connected") {
+              yield* Deferred.succeed(connected, undefined);
+              return;
+            }
+            yield* handleSubscribedEvent(context, event);
+          }),
+        ),
+        Effect.exit,
+        Effect.flatMap((exit) =>
+          Effect.gen(function* () {
+            // Pump died before the stream ever connected: the session never
+            // started, so `startSession` reports the failure via the deferred
+            // and emitting runtime.error/session.exited too would be a
+            // double report.
+            if (!(yield* Deferred.isDone(connected))) {
+              return yield* Deferred.fail(
+                connected,
+                Exit.isFailure(exit)
+                  ? new OpenCodeRuntimeError({
+                      operation: "event.subscribe",
+                      detail: openCodeRuntimeErrorDetail(Cause.squash(exit.cause)),
+                      cause: Cause.squash(exit.cause),
+                    })
+                  : new OpenCodeRuntimeError({
+                      operation: "event.subscribe",
+                      detail: "OpenCode event stream ended before connecting.",
+                    }),
+              );
+            }
+            // Expected paths: caller aborted the fetch or the session
+            // has already been marked stopped. Treat as a clean exit.
+            if (eventsAbortController.signal.aborted || (yield* Ref.get(context.stopped))) {
+              return;
+            }
+            if (Exit.isFailure(exit)) {
+              yield* emitUnexpectedExit(
+                context,
+                openCodeRuntimeErrorDetail(Cause.squash(exit.cause)),
+              );
+            } else {
+              yield* emitUnexpectedExit(context, "OpenCode event stream ended unexpectedly.");
+            }
+          }),
+        ),
+        Effect.forkIn(context.sessionScope),
+      );
+
+      const connectedResult = yield* Deferred.await(connected).pipe(
+        Effect.timeoutOption("10 seconds"),
+      );
+      if (Option.isNone(connectedResult)) {
+        // The stream never sent `server.connected`; fail startup.
+        return yield* new OpenCodeRuntimeError({
+          operation: "event.subscribe",
+          detail: "Timed out waiting for the OpenCode event stream to connect.",
+        });
+      }
 
       if (!context.server.external && context.server.exitCode !== null) {
         yield* context.server.exitCode.pipe(
@@ -1087,7 +1134,15 @@ export function makeOpenCodeAdapter(
           sessionScope: started.sessionScope,
         };
         sessions.set(input.threadId, context);
-        yield* startEventPump(context);
+        const pumpExit = yield* Effect.exit(startEventPump(context));
+        if (Exit.isFailure(pumpExit)) {
+          // The event stream never connected - tear the runtime back down
+          // instead of leaking the server process, and surface the failure
+          // like the other startup errors.
+          sessions.delete(input.threadId);
+          yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
+          return yield* toProcessError(input.threadId, Cause.squash(pumpExit.cause));
+        }
 
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
@@ -1431,13 +1486,14 @@ export function makeOpenCodeAdapter(
             ? before
             : firstRemoved;
 
-        // 2.x splits revert into stage (pick the revert point, optionally
-        // stage file changes) and commit (apply it).
+        // 2.x splits revert into stage (pick the revert point) and commit
+        // (apply it). File changes are restored by Termweave checkpoints, so
+        // only conversation history is reverted here.
         yield* runOpenCodeSdk("session.revert.stage", () =>
           context.client.session.revert.stage({
             sessionID: context.openCodeSessionId,
             messageID: cutMessage.id,
-            files: true,
+            files: false,
           }),
         ).pipe(Effect.mapError(toRequestError));
         yield* runOpenCodeSdk("session.revert.commit", () =>

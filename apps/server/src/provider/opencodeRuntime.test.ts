@@ -123,6 +123,72 @@ describe("toOpenCodeFormAnswers", () => {
     expect(result.value).toEqual({ tags: ["alpha", "beta"] });
   });
 
+  it("maps option labels containing commas from the joined answer", async () => {
+    const fields: ReadonlyArray<FormField1> = [
+      {
+        key: "vendors",
+        type: "multiselect",
+        options: [
+          { value: "acme", label: "ACME, Inc." },
+          { value: "other", label: "Other" },
+        ],
+      },
+    ];
+
+    const result = await runAnswers(fields, { vendors: "ACME, Inc., Other" });
+
+    if (result._tag !== "Success") {
+      throw new Error("expected a successful conversion");
+    }
+    expect(result.value).toEqual({ vendors: ["acme", "other"] });
+  });
+
+  it("accepts an empty answer for an optional multiselect", async () => {
+    const fields: ReadonlyArray<FormField1> = [
+      {
+        key: "tags",
+        type: "multiselect",
+        required: false,
+        options: [
+          { value: "alpha", label: "Alpha" },
+          { value: "beta", label: "Beta" },
+        ],
+      },
+    ];
+
+    const result = await runAnswers(fields, { tags: [] });
+
+    if (result._tag !== "Success") {
+      throw new Error("expected a successful conversion");
+    }
+    expect(result.value).toEqual({ tags: [] });
+  });
+
+  it("rejects an empty answer for a required multiselect", async () => {
+    const fields: ReadonlyArray<FormField1> = [
+      {
+        key: "tags",
+        type: "multiselect",
+        required: true,
+        options: [
+          { value: "alpha", label: "Alpha" },
+          { value: "beta", label: "Beta" },
+        ],
+      },
+    ];
+
+    const result = await runAnswers(fields, { tags: [] });
+
+    if (result._tag !== "Failure") {
+      throw new Error("expected a failed conversion");
+    }
+    const error = Cause.squash(result.cause);
+    expect(OpenCodeFormAnswerError.is(error)).toBe(true);
+    if (OpenCodeFormAnswerError.is(error)) {
+      expect(error.fieldKey).toBe("tags");
+    }
+  });
+
   it("omits answers for fields whose when conditions are inactive", async () => {
     const fields: ReadonlyArray<FormField1> = [
       { key: "enabled", type: "boolean" },
@@ -229,5 +295,21 @@ describe("toOpenCodeFormQuestions", () => {
 
     expect(questions).toHaveLength(2);
     expect(questions[1]?.question).toBe("threshold (only applies if enabled = true)");
+  });
+
+  it("renders neq conditions with != in the question suffix", () => {
+    const questions = toOpenCodeFormQuestions(
+      asForm([
+        { key: "enabled", type: "boolean" },
+        {
+          key: "threshold",
+          type: "integer",
+          when: [{ key: "enabled", op: "neq", value: true }],
+        },
+      ]),
+    );
+
+    expect(questions).toHaveLength(2);
+    expect(questions[1]?.question).toBe("threshold (only applies if enabled != true)");
   });
 });

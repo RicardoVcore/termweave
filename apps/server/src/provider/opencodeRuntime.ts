@@ -364,23 +364,45 @@ function convertMultiselectLabels(
   const values = labels.map((label) =>
     convertOptionFormAnswer(field.key, field.options, field.custom === true, label),
   );
-  if (values.length === 0) {
+  if (values.length < Math.max(field.required ? 1 : 0, field.minItems ?? 0)) {
     throw openCodeFormAnswerError(field, "no options selected");
   }
   return values;
 }
 
+/**
+ * Split a comma-joined label list back into labels. Greedy longest-run match
+ * against the option labels, so labels that themselves contain commas
+ * (e.g. "ACME, Inc.") survive the round trip.
+ */
+function splitMultiselectLabels(options: ReadonlyArray<FormOption>, raw: string): Array<string> {
+  const tokens = raw.split(",").filter((token) => token.trim().length > 0);
+  const labels: Array<string> = [];
+  let index = 0;
+  while (index < tokens.length) {
+    let label = (tokens[index] ?? "").trim();
+    let nextIndex = index + 1;
+    for (let end = tokens.length; end > index; end--) {
+      const candidate = tokens.slice(index, end).join(",").trim();
+      const matched = options.some(
+        (option) =>
+          option.label === candidate || option.label.toLowerCase() === candidate.toLowerCase(),
+      );
+      if (matched) {
+        label = candidate;
+        nextIndex = end;
+        break;
+      }
+    }
+    labels.push(label);
+    index = nextIndex;
+  }
+  return labels;
+}
+
 function convertMultiselectFormAnswer(field: FormMultiselectField1, raw: string): Array<string> {
-  // The TUI sends a comma-joined label list. An exact single-option label
-  // match wins first, so labels that themselves contain commas survive.
-  const exact = field.options.find((option) => option.label === raw);
-  const labels = exact
-    ? [raw]
-    : raw
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0);
-  return convertMultiselectLabels(field, labels);
+  // The TUI sends a comma-joined label list; split it back into labels.
+  return convertMultiselectLabels(field, splitMultiselectLabels(field.options, raw));
 }
 
 function convertFormFieldAnswer(field: FormField1, raw: unknown): FormValue1 {
@@ -510,7 +532,10 @@ function openCodeFormWhenSuffix(when: ReadonlyArray<FormWhen1> | undefined): str
     return "";
   }
   const conditions = when
-    .map((condition) => `${condition.key} = ${String(condition.value)}`)
+    .map(
+      (condition) =>
+        `${condition.key} ${condition.op === "eq" ? "=" : "!="} ${String(condition.value)}`,
+    )
     .join(" and ");
   return ` (only applies if ${conditions})`;
 }
