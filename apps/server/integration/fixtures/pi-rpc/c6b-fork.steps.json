@@ -1,0 +1,39 @@
+[
+  {
+    "id": "1",
+    "type": "get_fork_messages"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "2",
+    "type": "fork",
+    "entryId": "233c6c2d"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "3",
+    "type": "get_state"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "4",
+    "type": "get_messages"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "5",
+    "type": "prompt",
+    "message": "List every word I asked you to remember, comma separated."
+  },
+  {
+    "waitFor": "agent_settled"
+  }
+]

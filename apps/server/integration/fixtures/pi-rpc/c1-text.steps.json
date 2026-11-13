@@ -1,0 +1,17 @@
+[
+  {
+    "id": "1",
+    "type": "prompt",
+    "message": "Reply with exactly: pong"
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "2",
+    "type": "get_session_stats"
+  },
+  {
+    "waitFor": "response"
+  }
+]

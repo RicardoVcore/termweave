@@ -1,0 +1,53 @@
+[
+  {
+    "id": "1",
+    "type": "set_model",
+    "provider": "venice-ai",
+    "modelId": "does-not-exist"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "2",
+    "type": "set_model",
+    "provider": "venice-ai",
+    "modelId": "zai-org-glm-4.7"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "3",
+    "type": "get_available_thinking_levels"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "4",
+    "type": "set_thinking_level",
+    "level": "high"
+  },
+  {
+    "id": "5",
+    "type": "prompt",
+    "message": "Reply with exactly: ok"
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "6",
+    "type": "prompt",
+    "message": "second"
+  },
+  {
+    "id": "7",
+    "type": "prompt",
+    "message": "while streaming, no behavior"
+  },
+  {
+    "waitFor": "agent_settled"
+  }
+]

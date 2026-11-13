@@ -1,0 +1,17 @@
+[
+  {
+    "id": "1",
+    "type": "prompt",
+    "message": "Use the bash tool to run exactly: for i in 1 2 3 4; do echo line$i; sleep 1; done. Then use the edit tool to change the word apple to banana in notes.txt. Then use the write tool to create new.txt containing hello. Then read new.txt. Be brief."
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "2",
+    "type": "get_session_stats"
+  },
+  {
+    "waitFor": "response"
+  }
+]

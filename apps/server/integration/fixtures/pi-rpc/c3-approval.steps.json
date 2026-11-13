@@ -1,0 +1,54 @@
+[
+  {
+    "id": "1",
+    "type": "prompt",
+    "message": "Use the bash tool to run: echo approved-run. Then use the write tool to create declined.txt containing x. If a tool is declined, just say so and stop."
+  },
+  {
+    "ui": {
+      "value": "accept"
+    }
+  },
+  {
+    "ui": {
+      "value": "decline"
+    }
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "2",
+    "type": "prompt",
+    "message": "Use the bash tool to run: echo should-cancel"
+  },
+  {
+    "ui": {
+      "value": "cancel"
+    }
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "3",
+    "type": "prompt",
+    "message": "Use the bash tool to run: echo session-allow-1"
+  },
+  {
+    "ui": {
+      "value": "acceptForSession"
+    }
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "4",
+    "type": "prompt",
+    "message": "Use the bash tool to run: echo session-allow-2 (should not ask again)"
+  },
+  {
+    "waitFor": "agent_settled"
+  }
+]
