@@ -51,8 +51,25 @@ interface AssistantBlock {
   accumulated: string;
 }
 
-/** Longest suffix of the previous bash snapshot used to anchor truncation. */
-const COMMAND_OUTPUT_OVERLAP_LIMIT = 256;
+/**
+ * Length of the longest prefix of `next` that is a suffix of `prev` (KMP
+ * prefix function, O(n)).
+ */
+export function longestPrefixSuffixOverlap(prev: string, next: string): number {
+  const s = `${next}\u0000${prev}`;
+  const prefix = Array.from({ length: s.length }, () => 0);
+  let k = 0;
+  for (let i = 1; i < s.length; i += 1) {
+    while (k > 0 && s[i] !== s[k]) {
+      k = prefix[k - 1] ?? 0;
+    }
+    if (s[i] === s[k]) {
+      k += 1;
+    }
+    prefix[i] = k;
+  }
+  return Math.min(prefix[s.length - 1] ?? 0, prev.length, next.length);
+}
 
 const canonicalItemTypeForTool = (toolName: string): ToolItemType => {
   if (toolName === "bash" || toolName === "powershell") {
@@ -381,9 +398,10 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
   };
 
   // bash `partialResult` content is cumulative; emit only the part after the
-  // previous snapshot. When Pi truncates the head or replaces the snapshot,
-  // anchor on the longest kept suffix of the previous snapshot (capped, so a
-  // resync that shares no overlap resends the snapshot in full).
+  // previous snapshot. When Pi truncates the head or replaces the snapshot
+  // (sliding tail window), anchor on the longest prefix of the new snapshot
+  // that is also a suffix of the previous one (KMP, O(n)); a resync that
+  // shares no overlap resends the snapshot in full.
   const mapToolUpdate = (
     record: PiToolExecutionUpdateEvent,
   ): ReadonlyArray<PiRuntimeEventDraft> => {
@@ -394,20 +412,9 @@ export function createPiTurnMapper(input: { turnId: TurnId }): {
     const next = textOfToolResult(record.partialResult);
     const prev = toolOutputSnapshots.get(record.toolCallId) ?? "";
     toolOutputSnapshots.set(record.toolCallId, next);
-    let delta: string;
-    if (next.startsWith(prev)) {
-      delta = next.slice(prev.length);
-    } else {
-      let overlap = 0;
-      const maxOverlap = Math.min(prev.length, COMMAND_OUTPUT_OVERLAP_LIMIT);
-      for (let length = maxOverlap; length > 0; length -= 1) {
-        if (next.startsWith(prev.slice(prev.length - length))) {
-          overlap = length;
-          break;
-        }
-      }
-      delta = next.slice(overlap);
-    }
+    const delta = next.startsWith(prev)
+      ? next.slice(prev.length)
+      : next.slice(longestPrefixSuffixOverlap(prev, next));
     if (delta.length === 0) {
       return [];
     }

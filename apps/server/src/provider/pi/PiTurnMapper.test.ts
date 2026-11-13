@@ -8,7 +8,11 @@ import { describe, expect, it } from "vitest";
 
 import { parsePiApprovalTitle } from "./piApprovalExtension.ts";
 import { parsePiRecord, type PiRecord } from "./piRpcProtocol.ts";
-import { createPiTurnMapper, type PiRuntimeEventDraft } from "./PiTurnMapper.ts";
+import {
+  createPiTurnMapper,
+  longestPrefixSuffixOverlap,
+  type PiRuntimeEventDraft,
+} from "./PiTurnMapper.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.join(__dirname, "../../../integration/fixtures/pi-rpc");
@@ -311,6 +315,39 @@ describe("PiTurnMapper", () => {
     expect(deltas.join("")).toBe("a\nb\nc\n");
   });
 
+  it("emits command output deltas across a sliding tail window", () => {
+    const toolCallId = "bash-sliding-window";
+    const prev = Array.from({ length: 1000 }, (_, i) => `line${i}\n`).join("");
+    const next = `${prev.slice(300)}NEW\n`;
+    const records = [
+      { type: "tool_execution_start", toolCallId, toolName: "bash", args: { command: "ls" } },
+      {
+        type: "tool_execution_update",
+        toolCallId,
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: prev }] },
+      },
+      {
+        type: "tool_execution_update",
+        toolCallId,
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: next }] },
+      },
+    ] as ReadonlyArray<PiRecord>;
+
+    const mapper = createPiTurnMapper({ turnId: TurnId.make("turn-sliding-window") });
+    const drafts = records.flatMap((record) => mapper.map(record));
+
+    const deltas = drafts
+      .filter((draft) => draft.type === "content.delta")
+      .filter((draft) => draft.payload.streamKind === "command_output")
+      .map((draft) => draft.payload.delta);
+    // First delta is the initial full snapshot; the sliding-window update
+    // must contribute exactly the new tail.
+    expect(deltas).toHaveLength(2);
+    expect(deltas[1]).toBe("NEW\n");
+  });
+
   it("emits item events for final assistant content blocks that never streamed", () => {
     const records = [
       {
@@ -342,5 +379,14 @@ describe("PiTurnMapper", () => {
       detail: "hi",
     });
     expect(drafts.filter((draft) => draft.type === "content.delta")).toHaveLength(0);
+  });
+});
+
+describe("longestPrefixSuffixOverlap", () => {
+  it("measures the longest prefix of next that is a suffix of prev", () => {
+    expect(longestPrefixSuffixOverlap("abc", "bcd")).toBe(2);
+    expect(longestPrefixSuffixOverlap("abc", "xyz")).toBe(0);
+    expect(longestPrefixSuffixOverlap("aaaa", "aaab")).toBe(3);
+    expect(longestPrefixSuffixOverlap("", "x")).toBe(0);
   });
 });
