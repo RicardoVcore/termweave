@@ -36,12 +36,14 @@ const CODEX_DRIVER_KIND = "codex" as ProviderDriverKind;
 const CLAUDE_DRIVER_KIND = "claudeAgent" as ProviderDriverKind;
 const CURSOR_DRIVER_KIND = "cursor" as ProviderDriverKind;
 const OPENCODE_DRIVER_KIND = "opencode" as ProviderDriverKind;
+const PI_DRIVER_KIND = "pi" as ProviderDriverKind;
 
 export const PROVIDER_DISPLAY_NAMES_BY_DRIVER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: "Codex",
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [PI_DRIVER_KIND]: "Pi",
 };
 
 const MODEL_SLUG_ALIASES_BY_OPEN_DRIVER: Partial<
@@ -59,6 +61,7 @@ const MODEL_SLUG_ALIASES_BY_OPEN_DRIVER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [OPENCODE_DRIVER_KIND]: {},
+  [PI_DRIVER_KIND]: {},
 };
 
 export interface SelectableModelOption {

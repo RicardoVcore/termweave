@@ -1,0 +1,37 @@
+[
+  {
+    "id": "1",
+    "type": "prompt",
+    "message": "Remember the word alpha. Reply ok."
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "2",
+    "type": "prompt",
+    "message": "Remember the word beta. Reply ok."
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "3",
+    "type": "prompt",
+    "message": "Remember the word gamma. Reply ok."
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "4",
+    "type": "get_state"
+  },
+  {
+    "id": "5",
+    "type": "get_fork_messages"
+  },
+  {
+    "sleep": 500
+  }
+]

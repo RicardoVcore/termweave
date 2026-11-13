@@ -1260,7 +1260,7 @@ function providerPickerIcon(provider: string): string {
   if (provider === "githubCopilot") return "";
   if (provider === "gemini") return "◇";
   if (provider === "acpRegistry") return "󰕮";
-  if (provider === "piAgent") return "π";
+  if (provider === "pi") return "π";
   return "󰚩";
 }
 
@@ -4246,6 +4246,7 @@ export function App({
     claudeAgent: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
     cursor: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
     opencode: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
+    pi: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
   });
   const [providerEnvironmentDraftByInstance, setProviderEnvironmentDraftByInstance] =
     useState<ProviderEnvironmentDraftMap>({});
@@ -4273,6 +4274,7 @@ export function App({
     claudeAgent: false,
     cursor: false,
     opencode: false,
+    pi: false,
   });
   const [showAllProjectThreads, setShowAllProjectThreads] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -4819,6 +4821,7 @@ export function App({
             claudeAgent: Boolean(prefs.appSettings.claudeBinaryPath),
             cursor: false,
             opencode: false,
+            pi: false,
           });
         }
         const persistedProvider = normalizePersistedProvider(prefs.draftProvider);
@@ -4987,6 +4990,10 @@ export function App({
                   opencode: isProviderInstallSettingsDirtyForSettings(
                     settings,
                     INSTALL_PROVIDER_SETTINGS[3]!,
+                  ),
+                  pi: isProviderInstallSettingsDirtyForSettings(
+                    settings,
+                    INSTALL_PROVIDER_SETTINGS[4]!,
                   ),
                 });
               }
@@ -6154,7 +6161,7 @@ export function App({
         label: "Switch model",
         description: "Open provider and model picker",
         trailingLabel: "mod+shift+m",
-        keywords: ["provider", "codex", "claude", "cursor", "opencode"],
+        keywords: ["provider", "codex", "claude", "cursor", "opencode", "pi"],
       },
       {
         id: "thread:view",
@@ -9265,7 +9272,13 @@ export function App({
         : current,
     );
     setTuiThemeId(DEFAULT_TUI_THEME_ID);
-    setOpenInstallProviders({ codex: false, claudeAgent: false, cursor: false, opencode: false });
+    setOpenInstallProviders({
+      codex: false,
+      claudeAgent: false,
+      cursor: false,
+      opencode: false,
+      pi: false,
+    });
     setSelectedCustomModelProvider("codex");
     setCustomModelInputByProvider({ codex: "", claudeAgent: "" });
     setCustomModelErrorByProvider({});
@@ -9803,6 +9816,7 @@ export function App({
       claudeAgent: false,
       cursor: false,
       opencode: false,
+      pi: false,
     });
   }
 

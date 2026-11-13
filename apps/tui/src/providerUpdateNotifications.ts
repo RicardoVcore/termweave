@@ -45,7 +45,7 @@ const PROVIDER_NAMES: Readonly<Record<string, string>> = {
   githubCopilot: "GitHub Copilot",
   gemini: "Gemini",
   acpRegistry: "ACP Registry",
-  piAgent: "Pi Agent",
+  pi: "Pi",
 };
 
 function providerName(provider: Pick<ServerProvider, "driver">): string {

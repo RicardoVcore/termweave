@@ -1,0 +1,17 @@
+[
+  {
+    "id": "1",
+    "type": "get_state"
+  },
+  {
+    "waitFor": "response"
+  },
+  {
+    "id": "2",
+    "type": "prompt",
+    "message": "List every word I asked you to remember, comma separated."
+  },
+  {
+    "waitFor": "agent_settled"
+  }
+]

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "1",
+    "type": "prompt",
+    "message": "Use the bash tool to run: echo session-allow-1"
+  },
+  {
+    "ui": {
+      "value": "acceptForSession"
+    }
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "2",
+    "type": "prompt",
+    "message": "Use the bash tool to run: echo session-allow-2"
+  },
+  {
+    "waitFor": "agent_settled"
+  },
+  {
+    "id": "3",
+    "type": "prompt",
+    "message": "Use the write tool to create w.txt containing y"
+  },
+  {
+    "ui": {
+      "value": "accept"
+    }
+  },
+  {
+    "waitFor": "agent_settled"
+  }
+]

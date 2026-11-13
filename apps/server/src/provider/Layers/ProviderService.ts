@@ -674,6 +674,17 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           allowRecovery: true,
         });
         yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+        // A rollback can fork the provider session (new resume cursor); persist
+        // the binding now so recovery does not restore the old cursor if the
+        // process dies before the next turn.
+        const activeSessions = yield* routed.adapter.listSessions();
+        const session = activeSessions.find((candidate) => candidate.threadId === routed.threadId);
+        if (session) {
+          yield* upsertSessionBinding(session, routed.threadId, {
+            lastRuntimeEvent: "provider.rollback",
+            lastRuntimeEventAt: new Date().toISOString(),
+          });
+        }
         yield* analytics.record("provider.conversation.rolled_back", {
           provider: routed.adapter.provider,
           turns: input.numTurns,
