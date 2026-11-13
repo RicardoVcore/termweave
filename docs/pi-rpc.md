@@ -88,7 +88,7 @@ With no usable model, `model` is a placeholder with `id/provider: "unknown"`, no
 
 `prompt` rules:
 
-- `success:false` means it was rejected before acceptance. Example **[verified]** with no key: `"No API key found for the selected model.\n\nUse /login ..."`. Fail the turn with that text and emit no `turn.started`.
+- `success:false` means it was rejected before acceptance. Example **[verified]** with no key: `"No API key found for the selected model.\n\nUse /login ..."`. `turn.started` is emitted before the prompt is written; on rejection the adapter emits `runtime.error` and `turn.completed {state: failed}` with that text.
 - `disposition:"handled"` means an extension command consumed it, no run starts and no `agent_settled` follows. Complete the turn immediately.
 - **Serialize prompts: send the next `prompt` only after the previous turn's `agent_settled`.** Docs say a `prompt` during streaming without `streamingBehavior` errors, but there is a race window. Two prompts written back to back both returned `{"disposition":"started"}`. The second one never ran: no user message, and a spurious `agent_start`/`agent_settled` pair interleaved with the first run. **[verified]** (`c5-errors`) So the adapter keeps a per-session turn state and rejects `sendTurn` while a turn is active, or queues it locally.
 - `set_model` with an unknown id: `success:false`, `error: "Model not found: venice-ai/does-not-exist"`. **[verified]**
