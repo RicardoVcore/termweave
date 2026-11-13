@@ -23,14 +23,14 @@ import {
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
-import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import type { AgentInfo, ModelInfo } from "@opencode/client";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
-const MINIMUM_OPENCODE_VERSION = "1.14.19";
+const MINIMUM_OPENCODE_VERSION = "2.0.0";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause: unknown;
@@ -124,7 +124,7 @@ function formatOpenCodeProbeError(input: {
     return {
       installed: true,
       message:
-        "macOS killed the OpenCode process due to an invalid code signature. The binary may be corrupted — try reinstalling OpenCode.",
+        "macOS killed the OpenCode process due to an invalid code signature. The binary may be corrupted - try reinstalling OpenCode.",
     };
   }
 
@@ -162,8 +162,12 @@ function inferDefaultVariant(
   return undefined;
 }
 
-function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
-  return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
+// Agent identity note: 2.x `AgentInfo.id` is the runtime key used by
+// `session.switchAgent` (e.g. `build`), while `AgentInfo.name` is a display
+// label (`Build`). Options must carry `id`; switching by `name` fails with
+// `Agent not found` at prompt time.
+function inferDefaultAgent(agents: ReadonlyArray<AgentInfo>): string | undefined {
+  return agents.find((agent) => agent.id === "build")?.id ?? agents[0]?.id ?? undefined;
 }
 
 const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -172,10 +176,10 @@ const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabi
 
 function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
-  readonly model: ProviderListResponse["all"][number]["models"][string];
-  readonly agents: ReadonlyArray<Agent>;
+  readonly model: ModelInfo;
+  readonly agents: ReadonlyArray<AgentInfo>;
 }): ModelCapabilities {
-  const variantValues = Object.keys(input.model.variants ?? {});
+  const variantValues = input.model.variants.map((variant) => variant.id);
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -187,9 +191,9 @@ function openCodeCapabilitiesForModel(input: {
   );
   const defaultAgent = inferDefaultAgent(primaryAgents);
   const agentOptions = primaryAgents.map((agent) =>
-    defaultAgent === agent.name
-      ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
-      : { id: agent.name, label: titleCaseSlug(agent.name) },
+    defaultAgent === agent.id
+      ? { id: agent.id, label: agent.name, isDefault: true as const }
+      : { id: agent.id, label: agent.name },
   );
   return createModelCapabilities({
     optionDescriptors: [
@@ -219,34 +223,38 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
-function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
-  const connected = new Set(input.providerList.connected);
+/** Usable upstream model: chat type and not disabled by the upstream provider. */
+const isOpenCodeModelUsable = (model: ModelInfo): boolean =>
+  (model.type ?? "chat") === "chat" && model.enabled !== false;
+
+export function flattenOpenCodeModels(
+  input: OpenCodeInventory,
+): ReadonlyArray<ServerProviderModel> {
   const models: Array<ServerProviderModel> = [];
 
-  for (const provider of input.providerList.all) {
-    if (!connected.has(provider.id)) {
+  for (const model of input.models) {
+    if (!isOpenCodeModelUsable(model)) {
       continue;
     }
 
-    for (const model of Object.values(provider.models)) {
-      const name = nonEmptyTrimmed(model.name);
-      if (!name) {
-        continue;
-      }
-
-      const subProvider = nonEmptyTrimmed(provider.name);
-      models.push({
-        slug: `${provider.id}/${model.id}`,
-        name,
-        ...(subProvider ? { subProvider } : {}),
-        isCustom: false,
-        capabilities: openCodeCapabilitiesForModel({
-          providerID: provider.id,
-          model,
-          agents: input.agents,
-        }),
-      });
+    const name = nonEmptyTrimmed(model.name);
+    if (!name) {
+      continue;
     }
+
+    models.push({
+      // Split on the first `/` only, so ids containing `/` survive round-trips.
+      slug: `${model.providerID}/${model.id}`,
+      name,
+      // Distinguish same-named models coming from different upstreams in the picker.
+      subProvider: model.providerID,
+      isCustom: false,
+      capabilities: openCodeCapabilitiesForModel({
+        providerID: model.providerID,
+        model,
+        agents: input.agents,
+      }),
+    });
   }
 
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
@@ -413,16 +421,17 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         const server = yield* openCodeRuntime.connectToOpenCodeServer({
           binaryPath: openCodeSettings.binaryPath,
           serverUrl: openCodeSettings.serverUrl,
+          ...(isExternalServer && openCodeSettings.serverPassword
+            ? { serverPassword: openCodeSettings.serverPassword }
+            : {}),
           environment,
         });
         return yield* openCodeRuntime.loadOpenCodeInventory(
           openCodeRuntime.createOpenCodeSdkClient({
             baseUrl: server.url,
-            directory: cwd,
-            ...(isExternalServer && openCodeSettings.serverPassword
-              ? { serverPassword: openCodeSettings.serverPassword }
-              : {}),
+            ...(server.password ? { serverPassword: server.password } : {}),
           }),
+          cwd,
         );
       }).pipe(
         Effect.mapError(
@@ -441,7 +450,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const connectedCount = inventoryExit.value.providerList.connected.length;
+  // "Connected" upstreams are the distinct providerIDs that exposed usable
+  // models (chat + enabled - the usability filter `flattenOpenCodeModels`
+  // applies before its extra name check).
+  const connectedCount = new Set(
+    inventoryExit.value.models.filter(isOpenCodeModelUsable).map((model) => model.providerID),
+  ).size;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,

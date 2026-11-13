@@ -1,16 +1,28 @@
+import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@termweave/contracts";
+import type {
+  ChatAttachment,
+  ProviderApprovalDecision,
+  RuntimeMode,
+  UserInputQuestion,
+  UserInputQuestionOption,
+} from "@termweave/contracts";
 import {
-  createOpencodeClient,
-  type Agent,
-  type FilePartInput,
-  type OpencodeClient,
-  type PermissionRuleset,
-  type ProviderListResponse,
-  type QuestionAnswer,
-  type QuestionRequest,
-} from "@opencode-ai/sdk/v2";
+  OpenCode,
+  type AgentInfo,
+  type FormBooleanField1,
+  type FormField1,
+  type FormInfo1,
+  type FormIntegerField1,
+  type FormMultiselectField1,
+  type FormNumberField1,
+  type FormOption,
+  type FormValue1,
+  type FormWhen1,
+  type ModelInfo,
+  type OpenCodeClient,
+} from "@opencode/client";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -22,7 +34,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as P from "effect/Predicate";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -34,16 +46,28 @@ import * as NetService from "@termweave/shared/Net";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
-const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
+// OpenCode 2.x ready line: `server listening on http://127.0.0.1:<port>`
+const OPENCODE_SERVER_READY_PREFIX = "server listening on";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 5_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
+
+/**
+ * OpenCode 2.x servers require basic auth. We generate a random password for
+ * servers we spawn and pass it via `OPENCODE_SERVER_PASSWORD`; the client then
+ * sends `Authorization: Basic base64("opencode:<password>")`.
+ */
+const generateOpenCodeServerPassword = () => randomBytes(24).toString("base64url");
+
 export interface OpenCodeServerProcess {
   readonly url: string;
+  readonly password: string;
   readonly exitCode: Effect.Effect<number, never>;
 }
 
 export interface OpenCodeServerConnection {
   readonly url: string;
+  /** Basic-auth password for the server. Null only for external servers without one. */
+  readonly password: string | null;
   readonly exitCode: Effect.Effect<number, never> | null;
   readonly external: boolean;
 }
@@ -67,7 +91,7 @@ export function openCodeRuntimeErrorDetail(cause: unknown): string {
   if (OpenCodeRuntimeError.is(cause)) return cause.detail;
   if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
   if (cause && typeof cause === "object") {
-    // SDK v2 throws { response, request, error? } shapes — extract what's useful
+    // SDK v2 throws { response, request, error? } shapes - extract what's useful
     const anyCause = cause as Record<string, unknown>;
     const status = (anyCause.response as { status?: number } | undefined)?.status;
     const body = anyCause.error ?? anyCause.data ?? anyCause.body;
@@ -96,8 +120,20 @@ export interface OpenCodeCommandResult {
 }
 
 export interface OpenCodeInventory {
-  readonly providerList: ProviderListResponse;
-  readonly agents: ReadonlyArray<Agent>;
+  readonly models: ReadonlyArray<ModelInfo>;
+  readonly agents: ReadonlyArray<AgentInfo>;
+}
+
+/** 2.x `session.prompt` files entry. Attachments already live on disk, so we pass file URIs. */
+export interface OpenCodePromptFile {
+  readonly uri: string;
+  readonly name?: string;
+}
+
+export interface OpenCodePermissionRule {
+  readonly action: string;
+  readonly resource: string;
+  readonly effect: "allow" | "deny" | "ask";
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -108,7 +144,7 @@ export interface ParsedOpenCodeModelSlug {
 export interface OpenCodeRuntimeShape {
   /**
    * Spawns a local OpenCode server process. Its lifetime is bound to the caller's
-   * `Scope.Scope` — the child is killed automatically when that scope closes.
+   * `Scope.Scope` - the child is killed automatically when that scope closes.
    * Consumers that want a long-lived server must create and hold a scope explicitly
    * (see {@link Scope.make}) and close it when done.
    */
@@ -121,12 +157,13 @@ export interface OpenCodeRuntimeShape {
   }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
   /**
    * Returns a handle to either an externally-managed OpenCode server (when
-   * `serverUrl` is provided — no lifetime is attached to the caller's scope) or a
+   * `serverUrl` is provided - no lifetime is attached to the caller's scope) or a
    * freshly spawned local server whose lifetime is bound to the caller's scope.
    */
   readonly connectToOpenCodeServer: (input: {
     readonly binaryPath: string;
     readonly serverUrl?: string | null;
+    readonly serverPassword?: string | null;
     readonly environment?: NodeJS.ProcessEnv;
     readonly port?: number;
     readonly hostname?: string;
@@ -139,15 +176,15 @@ export interface OpenCodeRuntimeShape {
   }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
   readonly createOpenCodeSdkClient: (input: {
     readonly baseUrl: string;
-    readonly directory: string;
-    readonly serverPassword?: string;
-  }) => OpencodeClient;
+    readonly serverPassword?: string | null;
+  }) => OpenCodeClient;
   readonly loadOpenCodeInventory: (
-    client: OpencodeClient,
+    client: OpenCodeClient,
+    directory: string,
   ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
 }
 
-function parseServerUrlFromOutput(output: string): string | null {
+export function parseServerUrlFromOutput(output: string): string | null {
   for (const line of output.split("\n")) {
     if (!line.startsWith(OPENCODE_SERVER_READY_PREFIX)) {
       continue;
@@ -166,6 +203,8 @@ export function parseOpenCodeModelSlug(
   }
 
   const trimmed = slug.trim();
+  // Split on the FIRST slash only: model ids may themselves contain `/`
+  // (e.g. `google/gemini-4-hydrogen` under providerID `openrouter`).
   const separator = trimmed.indexOf("/");
   if (separator <= 0 || separator === trimmed.length - 1) {
     return null;
@@ -177,22 +216,11 @@ export function parseOpenCodeModelSlug(
   };
 }
 
-export function openCodeQuestionId(
-  index: number,
-  question: QuestionRequest["questions"][number],
-): string {
-  const header = question.header
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-");
-  return header.length > 0 ? `question-${index}-${header}` : `question-${index}`;
-}
-
 export function toOpenCodeFileParts(input: {
   readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
   readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
-}): Array<FilePartInput> {
-  const parts: Array<FilePartInput> = [];
+}): Array<OpenCodePromptFile> {
+  const parts: Array<OpenCodePromptFile> = [];
 
   for (const attachment of input.attachments ?? []) {
     const attachmentPath = input.resolveAttachmentPath(attachment);
@@ -201,31 +229,24 @@ export function toOpenCodeFileParts(input: {
     }
 
     parts.push({
-      type: "file",
-      mime: attachment.mimeType,
-      filename: attachment.name,
-      url: pathToFileURL(attachmentPath).href,
+      uri: pathToFileURL(attachmentPath).href,
+      name: attachment.name,
     });
   }
 
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+): Array<OpenCodePermissionRule> {
   if (runtimeMode === "full-access") {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    return [{ action: "*", resource: "*", effect: "allow" }];
   }
 
   return [
-    { permission: "*", pattern: "*", action: "ask" },
-    { permission: "bash", pattern: "*", action: "ask" },
-    { permission: "edit", pattern: "*", action: "ask" },
-    { permission: "webfetch", pattern: "*", action: "ask" },
-    { permission: "websearch", pattern: "*", action: "ask" },
-    { permission: "codesearch", pattern: "*", action: "ask" },
-    { permission: "external_directory", pattern: "*", action: "ask" },
-    { permission: "doom_loop", pattern: "*", action: "ask" },
-    { permission: "question", pattern: "*", action: "allow" },
+    { action: "*", resource: "*", effect: "ask" },
+    { action: "question", resource: "*", effect: "allow" },
   ];
 }
 
@@ -244,23 +265,335 @@ export function toOpenCodePermissionReply(
   }
 }
 
-export function toOpenCodeQuestionAnswers(
-  request: QuestionRequest,
-  answers: Record<string, unknown>,
-): Array<QuestionAnswer> {
-  return request.questions.map((question, index) => {
-    const raw =
-      answers[openCodeQuestionId(index, question)] ??
-      answers[question.header] ??
-      answers[question.question];
-    if (Array.isArray(raw)) {
-      return raw.filter((value): value is string => typeof value === "string");
-    }
-    if (typeof raw === "string") {
-      return raw.trim().length > 0 ? [raw] : [];
-    }
-    return [];
+/** Stable TUI-facing id for a 2.x form field. Field keys are unique within a form. */
+export function openCodeFormFieldId(field: FormField1, index: number): string {
+  const key = field.key.trim();
+  return key.length > 0 ? key : `field-${index}`;
+}
+
+/**
+ * A single 2.x form field answer could not be derived from the TUI's string
+ * answer. `fieldKey` names the offending field so callers can surface a
+ * validation error instead of sending an invalid reply to the server.
+ */
+export class OpenCodeFormAnswerError extends Data.TaggedError("OpenCodeFormAnswerError")<{
+  readonly fieldKey: string;
+  readonly reason: string;
+}> {
+  static readonly is = (u: unknown): u is OpenCodeFormAnswerError =>
+    P.isTagged(u, "OpenCodeFormAnswerError");
+}
+
+const openCodeFormAnswerError = (field: FormField1, reason: string) =>
+  new OpenCodeFormAnswerError({ fieldKey: field.key, reason });
+
+/** Answer words accepted for a 2.x boolean field, mapped onto `true`. */
+const BOOLEAN_TRUE_ANSWERS = new Set(["yes", "true", "y"]);
+/** Answer words accepted for a 2.x boolean field, mapped onto `false`. */
+const BOOLEAN_FALSE_ANSWERS = new Set(["no", "false", "n"]);
+
+const BOOLEAN_FORM_OPTIONS: ReadonlyArray<UserInputQuestionOption> = [
+  { label: "Yes", description: "Yes" },
+  { label: "No", description: "No" },
+];
+
+/**
+ * Resolve a TUI answer string against a field's option list. TUI answers carry
+ * the option LABEL, so we map back onto the 2.x option `value` (exact match,
+ * then case-insensitive). Free text is kept only when the field allows custom
+ * answers.
+ */
+function convertOptionFormAnswer(
+  fieldKey: string,
+  options: ReadonlyArray<FormOption>,
+  allowCustom: boolean,
+  raw: string,
+): string {
+  const option =
+    options.find((candidate) => candidate.label === raw) ??
+    options.find((candidate) => candidate.label.toLowerCase() === raw.toLowerCase());
+  if (option) {
+    return option.value;
+  }
+  if (allowCustom || options.length === 0) {
+    return raw;
+  }
+  throw new OpenCodeFormAnswerError({
+    fieldKey,
+    reason: `"${raw}" is not one of the offered options`,
   });
+}
+
+function convertNumberFormAnswer(field: FormNumberField1, raw: string): number {
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed.length === 0 || !Number.isFinite(value)) {
+    throw openCodeFormAnswerError(field, `"${raw}" is not a number`);
+  }
+  return value;
+}
+
+function convertIntegerFormAnswer(field: FormIntegerField1, raw: string): number {
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed.length === 0 || !Number.isInteger(value)) {
+    throw openCodeFormAnswerError(field, `"${raw}" is not an integer`);
+  }
+  return value;
+}
+
+function convertBooleanFormAnswer(field: FormBooleanField1, raw: string): boolean {
+  const normalized = raw.trim().toLowerCase();
+  if (BOOLEAN_TRUE_ANSWERS.has(normalized)) {
+    return true;
+  }
+  if (BOOLEAN_FALSE_ANSWERS.has(normalized)) {
+    return false;
+  }
+  throw openCodeFormAnswerError(field, `"${raw}" is not a yes/no answer`);
+}
+
+const isStringArray = (value: unknown): value is ReadonlyArray<string> =>
+  Array.isArray(value) && value.every((entry) => typeof entry === "string");
+
+/** Shared multiselect core: map already-split labels onto option values. */
+function convertMultiselectLabels(
+  field: FormMultiselectField1,
+  labels: ReadonlyArray<string>,
+): Array<string> {
+  const values = labels.map((label) =>
+    convertOptionFormAnswer(field.key, field.options, field.custom === true, label),
+  );
+  if (values.length < Math.max(field.required ? 1 : 0, field.minItems ?? 0)) {
+    throw openCodeFormAnswerError(field, "no options selected");
+  }
+  return values;
+}
+
+/**
+ * Split a comma-joined label list back into labels. Greedy longest-run match
+ * against the option labels, so labels that themselves contain commas
+ * (e.g. "ACME, Inc.") survive the round trip.
+ */
+function splitMultiselectLabels(options: ReadonlyArray<FormOption>, raw: string): Array<string> {
+  const tokens = raw.split(",").filter((token) => token.trim().length > 0);
+  const labels: Array<string> = [];
+  let index = 0;
+  while (index < tokens.length) {
+    let label = (tokens[index] ?? "").trim();
+    let nextIndex = index + 1;
+    for (let end = tokens.length; end > index; end--) {
+      const candidate = tokens.slice(index, end).join(",").trim();
+      const matched = options.some(
+        (option) =>
+          option.label === candidate || option.label.toLowerCase() === candidate.toLowerCase(),
+      );
+      if (matched) {
+        label = candidate;
+        nextIndex = end;
+        break;
+      }
+    }
+    labels.push(label);
+    index = nextIndex;
+  }
+  return labels;
+}
+
+function convertMultiselectFormAnswer(field: FormMultiselectField1, raw: string): Array<string> {
+  // The TUI sends a comma-joined label list; split it back into labels.
+  return convertMultiselectLabels(field, splitMultiselectLabels(field.options, raw));
+}
+
+function convertFormFieldAnswer(field: FormField1, raw: unknown): FormValue1 {
+  if (typeof raw !== "string") {
+    // Remote clients may send multiselect answers as an array of labels.
+    if (field.type === "multiselect" && isStringArray(raw)) {
+      return convertMultiselectLabels(field, raw);
+    }
+    throw openCodeFormAnswerError(field, "answer must be text");
+  }
+  switch (field.type) {
+    case "string":
+      return convertOptionFormAnswer(field.key, field.options ?? [], field.custom === true, raw);
+    case "number":
+      return convertNumberFormAnswer(field, raw);
+    case "integer":
+      return convertIntegerFormAnswer(field, raw);
+    case "boolean":
+      return convertBooleanFormAnswer(field, raw);
+    case "multiselect":
+      return convertMultiselectFormAnswer(field, raw);
+    case "external":
+      throw openCodeFormAnswerError(field, "external fields cannot be answered from the TUI");
+  }
+}
+
+/** One `when` condition holds when the referenced converted answer matches. */
+function formWhenConditionHolds(
+  condition: FormWhen1,
+  answers: Record<string, FormValue1>,
+): boolean {
+  const answer = answers[condition.key];
+  if (answer === undefined) {
+    return false;
+  }
+  const candidates = Array.isArray(answer) ? answer : [answer];
+  const matches = candidates.some(
+    (candidate) => candidate === condition.value || String(candidate) === String(condition.value),
+  );
+  return condition.op === "eq" ? matches : !matches;
+}
+
+/** All conditions must hold for a field to be active; missing references make it inactive. */
+function formFieldWhen(field: FormField1): ReadonlyArray<FormWhen1> | undefined {
+  return field.type === "external" ? undefined : field.when;
+}
+
+function formWhenActive(
+  when: ReadonlyArray<FormWhen1> | undefined,
+  answers: Record<string, FormValue1>,
+): boolean {
+  return (when ?? []).every((condition) => formWhenConditionHolds(condition, answers));
+}
+
+function convertOpenCodeFormAnswers(
+  fields: ReadonlyArray<FormField1>,
+  answers: Record<string, unknown>,
+): Record<string, FormValue1> {
+  // First pass: convert every answered field up front so `when` conditions can
+  // reference fields declared later in the form. A field whose answer cannot
+  // be converted is recorded and only reported if the field turns out active,
+  // so a stray inactive answer can never fail the whole form.
+  const converted: Record<string, FormValue1> = {};
+  const failures = new Map<string, OpenCodeFormAnswerError>();
+  for (const [index, field] of fields.entries()) {
+    const raw = answers[openCodeFormFieldId(field, index)];
+    if (raw === undefined) {
+      // Unanswered (e.g. hidden) fields still feed `when` through their default.
+      if (field.type !== "external" && field.default !== undefined) {
+        converted[field.key] = field.default;
+      }
+      continue;
+    }
+    try {
+      converted[field.key] = convertFormFieldAnswer(field, raw);
+    } catch (cause) {
+      if (!OpenCodeFormAnswerError.is(cause)) {
+        throw cause;
+      }
+      failures.set(field.key, cause);
+    }
+  }
+
+  // Second pass: keep only fields whose `when` conditions hold.
+  const active: Record<string, FormValue1> = {};
+  for (const field of fields) {
+    if (!formWhenActive(formFieldWhen(field), converted)) {
+      continue;
+    }
+    const failure = failures.get(field.key);
+    if (failure) {
+      throw failure;
+    }
+    const value = converted[field.key];
+    if (value !== undefined) {
+      active[field.key] = value;
+    }
+  }
+  return active;
+}
+
+/**
+ * Map TUI answers (keyed by `openCodeFormFieldId`) onto the 2.x form answer
+ * record consumed by `client.session.form.reply`. Answers for fields whose
+ * `when` conditions do not hold are omitted. Fails with
+ * `OpenCodeFormAnswerError` naming the field when an active answer cannot be
+ * converted.
+ */
+export const toOpenCodeFormAnswers = (
+  fields: ReadonlyArray<FormField1>,
+  answers: Record<string, unknown>,
+): Effect.Effect<Record<string, FormValue1>, OpenCodeFormAnswerError> =>
+  Effect.try({
+    try: () => convertOpenCodeFormAnswers(fields, answers),
+    catch: (cause) =>
+      OpenCodeFormAnswerError.is(cause)
+        ? cause
+        : new OpenCodeFormAnswerError({
+            fieldKey: "",
+            reason: openCodeRuntimeErrorDetail(cause),
+          }),
+  });
+
+/** Short suffix shown in the TUI so users know a question may not apply. */
+function openCodeFormWhenSuffix(when: ReadonlyArray<FormWhen1> | undefined): string {
+  if (!when || when.length === 0) {
+    return "";
+  }
+  const conditions = when
+    .map(
+      (condition) =>
+        `${condition.key} ${condition.op === "eq" ? "=" : "!="} ${String(condition.value)}`,
+    )
+    .join(" and ");
+  return ` (only applies if ${conditions})`;
+}
+
+function openCodeFormQuestionOptions(field: FormField1): ReadonlyArray<UserInputQuestionOption> {
+  if (field.type === "boolean") {
+    return BOOLEAN_FORM_OPTIONS;
+  }
+  if (field.type === "string" || field.type === "multiselect") {
+    return (field.options ?? []).map((option) => ({
+      label: option.label,
+      description: option.description ?? option.label,
+    }));
+  }
+  return [];
+}
+
+function toOpenCodeFormQuestion(field: FormField1, index: number): UserInputQuestion | undefined {
+  // External fields open a URL in the client; neither is user-answerable.
+  if (field.type === "external") {
+    return undefined;
+  }
+  if (field.hidden) {
+    return undefined;
+  }
+  return {
+    id: openCodeFormFieldId(field, index),
+    header: field.title ?? field.key,
+    question: `${field.description ?? field.title ?? field.key}${openCodeFormWhenSuffix(formFieldWhen(field))}`,
+    options: openCodeFormQuestionOptions(field),
+    ...(field.type === "multiselect" ? { multiSelect: true } : {}),
+  };
+}
+
+/**
+ * Map a 2.x form onto the TUI user-input questions. `hidden` and `external`
+ * fields are skipped; boolean fields become Yes/No options; fields with `when`
+ * conditions get a suffix explaining when they apply.
+ */
+export function toOpenCodeFormQuestions(form: FormInfo1): ReadonlyArray<UserInputQuestion> {
+  return form.fields.flatMap((field, index) => {
+    const question = toOpenCodeFormQuestion(field, index);
+    return question ? [question] : [];
+  });
+}
+
+/** Render a 2.x form answer value as a single TUI-facing display string. */
+export function openCodeFormAnswerToDisplay(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.filter((entry) => typeof entry === "string").join(", ");
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
 }
 
 function ensureRuntimeError(
@@ -316,7 +649,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     Effect.gen(function* () {
       // Bind this server's lifetime to the caller's scope. When the caller's
       // scope closes, the spawned child is killed and all associated fibers
-      // are interrupted automatically — no `close()` method needed.
+      // are interrupted automatically - no `close()` method needed.
       const runtimeScope = yield* Scope.Scope;
 
       const hostname = input.hostname ?? DEFAULT_HOSTNAME;
@@ -333,6 +666,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
+      const serverPassword = generateOpenCodeServerPassword();
       const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
 
       const child = yield* spawner
@@ -343,6 +677,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             env: {
               ...(input.environment ?? process.env),
               OPENCODE_CONFIG_CONTENT: OPENCODE_EMPTY_CONFIG_CONTENT,
+              OPENCODE_SERVER_PASSWORD: serverPassword,
             },
           }),
         )
@@ -461,6 +796,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
       return {
         url: readyOption.value,
+        password: serverPassword,
         exitCode: child.exitCode.pipe(
           Effect.map(Number),
           Effect.orElseSucceed(() => 0),
@@ -471,9 +807,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const connectToOpenCodeServer: OpenCodeRuntimeShape["connectToOpenCodeServer"] = (input) => {
     const serverUrl = input.serverUrl?.trim();
     if (serverUrl) {
-      // We don't own externally-configured servers — no scope interaction.
+      // We don't own externally-configured servers - no scope interaction.
+      // Auth uses the user-configured password when one is set.
       return Effect.succeed({
         url: serverUrl,
+        password: input.serverPassword?.trim() ? input.serverPassword.trim() : null,
         exitCode: null,
         external: true,
       });
@@ -488,6 +826,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     }).pipe(
       Effect.map((server) => ({
         url: server.url,
+        password: server.password,
         exitCode: server.exitCode,
         external: false,
       })),
@@ -495,9 +834,8 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   };
 
   const createOpenCodeSdkClient: OpenCodeRuntimeShape["createOpenCodeSdkClient"] = (input) =>
-    createOpencodeClient({
+    OpenCode.make({
       baseUrl: input.baseUrl,
-      directory: input.directory,
       ...(input.serverPassword
         ? {
             headers: {
@@ -505,34 +843,36 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             },
           }
         : {}),
-      throwOnError: true,
     });
 
-  const loadProviders = (client: OpencodeClient) =>
-    runOpenCodeSdk("provider.list", () => client.provider.list()).pipe(
-      Effect.filterMapOrFail(
-        (list) =>
-          list.data
-            ? Result.succeed(list.data)
-            : Result.fail(
-                new OpenCodeRuntimeError({
-                  operation: "provider.list",
-                  detail: "OpenCode provider list was empty.",
-                }),
-              ),
-        (result) => result,
+  const loadModels = (client: OpenCodeClient, directory: string) =>
+    runOpenCodeSdk("model.list", () => client.model.list({ location: { directory } })).pipe(
+      Effect.map((result) => result.data),
+    );
+
+  /**
+   * On a freshly spawned OpenCode 2.x server, `agent.list` returns [] for a
+   * few hundred ms while `model.list` is already populated. Poll until agents
+   * show up (bounded), then return the last list.
+   */
+  const loadAgents = (client: OpenCodeClient, directory: string) =>
+    Effect.repeat(
+      runOpenCodeSdk("agent.list", () => client.agent.list({ location: { directory } })).pipe(
+        Effect.map((result) => result.data),
       ),
+      {
+        until: (agents) => agents.length > 0,
+        schedule: Schedule.spaced("100 millis").pipe(Schedule.both(Schedule.recurs(10))),
+      },
     );
 
-  const loadAgents = (client: OpencodeClient) =>
-    runOpenCodeSdk("app.agents", () => client.app.agents()).pipe(
-      Effect.map((result) => result.data ?? []),
-    );
-
-  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
-    );
+  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (
+    client,
+    directory,
+  ) =>
+    Effect.all([loadModels(client, directory), loadAgents(client, directory)], {
+      concurrency: "unbounded",
+    }).pipe(Effect.map(([models, agents]) => ({ models, agents })));
 
   return {
     startOpenCodeServerProcess,
