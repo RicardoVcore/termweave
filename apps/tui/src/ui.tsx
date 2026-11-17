@@ -43,8 +43,6 @@ import {
   type ProjectScriptIcon,
   type ProviderApprovalDecision,
   type ProviderDriverKind,
-  type ProviderInstanceConfig,
-  type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
   type ProviderInteractionMode,
   type ProviderKind,
@@ -85,12 +83,7 @@ import {
   getCustomModelsForProvider,
   getProviderStartOptions,
   rankModelPickerItems,
-  scoreModelPickerSearch,
-  MAX_CUSTOM_MODEL_LENGTH,
-  MODEL_PROVIDER_SETTINGS,
   normalizeAppSettings,
-  normalizeCustomModelSlugs,
-  patchCustomModels,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
   type AppSettings,
@@ -143,7 +136,6 @@ import {
   getProviderOptionDescriptors,
   getReasoningEffortOptions,
   isClaudeUltrathinkPrompt,
-  normalizeModelSlug,
   normalizeClaudeModelOptions,
   normalizeCodexModelOptions,
   resolveReasoningEffortForProvider,
@@ -226,7 +218,6 @@ import {
   deriveProviderInstanceEntries,
   getProviderInstanceModelOptions,
   legacyProviderKindForDriver,
-  normalizeProviderAccentColor,
   pickDefaultModelSlug,
   resolveProviderSwitchModel,
   sortProviderInstanceEntries,
@@ -249,12 +240,6 @@ import {
   formatRelativeTime,
   formatRelativeTimeLabel,
 } from "./timeFormatting";
-import {
-  canRunProviderUpdate,
-  formatProviderVersionStatus,
-  isProviderUpdateActive,
-  providerUpdateButtonLabel,
-} from "./providerUpdateStatus";
 import {
   authStatusLabel,
   sourceControlProviderSummary,
@@ -286,18 +271,8 @@ import {
 } from "./tailnetDiscovery";
 import {
   ADDITIONAL_COMING_SOON_MODEL_PROVIDER_OPTIONS,
-  COMING_SOON_INSTALL_PROVIDER_OPTIONS,
   INSTALL_PROVIDER_SETTINGS,
-  buildDeleteProviderInstancePatch,
-  buildDefaultProviderInstanceUpdatePatch,
-  buildDuplicateDefaultProviderInstancePatch,
-  buildProviderInstanceUpdatePatch,
-  buildResetDefaultProviderInstancesPatch,
-  buildResetProviderCustomModelsPatch,
   defaultProviderInstanceIdForSettingsKey,
-  type InstallProviderFieldKey,
-  type InstallProviderSettings,
-  type ProviderSettingsKey,
 } from "./providerSettings";
 import {
   filterProviderOptionSelectionsForDescriptors,
@@ -335,7 +310,6 @@ import {
   type TuiTerminalSession,
 } from "./terminalDrawer";
 import {
-  DEFAULT_TUI_THEME,
   DEFAULT_TUI_THEME_ID,
   TUI_THEME_IDS,
   TUI_THEME_LABELS,
@@ -377,6 +351,28 @@ import {
   shouldClearPendingCreatedThread,
 } from "./threadSelection";
 import { resolveWorkEntryIcon } from "./workEntryIcons";
+import {
+  ACTIVE_TUI_THEME,
+  PALETTE,
+  providerPickerIcon,
+  setActiveTuiTheme,
+  SettingsRow,
+  SettingsSection,
+  SettingResetButton,
+  SidebarMouseEvent,
+  TogglePill,
+  ToolbarButton,
+} from "./uiPrimitives";
+import {
+  DEFAULT_CODEX_INSTANCE_ID,
+  modelMenuDisplayLabel,
+  sortProviderModelPreferenceOptions,
+  type InstallProviderKey,
+  type ModelMenuInstanceEntry,
+  type ModelMenuOption,
+} from "./settings/providers/providerSettingsModel";
+import { ProvidersSettingsView } from "./settings/providers/ProvidersSettingsView";
+import { useProviderSettings } from "./settings/providers/useProviderSettings";
 
 addDefaultParsers(CODE_BLOCK_TREE_SITTER_PARSERS);
 
@@ -418,8 +414,7 @@ type SettingsSelectKind =
   | "git-fetch-interval"
   | "git-model-provider"
   | "git-model"
-  | "model-preferences-provider"
-  | "custom-model-provider";
+  | "provider-instance-add";
 type SidebarSortMenuItem = {
   id: string;
   section: "Sort projects" | "Sort threads";
@@ -438,25 +433,8 @@ type CommandPaletteItem = {
   readonly disabled?: boolean;
   readonly workspaceRoot?: string | undefined;
 };
-type ProviderEnvironmentDraft = {
-  readonly name: string;
-  readonly value: string;
-  readonly sensitive: boolean;
-};
-type ProviderEnvironmentDraftMap = Readonly<Record<string, ProviderEnvironmentDraft>>;
-type TuiProviderInstancePatch = {
-  readonly accentColor?: ProviderInstanceConfig["accentColor"] | undefined;
-  readonly displayName?: ProviderInstanceConfig["displayName"] | undefined;
-  readonly environment?: ProviderInstanceConfig["environment"] | undefined;
-};
 
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Readonly<Record<string, PendingUserInputDraftAnswer>> = {};
-const EMPTY_PROVIDER_ENVIRONMENT_DRAFT: ProviderEnvironmentDraft = {
-  name: "",
-  value: "",
-  sensitive: true,
-};
-const PROVIDER_ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const GIT_FETCH_INTERVAL_OPTIONS_SECONDS = [0, 30, 60, 120, 300, 600] as const;
 const PROJECT_SCRIPT_ICON_OPTIONS = [
   { id: "play", icon: "󰐊", label: "Play" },
@@ -690,18 +668,6 @@ function pruneLocallyUnreadThreadIds(
   return changed ? next : unreadThreadIds;
 }
 
-type SidebarMouseEvent = {
-  button?: number;
-  x?: number;
-  y?: number;
-  modifiers?: {
-    shift?: boolean;
-    ctrl?: boolean;
-    alt?: boolean;
-  };
-  preventDefault: () => void;
-  stopPropagation?: () => void;
-};
 type SidebarContextMenuState =
   | {
       kind: "project";
@@ -753,10 +719,6 @@ type TraitsMenuItem = {
   selected?: boolean;
   onSelect: () => void;
 };
-type InstallProviderKey = ProviderSettingsKey;
-const PALETTE: TuiPalette = { ...DEFAULT_TUI_THEME.palette };
-let ACTIVE_TUI_THEME = DEFAULT_TUI_THEME;
-
 function themedScrollboxStyle(backgroundColor: TuiColor) {
   return {
     backgroundColor,
@@ -791,82 +753,6 @@ const TIMESTAMP_FORMAT_LABELS: Record<TimestampFormat, string> = {
   "24-hour": "24-hour",
 };
 
-function readProviderInstallSettingValue(
-  settings: ServerSettings,
-  provider: InstallProviderKey,
-  field: InstallProviderFieldKey,
-): string {
-  const instanceConfig =
-    settings.providerInstances[defaultProviderInstanceIdForSettingsKey(provider)]?.config;
-  if (
-    instanceConfig &&
-    typeof instanceConfig === "object" &&
-    !globalThis.Array.isArray(instanceConfig) &&
-    field in instanceConfig
-  ) {
-    return String((instanceConfig as Record<string, unknown>)[field] ?? "");
-  }
-  const providerSettings = settings.providers[provider];
-  return field in providerSettings
-    ? String(providerSettings[field as keyof typeof providerSettings] ?? "")
-    : "";
-}
-
-function readDefaultProviderInstanceMetadataValue(
-  settings: ServerSettings,
-  provider: InstallProviderKey,
-  field: "accentColor" | "displayName",
-): string {
-  return (
-    settings.providerInstances[defaultProviderInstanceIdForSettingsKey(provider)]?.[
-      field
-    ]?.trim() ?? ""
-  );
-}
-
-function readDefaultProviderInstanceEnvironment(
-  settings: ServerSettings,
-  provider: InstallProviderKey,
-): readonly ProviderInstanceEnvironmentVariable[] {
-  return (
-    settings.providerInstances[defaultProviderInstanceIdForSettingsKey(provider)]?.environment ?? []
-  );
-}
-
-function readAdditionalProviderInstances(
-  settings: ServerSettings | null,
-  provider: InstallProviderKey,
-): readonly [ProviderInstanceId, ProviderInstanceConfig][] {
-  if (!settings) return [];
-  const defaultInstanceId = defaultProviderInstanceIdForSettingsKey(provider);
-  return Object.entries(settings.providerInstances)
-    .filter(
-      (entry): entry is [ProviderInstanceId, ProviderInstanceConfig] =>
-        entry[0] !== defaultInstanceId && entry[1].driver === provider,
-    )
-    .toSorted(([leftId], [rightId]) => String(leftId).localeCompare(String(rightId)));
-}
-
-function formatProviderInstanceSummary(
-  instanceId: ProviderInstanceId,
-  instance: ProviderInstanceConfig,
-): string {
-  const label = instance.displayName?.trim() || String(instanceId);
-  const state = instance.enabled === false ? "disabled" : "enabled";
-  return `${label} · ${String(instanceId)} · ${state}`;
-}
-
-function readProviderInstanceConfigValue(
-  instance: ProviderInstanceConfig,
-  field: InstallProviderFieldKey,
-): string {
-  const config = instance.config;
-  if (!config || typeof config !== "object" || globalThis.Array.isArray(config)) {
-    return "";
-  }
-  return String((config as Record<string, unknown>)[field] ?? "");
-}
-
 function normalizeFetchIntervalSeconds(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
@@ -896,82 +782,6 @@ function applyProviderModelPreferences(
   const hiddenModels = new Set(preferences?.hiddenModels ?? []);
   return sortProviderModelPreferenceOptions(options, appSettings, instanceId).filter(
     (option) => option.isCustom || !hiddenModels.has(option.slug),
-  );
-}
-
-function sortProviderModelPreferenceOptions(
-  options: ReadonlyArray<ModelMenuOption>,
-  appSettings: AppSettings,
-  instanceId: ProviderInstanceId,
-): ReadonlyArray<ModelMenuOption> {
-  const preferences = appSettings.providerModelPreferences[instanceId];
-  const modelOrder = new Map((preferences?.modelOrder ?? []).map((slug, index) => [slug, index]));
-  const favoriteModels = new Set(
-    appSettings.favorites
-      .filter((favorite) => favorite.provider === instanceId)
-      .map((favorite) => favorite.model),
-  );
-  return options
-    .map((option, index) => ({ option, index }))
-    .toSorted((left, right) => {
-      const favoriteDelta =
-        Number(favoriteModels.has(right.option.slug)) -
-        Number(favoriteModels.has(left.option.slug));
-      if (favoriteDelta !== 0) return favoriteDelta;
-      const leftRank = modelOrder.get(left.option.slug) ?? Number.POSITIVE_INFINITY;
-      const rightRank = modelOrder.get(right.option.slug) ?? Number.POSITIVE_INFINITY;
-      if (leftRank !== rightRank) return leftRank - rightRank;
-      return left.index - right.index;
-    })
-    .map(({ option }) => option);
-}
-
-function readProviderInstallEnabled(
-  settings: ServerSettings,
-  provider: InstallProviderKey,
-): boolean {
-  const instance = settings.providerInstances[defaultProviderInstanceIdForSettingsKey(provider)];
-  if (typeof instance?.enabled === "boolean") {
-    return instance.enabled;
-  }
-  if (
-    instance?.config &&
-    typeof instance.config === "object" &&
-    !globalThis.Array.isArray(instance.config)
-  ) {
-    const enabled = (instance.config as Record<string, unknown>).enabled;
-    if (typeof enabled === "boolean") {
-      return enabled;
-    }
-  }
-  return settings.providers[provider].enabled;
-}
-
-function isProviderInstallSettingsDirtyForSettings(
-  settings: ServerSettings,
-  providerSettings: InstallProviderSettings,
-): boolean {
-  if (
-    settings.providerInstances[
-      defaultProviderInstanceIdForSettingsKey(providerSettings.provider)
-    ] !== undefined
-  ) {
-    return true;
-  }
-  if (
-    readProviderInstallEnabled(settings, providerSettings.provider) !==
-    DEFAULT_SERVER_SETTINGS.providers[providerSettings.provider].enabled
-  ) {
-    return true;
-  }
-  return providerSettings.fields.some(
-    (field) =>
-      readProviderInstallSettingValue(settings, providerSettings.provider, field.key) !==
-      String(
-        DEFAULT_SERVER_SETTINGS.providers[providerSettings.provider][
-          field.key as keyof (typeof DEFAULT_SERVER_SETTINGS.providers)[typeof providerSettings.provider]
-        ] ?? "",
-      ),
   );
 }
 
@@ -1251,17 +1061,6 @@ function updateProjectScriptsForSave(input: {
 
 function providerIcon(provider: ProviderKind | string | null | undefined): string {
   return provider === "claudeAgent" ? "✱" : "󰚩";
-}
-
-function providerPickerIcon(provider: string): string {
-  if (provider === "claudeAgent") return "✱";
-  if (provider === "cursor") return "⌖";
-  if (provider === "opencode") return "⌘";
-  if (provider === "githubCopilot") return "";
-  if (provider === "gemini") return "◇";
-  if (provider === "acpRegistry") return "󰕮";
-  if (provider === "pi") return "π";
-  return "󰚩";
 }
 
 function providerColor(provider: ProviderKind | string | null | undefined): TuiColor {
@@ -2574,7 +2373,6 @@ function isAvailableModelProviderOption(
 const AVAILABLE_MODEL_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableModelProviderOption);
 const EMPTY_PROVIDER_SNAPSHOTS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
-const DEFAULT_CODEX_INSTANCE_ID = defaultInstanceIdForDriver("codex" as ProviderDriverKind);
 const DEFAULT_CLAUDE_INSTANCE_ID = defaultInstanceIdForDriver("claudeAgent" as ProviderDriverKind);
 const COMING_SOON_MODEL_PROVIDER_OPTIONS = [
   ...PROVIDER_OPTIONS.filter((option) => !option.available).map((option) => ({
@@ -2587,23 +2385,6 @@ const COMING_SOON_MODEL_PROVIDER_OPTIONS = [
   })),
 ] as const;
 
-type ModelMenuInstanceEntry = {
-  readonly instanceId: ProviderInstanceId;
-  readonly driverKind: ProviderDriverKind;
-  readonly provider: ProviderKind;
-  readonly displayName: string;
-  readonly accentColor?: string;
-  readonly isDefault: boolean;
-};
-type ModelMenuOption = {
-  readonly slug: string;
-  readonly name: string;
-  readonly shortName?: string;
-  readonly subProvider?: string;
-  readonly isDefault?: boolean;
-  readonly isLegacy?: boolean;
-  readonly isCustom: boolean;
-};
 type ModelSearchMenuItem = {
   readonly instanceId: ProviderInstanceId;
   readonly provider: ProviderKind;
@@ -2617,21 +2398,6 @@ type ModelSearchMenuItem = {
   readonly subProvider?: string;
   readonly isFavorite: boolean;
 };
-
-function modelMenuDisplayName(option: ModelMenuOption, options?: { preferShortName?: boolean }) {
-  if (options?.preferShortName && option.shortName) return option.shortName;
-  // Custom Claude entries without a server name are saved slugs the current
-  // catalog no longer lists; derive a readable label from the slug.
-  if (option.isCustom && option.name === option.slug && /^claude-/i.test(option.slug)) {
-    return modelSlugLabel(option.slug);
-  }
-  return option.name;
-}
-
-function modelMenuDisplayLabel(option: ModelMenuOption): string {
-  const name = modelMenuDisplayName(option, { preferShortName: true });
-  return option.subProvider ? `${option.subProvider} · ${name}` : name;
-}
 
 const FALLBACK_MODEL_MENU_INSTANCE_ENTRIES: ReadonlyArray<ModelMenuInstanceEntry> =
   AVAILABLE_MODEL_PROVIDER_OPTIONS.map((option) => ({
@@ -3024,79 +2790,6 @@ function IconButton(props: {
   );
 }
 
-function ToolbarButton(props: {
-  icon?: string;
-  label?: string | undefined;
-  active?: boolean;
-  disabled?: boolean;
-  iconColor?: TuiColor;
-  marginRight?: number;
-  compact?: boolean;
-  surface?: "default" | "inset";
-  chrome?: "default" | "bare";
-  width?: number;
-  justifyContent?: "center" | "flex-start" | "flex-end";
-  onPress: (event?: SidebarMouseEvent) => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-  const foreground = props.disabled ? PALETTE.subtle : props.active ? PALETTE.text : PALETTE.muted;
-  const isBare = props.chrome === "bare";
-  const restingBackground = props.surface === "inset" ? PALETTE.controlInset : PALETTE.control;
-  const disabledBackground = props.surface === "inset" ? PALETTE.controlInset : PALETTE.control;
-  const background = isBare
-    ? "transparent"
-    : props.active
-      ? PALETTE.controlActive
-      : props.disabled
-        ? disabledBackground
-        : hovered
-          ? props.surface === "inset"
-            ? PALETTE.controlInsetHover
-            : PALETTE.controlHover
-          : restingBackground;
-
-  return (
-    <box
-      onMouseOver={() => setHovered(true)}
-      onMouseOut={() => setHovered(false)}
-      onMouseDown={(event) => {
-        if (props.disabled) return;
-        event.preventDefault();
-        event.stopPropagation();
-        props.onPress(event);
-      }}
-      style={{
-        backgroundColor: background,
-        paddingLeft: isBare ? 1 : 1,
-        paddingRight: isBare ? 1 : 1,
-        marginRight: isBare ? 0 : (props.marginRight ?? 1),
-        minHeight: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: props.justifyContent ?? "center",
-        flexShrink: 0,
-        ...(isBare
-          ? props.label
-            ? {}
-            : { width: props.width ?? 3 }
-          : props.label
-            ? {}
-            : props.compact
-              ? { width: props.width ?? 3, paddingLeft: 0, paddingRight: 0 }
-              : { width: props.width ?? 4 }),
-      }}
-    >
-      {props.icon ? (
-        <text
-          content={props.icon}
-          style={{ fg: props.iconColor ?? foreground, marginRight: props.label ? 1 : 0 }}
-        />
-      ) : null}
-      {props.label ? <text content={props.label} style={{ fg: foreground }} /> : null}
-    </box>
-  );
-}
-
 function providerUpdateNoticeColors(tone: ProviderUpdateNoticeView["tone"]): {
   readonly accent: TuiColor;
   readonly background: TuiColor;
@@ -3159,46 +2852,6 @@ function ProviderUpdateNoticeCard(props: {
           />
         ) : null}
       </box>
-    </box>
-  );
-}
-
-function TogglePill(props: { checked: boolean; onPress: () => void; disabled?: boolean }) {
-  const [hovered, setHovered] = useState(false);
-  const background = props.disabled
-    ? PALETTE.controlActive
-    : props.checked
-      ? hovered
-        ? PALETTE.composerSendHover
-        : PALETTE.composerSend
-      : hovered
-        ? PALETTE.controlHover
-        : PALETTE.controlActive;
-  const knobColor = props.disabled ? PALETTE.subtle : ACTIVE_TUI_THEME.colors.controlKnob;
-  const edgeColor = background;
-
-  return (
-    <box
-      onMouseOver={() => setHovered(true)}
-      onMouseOut={() => setHovered(false)}
-      onMouseDown={(event) => {
-        if (props.disabled) return;
-        event.preventDefault();
-        event.stopPropagation();
-        props.onPress();
-      }}
-      style={{
-        width: 4,
-        height: 1,
-        backgroundColor: background,
-        flexDirection: "row",
-        alignItems: "center",
-      }}
-    >
-      <text content="▐" style={{ fg: edgeColor }} />
-      <text content={props.checked ? " " : "■"} style={{ fg: knobColor }} />
-      <text content={props.checked ? "■" : " "} style={{ fg: knobColor }} />
-      <text content="▌" style={{ fg: edgeColor }} />
     </box>
   );
 }
@@ -3458,76 +3111,6 @@ function PendingInputOptionRow(props: {
           ) : null}
         </box>
       </box>
-    </box>
-  );
-}
-
-function SettingsSection(props: { title: string; children: React.ReactNode }) {
-  return (
-    <box style={{ flexDirection: "column", marginBottom: 2 }}>
-      <text content={props.title} style={{ fg: PALETTE.subtle, marginBottom: 1 }} />
-      <box style={{ flexDirection: "column" }}>{props.children}</box>
-    </box>
-  );
-}
-
-function SettingsRow(props: {
-  title: string;
-  description: string;
-  status?: React.ReactNode;
-  resetAction?: React.ReactNode;
-  control?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  return (
-    <box
-      style={{
-        flexDirection: "column",
-        border: ["top"],
-        borderColor: PALETTE.border,
-        paddingTop: 1,
-        paddingBottom: 1,
-        paddingLeft: 1,
-        paddingRight: 1,
-      }}
-    >
-      <box
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 1,
-        }}
-      >
-        <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1 }}>
-          <box style={{ flexDirection: "row", alignItems: "center" }}>
-            <text content={props.title} style={{ fg: PALETTE.text, marginRight: 1 }} />
-            {props.resetAction ? props.resetAction : null}
-          </box>
-          <text content={props.description} style={{ fg: PALETTE.muted }} />
-          {props.status ? (
-            typeof props.status === "string" ? (
-              <text content={props.status} style={{ fg: PALETTE.subtle }} />
-            ) : (
-              <box style={{ flexDirection: "column" }}>{props.status}</box>
-            )
-          ) : null}
-        </box>
-        {props.control ? (
-          <box
-            style={{
-              marginLeft: 1,
-              flexShrink: 0,
-              alignSelf: "flex-start",
-            }}
-          >
-            {props.control}
-          </box>
-        ) : null}
-      </box>
-      {props.children ? (
-        <box style={{ flexDirection: "column", marginTop: 1 }}>{props.children}</box>
-      ) : null}
     </box>
   );
 }
@@ -3992,31 +3575,6 @@ function SelectionCopyToast(props: { message: string }) {
   );
 }
 
-function SettingResetButton(props: { onPress: () => void }) {
-  const [hovered, setHovered] = useState(false);
-
-  return (
-    <box
-      onMouseOver={() => setHovered(true)}
-      onMouseOut={() => setHovered(false)}
-      onMouseDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        props.onPress();
-      }}
-      style={{
-        width: 3,
-        height: 1,
-        backgroundColor: hovered ? PALETTE.controlHover : "transparent",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <text content="↺" style={{ fg: PALETTE.muted }} />
-    </box>
-  );
-}
-
 function ComposerSendButton(props: {
   icon: string;
   label?: string;
@@ -4235,47 +3793,6 @@ export function App({
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Readonly<Record<string, number>>>({});
-  const [selectedCustomModelProvider, setSelectedCustomModelProvider] =
-    useState<ProviderKind>("codex");
-  const [selectedModelPreferencesInstanceId, setSelectedModelPreferencesInstanceId] =
-    useState<ProviderInstanceId>(DEFAULT_CODEX_INSTANCE_ID);
-  const [providerEnvironmentDraftByProvider, setProviderEnvironmentDraftByProvider] = useState<
-    Record<InstallProviderKey, ProviderEnvironmentDraft>
-  >({
-    codex: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
-    claudeAgent: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
-    cursor: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
-    opencode: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
-    pi: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
-  });
-  const [providerEnvironmentDraftByInstance, setProviderEnvironmentDraftByInstance] =
-    useState<ProviderEnvironmentDraftMap>({});
-  const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
-    Record<ProviderKind, string>
-  >({
-    codex: "",
-    claudeAgent: "",
-  });
-  const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
-    Partial<Record<ProviderKind, string | null>>
-  >({});
-  const [showAllCustomModels, setShowAllCustomModels] = useState(false);
-  const [showAllModelPreferenceRows, setShowAllModelPreferenceRows] = useState(false);
-  const [modelPreferencesQuery, setModelPreferencesQuery] = useState("");
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const providerRefreshInFlightRef = useRef(false);
-  const [updatingProviderInstanceId, setUpdatingProviderInstanceId] =
-    useState<ProviderInstanceId | null>(null);
-  const providerUpdateInFlightRef = useRef<ProviderInstanceId | null>(null);
-  const [openInstallProviders, setOpenInstallProviders] = useState<
-    Record<InstallProviderKey, boolean>
-  >({
-    codex: false,
-    claudeAgent: false,
-    cursor: false,
-    opencode: false,
-    pi: false,
-  });
   const [showAllProjectThreads, setShowAllProjectThreads] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -4378,73 +3895,6 @@ export function App({
     [api, logger],
   );
 
-  // Guard on refs, not state: two calls in one tick would both read the
-  // stale closure value and run concurrently. State stays for rendering only.
-  const refreshProviderSnapshots = useCallback(
-    async (instanceId?: ProviderInstanceId) => {
-      if (!api || providerRefreshInFlightRef.current) return;
-      providerRefreshInFlightRef.current = true;
-      setIsRefreshingProviders(true);
-      try {
-        const payload = await api.server.refreshProviders(instanceId ? { instanceId } : undefined);
-        setServerConfig((current) =>
-          current
-            ? {
-                ...current,
-                providerInstances: payload.providers,
-              }
-            : current,
-        );
-        setStatus("Providers refreshed");
-      } catch (error) {
-        logger.log("server.providers.refreshFailed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        setStatus("Provider refresh failed");
-      } finally {
-        providerRefreshInFlightRef.current = false;
-        setIsRefreshingProviders(false);
-      }
-    },
-    [api, logger],
-  );
-
-  const runProviderUpdate = useCallback(
-    async (provider: ServerProvider) => {
-      if (!api || providerUpdateInFlightRef.current !== null) return;
-      providerUpdateInFlightRef.current = provider.instanceId;
-      setUpdatingProviderInstanceId(provider.instanceId);
-      try {
-        const payload = await api.server.updateProvider({
-          provider: provider.driver,
-          instanceId: provider.instanceId,
-        });
-        setServerConfig((current) =>
-          current
-            ? {
-                ...current,
-                providerInstances: payload.providers,
-              }
-            : current,
-        );
-        const updated = payload.providers.find(
-          (candidate) => candidate.instanceId === provider.instanceId,
-        );
-        setStatus(updated?.updateState?.message ?? "Provider update finished");
-      } catch (error) {
-        logger.log("server.providers.updateFailed", {
-          provider: provider.driver,
-          instanceId: provider.instanceId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        setStatus("Provider update failed");
-      } finally {
-        providerUpdateInFlightRef.current = null;
-        setUpdatingProviderInstanceId(null);
-      }
-    },
-    [api, logger],
-  );
   const refreshProcessDiagnostics = useCallback(async () => {
     if (!api || isLoadingProcessDiagnostics) return;
     setIsLoadingProcessDiagnostics(true);
@@ -4648,7 +4098,7 @@ export function App({
     systemMode: systemThemeMode,
     terminalColors: terminalThemeColors,
   });
-  ACTIVE_TUI_THEME = activeTheme;
+  setActiveTuiTheme(activeTheme);
   Object.assign(PALETTE, activeTheme.palette);
   MESSAGE_MARKDOWN_SYNTAX = buildMessageMarkdownSyntax(activeTheme.palette);
   DIFF_SYNTAX = buildDiffSyntax(activeTheme.palette);
@@ -4816,13 +4266,6 @@ export function App({
         setDefaultConnectionProfileId(prefs.defaultConnectionProfileId ?? null);
         if (prefs.appSettings) {
           setAppSettings(normalizeAppSettings({ ...DEFAULT_APP_SETTINGS, ...prefs.appSettings }));
-          setOpenInstallProviders({
-            codex: Boolean(prefs.appSettings.codexBinaryPath || prefs.appSettings.codexHomePath),
-            claudeAgent: Boolean(prefs.appSettings.claudeBinaryPath),
-            cursor: false,
-            opencode: false,
-            pi: false,
-          });
         }
         const persistedProvider = normalizePersistedProvider(prefs.draftProvider);
         const nextProvider = persistedProvider ?? "codex";
@@ -4974,28 +4417,6 @@ export function App({
             .then((settings) => {
               if (!disposed) {
                 setServerSettings(settings);
-                setOpenInstallProviders({
-                  codex: isProviderInstallSettingsDirtyForSettings(
-                    settings,
-                    INSTALL_PROVIDER_SETTINGS[0]!,
-                  ),
-                  claudeAgent: isProviderInstallSettingsDirtyForSettings(
-                    settings,
-                    INSTALL_PROVIDER_SETTINGS[1]!,
-                  ),
-                  cursor: isProviderInstallSettingsDirtyForSettings(
-                    settings,
-                    INSTALL_PROVIDER_SETTINGS[2]!,
-                  ),
-                  opencode: isProviderInstallSettingsDirtyForSettings(
-                    settings,
-                    INSTALL_PROVIDER_SETTINGS[3]!,
-                  ),
-                  pi: isProviderInstallSettingsDirtyForSettings(
-                    settings,
-                    INSTALL_PROVIDER_SETTINGS[4]!,
-                  ),
-                });
               }
             })
             .catch((error) => {
@@ -5435,10 +4856,6 @@ export function App({
     [appSettings, serverSettings],
   );
   const providerSnapshots = serverConfig?.providerInstances ?? EMPTY_PROVIDER_SNAPSHOTS;
-  const providerSnapshotByInstanceId = useMemo(
-    () => new Map(providerSnapshots.map((provider) => [provider.instanceId, provider] as const)),
-    [providerSnapshots],
-  );
   const dismissedProviderUpdateNoticeKeys = useMemo(
     () => new Set(appSettings.dismissedProviderUpdateNotificationKeys),
     [appSettings.dismissedProviderUpdateNotificationKeys],
@@ -5457,13 +4874,6 @@ export function App({
     }, providerUpdateNotice.dismissAfterVisibleMs);
     return () => clearTimeout(timeout);
   }, [dismissProviderUpdateNotice, providerUpdateNotice]);
-  const providerLastCheckedAt =
-    providerSnapshots.length > 0
-      ? providerSnapshots.reduce(
-          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
-          providerSnapshots[0]!.checkedAt,
-        )
-      : null;
   const modelMenuEntries = useMemo<ReadonlyArray<ModelMenuInstanceEntry>>(() => {
     const entries = sortProviderInstanceEntries(deriveProviderInstanceEntries(providerSnapshots))
       .map((entry) => {
@@ -5654,6 +5064,35 @@ export function App({
     configuredGitTextGenerationModel,
     gitTextGenerationModelOptions,
   );
+  const providerSettingsState = useProviderSettings({
+    api,
+    logger,
+    appSettings,
+    updateAppSettings,
+    serverSettings,
+    setServerSettings,
+    updateServerSettings,
+    setServerConfig,
+    setStatus,
+    providerSnapshots,
+    customModelsByProvider,
+    modelMenuEntryByInstanceId,
+    rawProviderModelOptionsByInstance,
+    currentGitTextGenerationInstanceId,
+    currentGitTextGenerationModel,
+    currentGitTextGenerationEntry,
+    gitTextGenerationModelOptions,
+  });
+  // Only the hook values consumed outside the Providers view are destructured
+  // here; the view receives the full state object.
+  const {
+    isGitTextGenerationModelDirty,
+    hasAnyModelPreferenceSettings,
+    hasCustomModels,
+    isInstallSettingsDirty,
+    addInstance,
+    resetTransientState,
+  } = providerSettingsState;
   const isGitRepo = gitBranchList?.isRepo ?? true;
   const hasOriginRemote = gitBranchList?.hasOriginRemote ?? false;
   const visibleGitBranches = useMemo(
@@ -5738,11 +5177,6 @@ export function App({
     }
     return items;
   }, [gitActionBusy, gitCwd, gitQuickAction, gitStatusForActions, hasOriginRemote, isGitRepo]);
-  const isGitTextGenerationModelDirty =
-    currentGitTextGenerationInstanceId !==
-      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId ||
-    currentGitTextGenerationModel !== DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model ||
-    (serverSettings?.textGenerationModelSelection.options?.length ?? 0) > 0;
   const selectedThemeLabel =
     THEME_OPTIONS.find((option) => option === appSettings.theme) === "system"
       ? "System"
@@ -5817,135 +5251,6 @@ export function App({
       }),
     [activeProjectCwd, resolvedComposerBranch, visibleGitBranches],
   );
-  const selectedCustomModelProviderLabel =
-    MODEL_PROVIDER_SETTINGS.find((entry) => entry.provider === selectedCustomModelProvider)
-      ?.title ?? "Codex";
-  const selectedGitTextGenerationModelOption = gitTextGenerationModelOptions.find(
-    (option) => option.slug === currentGitTextGenerationModel,
-  );
-  const selectedGitTextGenerationModelLabel = selectedGitTextGenerationModelOption
-    ? modelMenuDisplayLabel(selectedGitTextGenerationModelOption)
-    : currentGitTextGenerationModel;
-  const selectedGitTextGenerationProviderLabel = currentGitTextGenerationEntry.displayName;
-  const totalCustomModels =
-    customModelsByProvider.codex.length + customModelsByProvider.claudeAgent.length;
-  function providerInstallValue(
-    provider: InstallProviderKey,
-    field: InstallProviderFieldKey,
-  ): string {
-    if (serverSettings) {
-      return readProviderInstallSettingValue(serverSettings, provider, field);
-    }
-    if (provider === "codex") {
-      if (field === "binaryPath") {
-        return appSettings.codexBinaryPath;
-      }
-      if (field === "homePath") {
-        return appSettings.codexHomePath;
-      }
-    }
-    if (provider === "claudeAgent" && field === "binaryPath") {
-      return appSettings.claudeBinaryPath;
-    }
-    const settings = DEFAULT_SERVER_SETTINGS.providers[provider];
-    return field in settings ? String(settings[field as keyof typeof settings] ?? "") : "";
-  }
-  function providerInstanceMetadataValue(
-    provider: InstallProviderKey,
-    field: "accentColor" | "displayName",
-  ): string {
-    return serverSettings
-      ? readDefaultProviderInstanceMetadataValue(serverSettings, provider, field)
-      : "";
-  }
-  function providerInstanceEnvironment(
-    provider: InstallProviderKey,
-  ): readonly ProviderInstanceEnvironmentVariable[] {
-    return serverSettings ? readDefaultProviderInstanceEnvironment(serverSettings, provider) : [];
-  }
-  function isProviderInstallSettingsDirty(providerSettings: InstallProviderSettings): boolean {
-    return serverSettings
-      ? isProviderInstallSettingsDirtyForSettings(serverSettings, providerSettings)
-      : providerSettings.fields.some(
-          (field) =>
-            providerInstallValue(providerSettings.provider, field.key) !==
-            String(
-              DEFAULT_SERVER_SETTINGS.providers[providerSettings.provider][
-                field.key as keyof (typeof DEFAULT_SERVER_SETTINGS.providers)[typeof providerSettings.provider]
-              ] ?? "",
-            ),
-        );
-  }
-  function providerInstallEnabled(provider: InstallProviderKey): boolean {
-    return serverSettings
-      ? readProviderInstallEnabled(serverSettings, provider)
-      : DEFAULT_SERVER_SETTINGS.providers[provider].enabled;
-  }
-  const isInstallSettingsDirty = INSTALL_PROVIDER_SETTINGS.some(isProviderInstallSettingsDirty);
-  const savedCustomModelRows = MODEL_PROVIDER_SETTINGS.flatMap((providerSettings) =>
-    customModelsByProvider[providerSettings.provider].map((slug) => ({
-      key: `${providerSettings.provider}:${slug}`,
-      provider: providerSettings.provider,
-      providerTitle: providerSettings.title,
-      slug,
-    })),
-  );
-  const visibleCustomModelRows = showAllCustomModels
-    ? savedCustomModelRows
-    : savedCustomModelRows.slice(0, 5);
-  const selectedModelPreferencesEntry =
-    modelMenuEntryByInstanceId.get(selectedModelPreferencesInstanceId) ?? modelMenuEntries[0]!;
-  const selectedModelPreferencesOptions = sortProviderModelPreferenceOptions(
-    rawProviderModelOptionsByInstance.get(selectedModelPreferencesEntry.instanceId) ?? [],
-    appSettings,
-    selectedModelPreferencesEntry.instanceId,
-  );
-  const selectedModelPreferences = appSettings.providerModelPreferences[
-    selectedModelPreferencesEntry.instanceId
-  ] ?? {
-    hiddenModels: [],
-    modelOrder: [],
-  };
-  const selectedModelPreferencesHiddenModels = new Set(selectedModelPreferences.hiddenModels);
-  const selectedModelPreferencesFavoriteModels = new Set(
-    appSettings.favorites
-      .filter((favorite) => favorite.provider === selectedModelPreferencesEntry.instanceId)
-      .map((favorite) => favorite.model),
-  );
-  const isModelPreferencesQueryActive = modelPreferencesQuery.trim().length > 0;
-  // Filter keeps preference order (no re-rank) so Up/Down stay meaningful.
-  const filteredModelPreferenceOptions = selectedModelPreferencesOptions.filter(
-    (option) =>
-      scoreModelPickerSearch(
-        {
-          name: option.name,
-          slug: option.slug,
-          ...(option.shortName ? { shortName: option.shortName } : {}),
-          ...(option.subProvider ? { subProvider: option.subProvider } : {}),
-          driverKind: selectedModelPreferencesEntry.driverKind,
-          providerDisplayName: selectedModelPreferencesEntry.displayName,
-        },
-        modelPreferencesQuery,
-      ) !== null,
-  );
-  const modelPreferenceIndexBySlug = new Map(
-    selectedModelPreferencesOptions.map((option, index) => [option.slug, index] as const),
-  );
-  const visibleModelPreferenceRows =
-    isModelPreferencesQueryActive || showAllModelPreferenceRows
-      ? filteredModelPreferenceOptions
-      : filteredModelPreferenceOptions.slice(0, 8);
-  const totalFavoriteModels = appSettings.favorites.length;
-  const totalHiddenModels = Object.values(appSettings.providerModelPreferences).reduce(
-    (count, preferences) => count + preferences.hiddenModels.length,
-    0,
-  );
-  const totalOrderedModels = Object.values(appSettings.providerModelPreferences).reduce(
-    (count, preferences) => count + preferences.modelOrder.length,
-    0,
-  );
-  const hasModelPreferenceSettings =
-    totalFavoriteModels > 0 || totalHiddenModels > 0 || totalOrderedModels > 0;
   const settingsSelectItems = useMemo(() => {
     switch (settingsSelectKind) {
       case "theme":
@@ -6030,25 +5335,13 @@ export function App({
             setOverlayMenu(null);
           },
         }));
-      case "model-preferences-provider":
-        return modelMenuEntries.map((entry) => ({
-          id: entry.instanceId,
-          label: entry.displayName,
-          selected: entry.instanceId === selectedModelPreferencesEntry.instanceId,
+      case "provider-instance-add":
+        return INSTALL_PROVIDER_SETTINGS.map((providerSettings) => ({
+          id: providerSettings.provider,
+          label: providerSettings.title,
+          selected: false,
           onSelect: () => {
-            setSelectedModelPreferencesInstanceId(entry.instanceId);
-            setShowAllModelPreferenceRows(false);
-            setModelPreferencesQuery("");
-            setOverlayMenu(null);
-          },
-        }));
-      case "custom-model-provider":
-        return MODEL_PROVIDER_SETTINGS.map((option) => ({
-          id: option.provider,
-          label: option.title,
-          selected: selectedCustomModelProvider === option.provider,
-          onSelect: () => {
-            setSelectedCustomModelProvider(option.provider);
+            addInstance(providerSettings.provider);
             setOverlayMenu(null);
           },
         }));
@@ -6064,8 +5357,7 @@ export function App({
     gitTextGenerationModelOptions,
     modelMenuEntries,
     providerModelOptionsByInstance,
-    selectedModelPreferencesEntry.instanceId,
-    selectedCustomModelProvider,
+    addInstance,
     settingsSelectKind,
     tuiThemeId,
     updateAppSettings,
@@ -6317,8 +5609,8 @@ export function App({
       ? ["Archive confirmation"]
       : []),
     ...(isGitTextGenerationModelDirty ? ["Text generation model"] : []),
-    ...(hasModelPreferenceSettings ? ["Model preferences"] : []),
-    ...(totalCustomModels > 0 ? ["Custom models"] : []),
+    ...(hasAnyModelPreferenceSettings ? ["Model preferences"] : []),
+    ...(hasCustomModels ? ["Custom models"] : []),
     ...(isInstallSettingsDirty ? ["Provider installs"] : []),
     ...(serverSettings &&
     (serverSettings.observability.otlpTracesUrl !==
@@ -9127,92 +8419,6 @@ export function App({
     });
   }
 
-  function updateProviderModelPreferences(
-    instanceId: ProviderInstanceId,
-    nextPreferences: {
-      readonly hiddenModels: readonly string[];
-      readonly modelOrder: readonly string[];
-    },
-  ) {
-    updateAppSettings({
-      providerModelPreferences: {
-        ...appSettings.providerModelPreferences,
-        [instanceId]: {
-          hiddenModels: [
-            ...new Set(nextPreferences.hiddenModels.filter((slug) => slug.length > 0)),
-          ],
-          modelOrder: [...new Set(nextPreferences.modelOrder.filter((slug) => slug.length > 0))],
-        },
-      },
-    });
-  }
-
-  function updateFavoriteModels(instanceId: ProviderInstanceId, models: readonly string[]) {
-    updateAppSettings({
-      favorites: [
-        ...appSettings.favorites.filter((favorite) => favorite.provider !== instanceId),
-        ...[...new Set(models.filter((slug) => slug.length > 0))].map((model) => ({
-          provider: instanceId,
-          model,
-        })),
-      ],
-    });
-  }
-
-  function toggleFavoriteModel(instanceId: ProviderInstanceId, slug: string) {
-    const current = appSettings.favorites
-      .filter((favorite) => favorite.provider === instanceId)
-      .map((favorite) => favorite.model);
-    updateFavoriteModels(
-      instanceId,
-      current.includes(slug) ? current.filter((model) => model !== slug) : [...current, slug],
-    );
-  }
-
-  function toggleHiddenModel(instanceId: ProviderInstanceId, slug: string) {
-    const preferences = appSettings.providerModelPreferences[instanceId] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    };
-    updateProviderModelPreferences(instanceId, {
-      ...preferences,
-      hiddenModels: preferences.hiddenModels.includes(slug)
-        ? preferences.hiddenModels.filter((model) => model !== slug)
-        : [...preferences.hiddenModels, slug],
-    });
-  }
-
-  function moveModelPreference(instanceId: ProviderInstanceId, slug: string, direction: -1 | 1) {
-    const currentOrder = sortProviderModelPreferenceOptions(
-      rawProviderModelOptionsByInstance.get(instanceId) ?? [],
-      appSettings,
-      instanceId,
-    ).map((option) => option.slug);
-    const index = currentOrder.indexOf(slug);
-    const nextIndex = index + direction;
-    if (index < 0 || nextIndex < 0 || nextIndex >= currentOrder.length) {
-      return;
-    }
-    const nextOrder = [...currentOrder];
-    [nextOrder[index], nextOrder[nextIndex]] = [nextOrder[nextIndex]!, nextOrder[index]!];
-    const preferences = appSettings.providerModelPreferences[instanceId] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    };
-    updateProviderModelPreferences(instanceId, {
-      ...preferences,
-      modelOrder: nextOrder,
-    });
-  }
-
-  function resetProviderModelPreferences() {
-    updateAppSettings({
-      favorites: DEFAULT_APP_SETTINGS.favorites,
-      providerModelPreferences: DEFAULT_APP_SETTINGS.providerModelPreferences,
-    });
-    setShowAllModelPreferenceRows(false);
-  }
-
   function toggleProjectThreadPreview(projectId: string) {
     setShowAllProjectThreads((current) => {
       const next = new Set(current);
@@ -9272,561 +8478,9 @@ export function App({
         : current,
     );
     setTuiThemeId(DEFAULT_TUI_THEME_ID);
-    setOpenInstallProviders({
-      codex: false,
-      claudeAgent: false,
-      cursor: false,
-      opencode: false,
-      pi: false,
-    });
-    setSelectedCustomModelProvider("codex");
-    setCustomModelInputByProvider({ codex: "", claudeAgent: "" });
-    setCustomModelErrorByProvider({});
-    setShowAllCustomModels(false);
+    resetTransientState();
     setOpenKeybindingsError(null);
     setStatus("Settings");
-  }
-
-  function addCustomModel(provider: ProviderKind) {
-    const customModelInput = customModelInputByProvider[provider];
-    const customModels = customModelsByProvider[provider];
-    const normalized = normalizeModelSlug(customModelInput, provider);
-    if (!normalized) {
-      setCustomModelErrorByProvider((current) => ({
-        ...current,
-        [provider]: "Enter a model slug.",
-      }));
-      return;
-    }
-    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
-      setCustomModelErrorByProvider((current) => ({
-        ...current,
-        [provider]: "That model is already built in.",
-      }));
-      return;
-    }
-    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-      setCustomModelErrorByProvider((current) => ({
-        ...current,
-        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-      }));
-      return;
-    }
-    if (customModels.includes(normalized)) {
-      setCustomModelErrorByProvider((current) => ({
-        ...current,
-        [provider]: "That custom model is already saved.",
-      }));
-      return;
-    }
-
-    updateProviderCustomModels(provider, [...customModels, normalized]);
-    setCustomModelInputByProvider((current) => ({ ...current, [provider]: "" }));
-    setCustomModelErrorByProvider((current) => ({ ...current, [provider]: null }));
-  }
-
-  function updateProviderCustomModels(provider: ProviderKind, models: readonly string[]) {
-    const nextModels = normalizeCustomModelSlugs(models, provider);
-    updateAppSettings(patchCustomModels(provider, nextModels));
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    const settingsPatch = buildDefaultProviderInstanceUpdatePatch({
-      settings: serverSettings,
-      provider,
-      configPatch: { customModels: nextModels },
-    });
-    const providerPatch = settingsPatch.providers as NonNullable<ServerSettingsPatch["providers"]>;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            providers: {
-              ...current.providers,
-              ...providerPatch,
-            } as ServerSettings["providers"],
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings(settingsPatch);
-  }
-
-  function resetProviderCustomModels() {
-    updateAppSettings({
-      customCodexModels: DEFAULT_APP_SETTINGS.customCodexModels,
-      customClaudeModels: DEFAULT_APP_SETTINGS.customClaudeModels,
-    });
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    const settingsPatch = buildResetProviderCustomModelsPatch({
-      settings: serverSettings,
-      providers: INSTALL_PROVIDER_SETTINGS.map((settings) => settings.provider),
-    });
-    const providerPatch = settingsPatch.providers as NonNullable<ServerSettingsPatch["providers"]>;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            providers: {
-              ...current.providers,
-              ...providerPatch,
-            } as ServerSettings["providers"],
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings(settingsPatch);
-    setCustomModelErrorByProvider({});
-    setShowAllCustomModels(false);
-  }
-
-  function resetGitTextGenerationModel() {
-    const textGenerationModelSelection = DEFAULT_SERVER_SETTINGS.textGenerationModelSelection;
-    updateAppSettings({ textGenerationModel: DEFAULT_APP_SETTINGS.textGenerationModel });
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            textGenerationModelSelection,
-          }
-        : current,
-    );
-    updateServerSettings({ textGenerationModelSelection });
-  }
-
-  function updateProviderInstallSettings(
-    provider: InstallProviderKey,
-    patch: Partial<Record<InstallProviderFieldKey, string>>,
-    instancePatch?: TuiProviderInstancePatch,
-  ) {
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    if (provider === "codex") {
-      updateAppSettings({
-        ...(patch.binaryPath !== undefined ? { codexBinaryPath: patch.binaryPath } : {}),
-        ...(patch.homePath !== undefined ? { codexHomePath: patch.homePath } : {}),
-      });
-    } else if (provider === "claudeAgent" && patch.binaryPath !== undefined) {
-      updateAppSettings({ claudeBinaryPath: patch.binaryPath });
-    }
-    const settingsPatch = buildDefaultProviderInstanceUpdatePatch({
-      settings: serverSettings,
-      provider,
-      configPatch: patch,
-      instancePatch,
-    });
-    const providerPatch = settingsPatch.providers as NonNullable<ServerSettingsPatch["providers"]>;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            providers: {
-              ...current.providers,
-              ...providerPatch,
-            } as ServerSettings["providers"],
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings(settingsPatch);
-  }
-
-  function updateProviderInstanceDisplayName(provider: InstallProviderKey, value: string) {
-    const trimmed = value.trim();
-    updateProviderInstallSettings(provider, {}, { displayName: trimmed || undefined });
-  }
-
-  function updateProviderInstanceAccentColor(provider: InstallProviderKey, value: string) {
-    const trimmed = value.trim();
-    updateProviderInstallSettings(
-      provider,
-      {},
-      {
-        accentColor:
-          trimmed.length === 0 ? undefined : (normalizeProviderAccentColor(trimmed) ?? trimmed),
-      },
-    );
-  }
-
-  function updateProviderInstanceEnvironment(
-    provider: InstallProviderKey,
-    environment: readonly ProviderInstanceEnvironmentVariable[],
-  ) {
-    updateProviderInstallSettings(
-      provider,
-      {},
-      { environment: environment.length > 0 ? [...environment] : undefined },
-    );
-  }
-
-  function addProviderEnvironmentVariable(provider: InstallProviderKey) {
-    const draft = providerEnvironmentDraftByProvider[provider];
-    const name = draft.name.trim();
-    if (!PROVIDER_ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
-      setStatus("Invalid environment variable name");
-      return;
-    }
-    const current = providerInstanceEnvironment(provider);
-    if (current.some((variable) => variable.name === name)) {
-      setStatus("Environment variable already exists");
-      return;
-    }
-    updateProviderInstanceEnvironment(provider, [
-      ...current,
-      {
-        name,
-        value: draft.value,
-        sensitive: draft.sensitive,
-      },
-    ]);
-    setProviderEnvironmentDraftByProvider((currentDrafts) => ({
-      ...currentDrafts,
-      [provider]: { name: "", value: "", sensitive: true },
-    }));
-  }
-
-  function removeProviderEnvironmentVariable(provider: InstallProviderKey, name: string) {
-    updateProviderInstanceEnvironment(
-      provider,
-      providerInstanceEnvironment(provider).filter((variable) => variable.name !== name),
-    );
-  }
-
-  function updateProviderEnvironmentVariable(
-    provider: InstallProviderKey,
-    name: string,
-    patch: Partial<Pick<ProviderInstanceEnvironmentVariable, "sensitive" | "value">>,
-  ) {
-    updateProviderInstanceEnvironment(
-      provider,
-      providerInstanceEnvironment(provider).map((variable) => {
-        if (variable.name !== name) return variable;
-        const nextName = variable.name;
-        const nextValue = patch.value ?? variable.value;
-        const nextSensitive = patch.sensitive ?? variable.sensitive;
-        if (patch.value !== undefined) {
-          return {
-            name: nextName,
-            value: nextValue,
-            sensitive: nextSensitive,
-            valueRedacted: false,
-          };
-        }
-        if (variable.valueRedacted !== undefined) {
-          return {
-            name: nextName,
-            value: nextValue,
-            sensitive: nextSensitive,
-            valueRedacted: variable.valueRedacted,
-          };
-        }
-        return {
-          name: nextName,
-          value: nextValue,
-          sensitive: nextSensitive,
-        };
-      }),
-    );
-  }
-
-  function addProviderInstallInstance(providerSettings: InstallProviderSettings) {
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    const { instanceId, patch } = buildDuplicateDefaultProviderInstancePatch({
-      settings: serverSettings,
-      provider: providerSettings.provider,
-      title: providerSettings.title,
-    });
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            providerInstances: patch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings(patch);
-    setOpenInstallProviders((current) => ({ ...current, [providerSettings.provider]: true }));
-    setStatus(`Added ${String(instanceId)}`);
-  }
-
-  function removeProviderInstallInstance(instanceId: ProviderInstanceId) {
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    const settingsPatch = buildDeleteProviderInstancePatch({
-      settings: serverSettings,
-      instanceId,
-    });
-    const textGenerationModelSelection =
-      currentGitTextGenerationInstanceId === instanceId
-        ? DEFAULT_SERVER_SETTINGS.textGenerationModelSelection
-        : undefined;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            ...(textGenerationModelSelection ? { textGenerationModelSelection } : {}),
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    const nextProviderModelPreferences = { ...appSettings.providerModelPreferences };
-    delete nextProviderModelPreferences[instanceId];
-    updateAppSettings({
-      providerModelPreferences: nextProviderModelPreferences,
-      favorites: appSettings.favorites.filter((favorite) => favorite.provider !== instanceId),
-      ...(currentGitTextGenerationInstanceId === instanceId
-        ? { textGenerationModel: DEFAULT_APP_SETTINGS.textGenerationModel }
-        : {}),
-    });
-    setProviderEnvironmentDraftByInstance((currentDrafts) => {
-      const { [instanceId]: _removed, ...rest } = currentDrafts;
-      return rest;
-    });
-    updateServerSettings({
-      ...settingsPatch,
-      ...(textGenerationModelSelection ? { textGenerationModelSelection } : {}),
-    });
-    setStatus(`Removed ${String(instanceId)}`);
-  }
-
-  function updateProviderInstallInstance(
-    instanceId: ProviderInstanceId,
-    patch: Parameters<typeof buildProviderInstanceUpdatePatch>[0]["configPatch"],
-    instancePatch?: Parameters<typeof buildProviderInstanceUpdatePatch>[0]["instancePatch"],
-  ) {
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    const settingsPatch = buildProviderInstanceUpdatePatch({
-      settings: serverSettings,
-      instanceId,
-      configPatch: patch,
-      instancePatch,
-    });
-    const textGenerationModelSelection =
-      instancePatch?.enabled === false && currentGitTextGenerationInstanceId === instanceId
-        ? DEFAULT_SERVER_SETTINGS.textGenerationModelSelection
-        : undefined;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            ...(textGenerationModelSelection ? { textGenerationModelSelection } : {}),
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings({
-      ...settingsPatch,
-      ...(textGenerationModelSelection ? { textGenerationModelSelection } : {}),
-    });
-  }
-
-  function updateProviderInstallInstanceDisplayName(instanceId: ProviderInstanceId, value: string) {
-    const trimmed = value.trim();
-    updateProviderInstallInstance(instanceId, {}, { displayName: trimmed || undefined });
-  }
-
-  function updateProviderInstallInstanceAccentColor(instanceId: ProviderInstanceId, value: string) {
-    const trimmed = value.trim();
-    updateProviderInstallInstance(
-      instanceId,
-      {},
-      {
-        accentColor:
-          trimmed.length === 0 ? undefined : (normalizeProviderAccentColor(trimmed) ?? trimmed),
-      },
-    );
-  }
-
-  function updateProviderInstallInstanceEnvironment(
-    instanceId: ProviderInstanceId,
-    environment: readonly ProviderInstanceEnvironmentVariable[],
-  ) {
-    updateProviderInstallInstance(
-      instanceId,
-      {},
-      { environment: environment.length > 0 ? [...environment] : undefined },
-    );
-  }
-
-  function addProviderInstallInstanceEnvironmentVariable(instanceId: ProviderInstanceId) {
-    const draft =
-      providerEnvironmentDraftByInstance[instanceId] ?? EMPTY_PROVIDER_ENVIRONMENT_DRAFT;
-    const name = draft.name.trim();
-    if (!PROVIDER_ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
-      setStatus("Invalid environment variable name");
-      return;
-    }
-    const current = serverSettings?.providerInstances[instanceId]?.environment ?? [];
-    if (current.some((variable) => variable.name === name)) {
-      setStatus("Environment variable already exists");
-      return;
-    }
-    updateProviderInstallInstanceEnvironment(instanceId, [
-      ...current,
-      {
-        name,
-        value: draft.value,
-        sensitive: draft.sensitive,
-      },
-    ]);
-    setProviderEnvironmentDraftByInstance((currentDrafts) => ({
-      ...currentDrafts,
-      [instanceId]: EMPTY_PROVIDER_ENVIRONMENT_DRAFT,
-    }));
-  }
-
-  function removeProviderInstallInstanceEnvironmentVariable(
-    instanceId: ProviderInstanceId,
-    name: string,
-  ) {
-    updateProviderInstallInstanceEnvironment(
-      instanceId,
-      (serverSettings?.providerInstances[instanceId]?.environment ?? []).filter(
-        (variable) => variable.name !== name,
-      ),
-    );
-  }
-
-  function updateProviderInstallInstanceEnvironmentVariable(
-    instanceId: ProviderInstanceId,
-    name: string,
-    patch: Partial<Pick<ProviderInstanceEnvironmentVariable, "sensitive" | "value">>,
-  ) {
-    updateProviderInstallInstanceEnvironment(
-      instanceId,
-      (serverSettings?.providerInstances[instanceId]?.environment ?? []).map((variable) => {
-        if (variable.name !== name) return variable;
-        const nextName = variable.name;
-        const nextValue = patch.value ?? variable.value;
-        const nextSensitive = patch.sensitive ?? variable.sensitive;
-        if (patch.value !== undefined) {
-          return {
-            name: nextName,
-            value: nextValue,
-            sensitive: nextSensitive,
-            valueRedacted: false,
-          };
-        }
-        if (variable.valueRedacted !== undefined) {
-          return {
-            name: nextName,
-            value: nextValue,
-            sensitive: nextSensitive,
-            valueRedacted: variable.valueRedacted,
-          };
-        }
-        return {
-          name: nextName,
-          value: nextValue,
-          sensitive: nextSensitive,
-        };
-      }),
-    );
-  }
-
-  function updateProviderInstallInstanceField(
-    instanceId: ProviderInstanceId,
-    field: InstallProviderFieldKey,
-    value: string,
-  ) {
-    updateProviderInstallInstance(instanceId, { [field]: value });
-  }
-
-  function updateProviderInstallInstanceEnabled(instanceId: ProviderInstanceId, enabled: boolean) {
-    updateProviderInstallInstance(instanceId, {}, { enabled });
-  }
-
-  function updateProviderInstallEnabled(provider: InstallProviderKey, enabled: boolean) {
-    if (!serverSettings) {
-      setStatus("Settings loading");
-      return;
-    }
-    const instanceId = defaultProviderInstanceIdForSettingsKey(provider);
-    const settingsPatch = buildDefaultProviderInstanceUpdatePatch({
-      settings: serverSettings,
-      provider,
-      configPatch: {},
-      instancePatch: { enabled },
-    });
-    const textGenerationModelSelection =
-      !enabled && currentGitTextGenerationInstanceId === instanceId
-        ? DEFAULT_SERVER_SETTINGS.textGenerationModelSelection
-        : undefined;
-    const providerPatch = settingsPatch.providers as NonNullable<ServerSettingsPatch["providers"]>;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            ...(textGenerationModelSelection ? { textGenerationModelSelection } : {}),
-            providers: {
-              ...current.providers,
-              ...providerPatch,
-            } as ServerSettings["providers"],
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings({
-      ...settingsPatch,
-      ...(textGenerationModelSelection ? { textGenerationModelSelection } : {}),
-    });
-  }
-
-  function resetProviderInstallSettings() {
-    updateAppSettings({
-      claudeBinaryPath: DEFAULT_APP_SETTINGS.claudeBinaryPath,
-      codexBinaryPath: DEFAULT_APP_SETTINGS.codexBinaryPath,
-      codexHomePath: DEFAULT_APP_SETTINGS.codexHomePath,
-    });
-    const providers = INSTALL_PROVIDER_SETTINGS.map((settings) => settings.provider);
-    const settingsPatch = buildResetDefaultProviderInstancesPatch({
-      settings: serverSettings ?? DEFAULT_SERVER_SETTINGS,
-      providers,
-    });
-    const providerPatch = settingsPatch.providers as NonNullable<ServerSettingsPatch["providers"]>;
-    setServerSettings((current) =>
-      current
-        ? {
-            ...current,
-            providers: {
-              ...current.providers,
-              ...providerPatch,
-            } as ServerSettings["providers"],
-            providerInstances: settingsPatch.providerInstances ?? current.providerInstances,
-          }
-        : current,
-    );
-    updateServerSettings(settingsPatch);
-    setOpenInstallProviders({
-      codex: false,
-      claudeAgent: false,
-      cursor: false,
-      opencode: false,
-      pi: false,
-    });
-  }
-
-  function removeCustomModel(provider: ProviderKind, slug: string) {
-    const customModels = customModelsByProvider[provider];
-    updateProviderCustomModels(
-      provider,
-      customModels.filter((model) => model !== slug),
-    );
-    setCustomModelErrorByProvider((current) => ({ ...current, [provider]: null }));
   }
 
   async function openKeybindingsFile() {
@@ -12243,13 +10897,11 @@ export function App({
             ? "New threads"
             : settingsSelectKind === "git-fetch-interval"
               ? "Fetch interval"
-              : settingsSelectKind === "custom-model-provider"
-                ? "Custom model provider"
+              : settingsSelectKind === "provider-instance-add"
+                ? "Add instance"
                 : settingsSelectKind === "git-model-provider"
                   ? "Text generation provider"
-                  : settingsSelectKind === "model-preferences-provider"
-                    ? "Model preferences"
-                    : "Text generation model";
+                  : "Text generation model";
   const settingsSelectPopupWidth = Math.max(
     14,
     settingsSelectItems.reduce(
@@ -13378,1383 +12030,14 @@ export function App({
                       ) : null}
 
                       {mainView === "providers" ? (
-                        <SettingsSection title="Models">
-                          <SettingsRow
-                            title="Text generation model"
-                            description="Used for generated commit messages, PR titles, and branch names."
-                            resetAction={
-                              isGitTextGenerationModelDirty ? (
-                                <SettingResetButton onPress={resetGitTextGenerationModel} />
-                              ) : null
-                            }
-                            control={
-                              <box style={{ flexDirection: "row", alignItems: "center" }}>
-                                <ToolbarButton
-                                  label={`${selectedGitTextGenerationProviderLabel} ▾`}
-                                  surface="inset"
-                                  active={
-                                    overlayMenu === "settings-select" &&
-                                    settingsSelectKind === "git-model-provider"
-                                  }
-                                  onPress={(event) =>
-                                    openSettingsSelectMenu("git-model-provider", event)
-                                  }
-                                />
-                                <ToolbarButton
-                                  label={`${selectedGitTextGenerationModelLabel} ▾`}
-                                  surface="inset"
-                                  active={
-                                    overlayMenu === "settings-select" &&
-                                    settingsSelectKind === "git-model"
-                                  }
-                                  onPress={(event) => openSettingsSelectMenu("git-model", event)}
-                                />
-                              </box>
-                            }
-                          />
-                          <SettingsRow
-                            title="Model preferences"
-                            description="Customize model picker favorites, hidden models, and order per provider instance."
-                            status={
-                              hasModelPreferenceSettings
-                                ? `${totalFavoriteModels} favorite · ${totalHiddenModels} hidden`
-                                : `${selectedModelPreferencesOptions.length} available`
-                            }
-                            resetAction={
-                              hasModelPreferenceSettings ? (
-                                <SettingResetButton onPress={resetProviderModelPreferences} />
-                              ) : null
-                            }
-                          >
-                            <box
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                marginBottom: 1,
-                              }}
-                            >
-                              <ToolbarButton
-                                label={`${selectedModelPreferencesEntry.displayName} ▾`}
-                                surface="inset"
-                                active={
-                                  overlayMenu === "settings-select" &&
-                                  settingsSelectKind === "model-preferences-provider"
-                                }
-                                onPress={(event) =>
-                                  openSettingsSelectMenu("model-preferences-provider", event)
-                                }
-                              />
-                              {hasModelPreferenceSettings ? (
-                                <ToolbarButton
-                                  label="Reset"
-                                  onPress={resetProviderModelPreferences}
-                                />
-                              ) : null}
-                              <box
-                                style={{
-                                  backgroundColor: PALETTE.input,
-                                  paddingLeft: 1,
-                                  paddingRight: 1,
-                                  height: 3,
-                                  justifyContent: "center",
-                                  flexGrow: 1,
-                                  flexShrink: 1,
-                                }}
-                              >
-                                <input
-                                  value={modelPreferencesQuery}
-                                  onInput={setModelPreferencesQuery}
-                                  placeholder="Search models..."
-                                  cursorColor={PALETTE.cursor}
-                                  style={{
-                                    backgroundColor: PALETTE.input,
-                                    focusedBackgroundColor: PALETTE.input,
-                                    textColor: PALETTE.text,
-                                    focusedTextColor: PALETTE.text,
-                                    placeholderColor: PALETTE.subtle,
-                                  }}
-                                />
-                              </box>
-                            </box>
-                            {visibleModelPreferenceRows.map((model) => {
-                              const isFavorite = selectedModelPreferencesFavoriteModels.has(
-                                model.slug,
-                              );
-                              const isHidden =
-                                !model.isCustom &&
-                                selectedModelPreferencesHiddenModels.has(model.slug);
-                              // Neighbours come from full list; rows may be filtered.
-                              const index = modelPreferenceIndexBySlug.get(model.slug)!;
-                              const previousModel = selectedModelPreferencesOptions[index - 1];
-                              const nextModel = selectedModelPreferencesOptions[index + 1];
-                              const canMoveUp =
-                                previousModel !== undefined &&
-                                selectedModelPreferencesFavoriteModels.has(previousModel.slug) ===
-                                  isFavorite;
-                              const canMoveDown =
-                                nextModel !== undefined &&
-                                selectedModelPreferencesFavoriteModels.has(nextModel.slug) ===
-                                  isFavorite;
-                              return (
-                                <box
-                                  key={`${selectedModelPreferencesEntry.instanceId}:${model.slug}`}
-                                  style={{
-                                    flexDirection: "row",
-                                    alignItems: "center",
-                                    justifyContent: "space-between",
-                                    backgroundColor: PALETTE.surfaceAlt,
-                                    paddingLeft: 1,
-                                    paddingRight: 1,
-                                    marginBottom: 1,
-                                  }}
-                                >
-                                  <box
-                                    style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1 }}
-                                  >
-                                    <text
-                                      content={`${isFavorite ? "* " : ""}${model.name}${model.isCustom ? " · custom" : isHidden ? " · hidden" : ""}`}
-                                      style={{ fg: isHidden ? PALETTE.subtle : PALETTE.text }}
-                                    />
-                                    {model.name !== model.slug ? (
-                                      <text content={model.slug} style={{ fg: PALETTE.subtle }} />
-                                    ) : null}
-                                  </box>
-                                  <box style={{ flexDirection: "row", alignItems: "center" }}>
-                                    <ToolbarButton
-                                      label={isFavorite ? "Unstar" : "Star"}
-                                      onPress={() =>
-                                        toggleFavoriteModel(
-                                          selectedModelPreferencesEntry.instanceId,
-                                          model.slug,
-                                        )
-                                      }
-                                    />
-                                    <ToolbarButton
-                                      label="Up"
-                                      disabled={!canMoveUp}
-                                      onPress={() =>
-                                        moveModelPreference(
-                                          selectedModelPreferencesEntry.instanceId,
-                                          model.slug,
-                                          -1,
-                                        )
-                                      }
-                                    />
-                                    <ToolbarButton
-                                      label="Down"
-                                      disabled={!canMoveDown}
-                                      onPress={() =>
-                                        moveModelPreference(
-                                          selectedModelPreferencesEntry.instanceId,
-                                          model.slug,
-                                          1,
-                                        )
-                                      }
-                                    />
-                                    {!model.isCustom ? (
-                                      <ToolbarButton
-                                        label={isHidden ? "Show" : "Hide"}
-                                        onPress={() =>
-                                          toggleHiddenModel(
-                                            selectedModelPreferencesEntry.instanceId,
-                                            model.slug,
-                                          )
-                                        }
-                                      />
-                                    ) : null}
-                                  </box>
-                                </box>
-                              );
-                            })}
-                            {isModelPreferencesQueryActive &&
-                            filteredModelPreferenceOptions.length === 0 ? (
-                              <text content="No models match." style={{ fg: PALETTE.subtle }} />
-                            ) : null}
-                            {!isModelPreferencesQueryActive &&
-                            selectedModelPreferencesOptions.length > 8 ? (
-                              <ToolbarButton
-                                label={showAllModelPreferenceRows ? "Show less" : "Show more"}
-                                onPress={() => setShowAllModelPreferenceRows((current) => !current)}
-                              />
-                            ) : null}
-                          </SettingsRow>
-                          <SettingsRow
-                            title="Custom models"
-                            description="Add custom model slugs for supported providers."
-                            status={
-                              totalCustomModels > 0
-                                ? `${totalCustomModels} saved model slug(s)`
-                                : null
-                            }
-                            resetAction={
-                              totalCustomModels > 0 ? (
-                                <SettingResetButton onPress={resetProviderCustomModels} />
-                              ) : null
-                            }
-                          >
-                            <box
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                marginBottom: 1,
-                              }}
-                            >
-                              <ToolbarButton
-                                label={`${selectedCustomModelProviderLabel} ▾`}
-                                surface="inset"
-                                active={
-                                  overlayMenu === "settings-select" &&
-                                  settingsSelectKind === "custom-model-provider"
-                                }
-                                onPress={(event) =>
-                                  openSettingsSelectMenu("custom-model-provider", event)
-                                }
-                              />
-                            </box>
-                            <box
-                              style={{
-                                backgroundColor: PALETTE.input,
-                                paddingLeft: 1,
-                                paddingRight: 1,
-                                height: 3,
-                                justifyContent: "center",
-                                marginBottom: 1,
-                              }}
-                            >
-                              <input
-                                value={customModelInputByProvider[selectedCustomModelProvider]}
-                                onInput={(value) => {
-                                  setCustomModelInputByProvider((current) => ({
-                                    ...current,
-                                    [selectedCustomModelProvider]: value,
-                                  }));
-                                  setCustomModelErrorByProvider((current) => ({
-                                    ...current,
-                                    [selectedCustomModelProvider]: null,
-                                  }));
-                                }}
-                                onKeyDown={(key) => {
-                                  if (
-                                    key.name === "return" ||
-                                    key.name === "enter" ||
-                                    key.name === "kpenter" ||
-                                    key.name === "linefeed"
-                                  ) {
-                                    key.preventDefault();
-                                    addCustomModel(selectedCustomModelProvider);
-                                  }
-                                }}
-                                placeholder={
-                                  MODEL_PROVIDER_SETTINGS.find(
-                                    (entry) => entry.provider === selectedCustomModelProvider,
-                                  )?.example || "custom/model-slug"
-                                }
-                                cursorColor={PALETTE.cursor}
-                                style={{
-                                  backgroundColor: PALETTE.input,
-                                  focusedBackgroundColor: PALETTE.input,
-                                  textColor: PALETTE.text,
-                                  focusedTextColor: PALETTE.text,
-                                  placeholderColor: PALETTE.subtle,
-                                }}
-                              />
-                            </box>
-                            <box
-                              style={{
-                                flexDirection: "row",
-                                alignItems: "center",
-                                marginBottom: 1,
-                              }}
-                            >
-                              <ToolbarButton
-                                label="Add"
-                                onPress={() => addCustomModel(selectedCustomModelProvider)}
-                              />
-                              {totalCustomModels > 0 ? (
-                                <ToolbarButton label="Reset" onPress={resetProviderCustomModels} />
-                              ) : null}
-                            </box>
-                            {customModelErrorByProvider[selectedCustomModelProvider] ? (
-                              <text
-                                content={
-                                  customModelErrorByProvider[selectedCustomModelProvider] ?? ""
-                                }
-                                style={{ fg: PALETTE.warning, marginBottom: 1 }}
-                              />
-                            ) : null}
-                            {visibleCustomModelRows.map((row) => (
-                              <box
-                                key={row.key}
-                                style={{
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                  justifyContent: "space-between",
-                                  backgroundColor: PALETTE.surfaceAlt,
-                                  paddingLeft: 1,
-                                  paddingRight: 1,
-                                  marginBottom: 1,
-                                }}
-                              >
-                                <box
-                                  style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1 }}
-                                >
-                                  <text
-                                    content={`${row.providerTitle} · ${row.slug}`}
-                                    style={{ fg: PALETTE.text }}
-                                  />
-                                </box>
-                                <ToolbarButton
-                                  label="Remove"
-                                  onPress={() => removeCustomModel(row.provider, row.slug)}
-                                />
-                              </box>
-                            ))}
-                            {savedCustomModelRows.length > 5 ? (
-                              <ToolbarButton
-                                label={showAllCustomModels ? "Show less" : "Show more"}
-                                onPress={() => setShowAllCustomModels((current) => !current)}
-                              />
-                            ) : null}
-                          </SettingsRow>
-                        </SettingsSection>
-                      ) : null}
-
-                      {mainView === "providers" ? (
-                        <SettingsSection title="Provider Installs">
-                          <SettingsRow
-                            title="Provider installs"
-                            description="Override the CLI used for new sessions."
-                            status={
-                              providerLastCheckedAt
-                                ? formatCheckedRelativeTime(providerLastCheckedAt)
-                                : null
-                            }
-                            resetAction={
-                              isInstallSettingsDirty ? (
-                                <SettingResetButton onPress={resetProviderInstallSettings} />
-                              ) : null
-                            }
-                            control={
-                              <ToolbarButton
-                                label={isRefreshingProviders ? "Refreshing..." : "Refresh"}
-                                disabled={!api || isRefreshingProviders}
-                                onPress={() => {
-                                  void refreshProviderSnapshots();
-                                }}
-                              />
-                            }
-                          >
-                            {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
-                              const isOpen = openInstallProviders[providerSettings.provider];
-                              const isProviderDirty =
-                                isProviderInstallSettingsDirty(providerSettings);
-                              const isProviderEnabled = providerInstallEnabled(
-                                providerSettings.provider,
-                              );
-                              const additionalProviderInstances = readAdditionalProviderInstances(
-                                serverSettings,
-                                providerSettings.provider,
-                              );
-                              const defaultProviderSnapshot = providerSnapshotByInstanceId.get(
-                                defaultProviderInstanceIdForSettingsKey(providerSettings.provider),
-                              );
-                              const defaultProviderStatus =
-                                formatProviderVersionStatus(defaultProviderSnapshot);
-                              const canUpdateDefaultProvider =
-                                canRunProviderUpdate(defaultProviderSnapshot);
-                              const isDefaultProviderUpdating =
-                                isProviderUpdateActive(defaultProviderSnapshot) ||
-                                updatingProviderInstanceId === defaultProviderSnapshot?.instanceId;
-                              return (
-                                <box
-                                  key={providerSettings.provider}
-                                  style={{ flexDirection: "column" }}
-                                >
-                                  <box
-                                    style={{
-                                      flexDirection: "row",
-                                      alignItems: "center",
-                                      justifyContent: "space-between",
-                                      backgroundColor: PALETTE.surfaceAlt,
-                                      paddingLeft: 1,
-                                      paddingRight: 1,
-                                      marginBottom: 1,
-                                    }}
-                                  >
-                                    <box
-                                      style={{
-                                        flexDirection: "row",
-                                        alignItems: "center",
-                                        flexGrow: 1,
-                                        flexShrink: 1,
-                                      }}
-                                    >
-                                      <text
-                                        content={providerSettings.title}
-                                        style={{ fg: PALETTE.text, marginRight: 1 }}
-                                      />
-                                      {providerSettings.badgeLabel ? (
-                                        <text
-                                          content={providerSettings.badgeLabel}
-                                          style={{ fg: PALETTE.warning, marginRight: 1 }}
-                                        />
-                                      ) : null}
-                                      {isProviderDirty ? (
-                                        <text content="Custom" style={{ fg: PALETTE.subtle }} />
-                                      ) : null}
-                                      {defaultProviderStatus ? (
-                                        <text
-                                          content={defaultProviderStatus}
-                                          style={{ fg: PALETTE.subtle, marginLeft: 1 }}
-                                        />
-                                      ) : null}
-                                    </box>
-                                    <box style={{ flexDirection: "row", alignItems: "center" }}>
-                                      {defaultProviderSnapshot?.versionAdvisory?.canUpdate ? (
-                                        <ToolbarButton
-                                          label={providerUpdateButtonLabel(defaultProviderSnapshot)}
-                                          disabled={
-                                            !api ||
-                                            !canUpdateDefaultProvider ||
-                                            isDefaultProviderUpdating
-                                          }
-                                          onPress={() => {
-                                            void runProviderUpdate(defaultProviderSnapshot);
-                                          }}
-                                        />
-                                      ) : null}
-                                      <TogglePill
-                                        checked={isProviderEnabled}
-                                        onPress={() =>
-                                          updateProviderInstallEnabled(
-                                            providerSettings.provider,
-                                            !isProviderEnabled,
-                                          )
-                                        }
-                                      />
-                                      <ToolbarButton
-                                        label="Add"
-                                        disabled={!serverSettings}
-                                        onPress={() => addProviderInstallInstance(providerSettings)}
-                                      />
-                                      <ToolbarButton
-                                        label={isOpen ? "Hide" : "Edit"}
-                                        onPress={() =>
-                                          setOpenInstallProviders((current) => ({
-                                            ...current,
-                                            [providerSettings.provider]:
-                                              !current[providerSettings.provider],
-                                          }))
-                                        }
-                                      />
-                                    </box>
-                                  </box>
-                                  {isOpen ? (
-                                    <box
-                                      style={{
-                                        flexDirection: "column",
-                                        marginBottom: 1,
-                                        paddingLeft: 1,
-                                        paddingRight: 1,
-                                      }}
-                                    >
-                                      <box style={{ flexDirection: "column" }}>
-                                        <text
-                                          content="Display name"
-                                          style={{ fg: PALETTE.text, marginBottom: 1 }}
-                                        />
-                                        <box
-                                          style={{
-                                            backgroundColor: PALETTE.input,
-                                            paddingLeft: 1,
-                                            paddingRight: 1,
-                                            height: 3,
-                                            justifyContent: "center",
-                                            marginBottom: 1,
-                                          }}
-                                        >
-                                          <input
-                                            value={providerInstanceMetadataValue(
-                                              providerSettings.provider,
-                                              "displayName",
-                                            )}
-                                            onInput={(value) =>
-                                              updateProviderInstanceDisplayName(
-                                                providerSettings.provider,
-                                                value,
-                                              )
-                                            }
-                                            placeholder={providerSettings.title}
-                                            cursorColor={PALETTE.cursor}
-                                            style={{
-                                              backgroundColor: PALETTE.input,
-                                              focusedBackgroundColor: PALETTE.input,
-                                              textColor: PALETTE.text,
-                                              focusedTextColor: PALETTE.text,
-                                              placeholderColor: PALETTE.subtle,
-                                            }}
-                                          />
-                                        </box>
-                                        <text
-                                          content="Optional label shown in provider and model pickers."
-                                          style={{ fg: PALETTE.subtle, marginBottom: 1 }}
-                                        />
-                                      </box>
-                                      <box style={{ flexDirection: "column" }}>
-                                        <text
-                                          content="Accent color"
-                                          style={{ fg: PALETTE.text, marginBottom: 1 }}
-                                        />
-                                        <box
-                                          style={{
-                                            backgroundColor: PALETTE.input,
-                                            paddingLeft: 1,
-                                            paddingRight: 1,
-                                            height: 3,
-                                            justifyContent: "center",
-                                            marginBottom: 1,
-                                          }}
-                                        >
-                                          <input
-                                            value={providerInstanceMetadataValue(
-                                              providerSettings.provider,
-                                              "accentColor",
-                                            )}
-                                            onInput={(value) =>
-                                              updateProviderInstanceAccentColor(
-                                                providerSettings.provider,
-                                                value,
-                                              )
-                                            }
-                                            placeholder="#7c3aed"
-                                            cursorColor={PALETTE.cursor}
-                                            style={{
-                                              backgroundColor: PALETTE.input,
-                                              focusedBackgroundColor: PALETTE.input,
-                                              textColor: PALETTE.text,
-                                              focusedTextColor: PALETTE.text,
-                                              placeholderColor: PALETTE.subtle,
-                                            }}
-                                          />
-                                        </box>
-                                        <text
-                                          content="Use a six-digit hex color such as #7c3aed."
-                                          style={{ fg: PALETTE.subtle, marginBottom: 1 }}
-                                        />
-                                      </box>
-                                      <box style={{ flexDirection: "column", marginBottom: 1 }}>
-                                        <box
-                                          style={{
-                                            flexDirection: "row",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            marginBottom: 1,
-                                          }}
-                                        >
-                                          <text
-                                            content="Additional instances"
-                                            style={{ fg: PALETTE.text }}
-                                          />
-                                          <ToolbarButton
-                                            label="Add"
-                                            disabled={!serverSettings}
-                                            onPress={() =>
-                                              addProviderInstallInstance(providerSettings)
-                                            }
-                                          />
-                                        </box>
-                                        {additionalProviderInstances.length === 0 ? (
-                                          <text
-                                            content="Add another instance when the same provider needs separate paths, auth, or model preferences."
-                                            style={{ fg: PALETTE.subtle, marginBottom: 1 }}
-                                          />
-                                        ) : (
-                                          additionalProviderInstances.map(
-                                            ([instanceId, instance]) => (
-                                              <box
-                                                key={`${providerSettings.provider}:instance:${String(instanceId)}`}
-                                                style={{ flexDirection: "column", marginBottom: 1 }}
-                                              >
-                                                <box
-                                                  style={{
-                                                    flexDirection: "row",
-                                                    alignItems: "center",
-                                                    justifyContent: "space-between",
-                                                    backgroundColor: PALETTE.surfaceAlt,
-                                                    paddingLeft: 1,
-                                                    paddingRight: 1,
-                                                  }}
-                                                >
-                                                  <box
-                                                    style={{
-                                                      flexDirection: "column",
-                                                      flexGrow: 1,
-                                                      flexShrink: 1,
-                                                    }}
-                                                  >
-                                                    <text
-                                                      content={formatProviderInstanceSummary(
-                                                        instanceId,
-                                                        instance,
-                                                      )}
-                                                      style={{ fg: PALETTE.text }}
-                                                    />
-                                                    <text
-                                                      content={
-                                                        formatProviderVersionStatus(
-                                                          providerSnapshotByInstanceId.get(
-                                                            instanceId,
-                                                          ),
-                                                        ) ??
-                                                        "Copied install settings can be edited independently."
-                                                      }
-                                                      style={{ fg: PALETTE.subtle }}
-                                                    />
-                                                  </box>
-                                                  <box
-                                                    style={{
-                                                      flexDirection: "row",
-                                                      alignItems: "center",
-                                                    }}
-                                                  >
-                                                    {providerSnapshotByInstanceId.get(instanceId)
-                                                      ?.versionAdvisory?.canUpdate ? (
-                                                      <ToolbarButton
-                                                        label={providerUpdateButtonLabel(
-                                                          providerSnapshotByInstanceId.get(
-                                                            instanceId,
-                                                          ),
-                                                        )}
-                                                        disabled={
-                                                          !api ||
-                                                          !canRunProviderUpdate(
-                                                            providerSnapshotByInstanceId.get(
-                                                              instanceId,
-                                                            ),
-                                                          ) ||
-                                                          isProviderUpdateActive(
-                                                            providerSnapshotByInstanceId.get(
-                                                              instanceId,
-                                                            ),
-                                                          ) ||
-                                                          updatingProviderInstanceId === instanceId
-                                                        }
-                                                        onPress={() => {
-                                                          const snapshot =
-                                                            providerSnapshotByInstanceId.get(
-                                                              instanceId,
-                                                            );
-                                                          if (snapshot) {
-                                                            void runProviderUpdate(snapshot);
-                                                          }
-                                                        }}
-                                                      />
-                                                    ) : null}
-                                                    <TogglePill
-                                                      checked={instance.enabled !== false}
-                                                      onPress={() =>
-                                                        updateProviderInstallInstanceEnabled(
-                                                          instanceId,
-                                                          instance.enabled === false,
-                                                        )
-                                                      }
-                                                    />
-                                                    <ToolbarButton
-                                                      label="Remove"
-                                                      onPress={() =>
-                                                        removeProviderInstallInstance(instanceId)
-                                                      }
-                                                    />
-                                                  </box>
-                                                </box>
-                                                <box
-                                                  style={{
-                                                    flexDirection: "column",
-                                                    paddingLeft: 1,
-                                                    paddingRight: 1,
-                                                    marginBottom: 1,
-                                                  }}
-                                                >
-                                                  <text
-                                                    content="Display name"
-                                                    style={{ fg: PALETTE.text, marginBottom: 1 }}
-                                                  />
-                                                  <box
-                                                    style={{
-                                                      backgroundColor: PALETTE.input,
-                                                      paddingLeft: 1,
-                                                      paddingRight: 1,
-                                                      height: 3,
-                                                      justifyContent: "center",
-                                                      marginBottom: 1,
-                                                    }}
-                                                  >
-                                                    <input
-                                                      value={instance.displayName?.trim() ?? ""}
-                                                      onInput={(value) =>
-                                                        updateProviderInstallInstanceDisplayName(
-                                                          instanceId,
-                                                          value,
-                                                        )
-                                                      }
-                                                      placeholder={String(instanceId)}
-                                                      cursorColor={PALETTE.cursor}
-                                                      style={{
-                                                        backgroundColor: PALETTE.input,
-                                                        focusedBackgroundColor: PALETTE.input,
-                                                        textColor: PALETTE.text,
-                                                        focusedTextColor: PALETTE.text,
-                                                        placeholderColor: PALETTE.subtle,
-                                                      }}
-                                                    />
-                                                  </box>
-                                                  <text
-                                                    content="Accent color"
-                                                    style={{ fg: PALETTE.text, marginBottom: 1 }}
-                                                  />
-                                                  <box
-                                                    style={{
-                                                      backgroundColor: PALETTE.input,
-                                                      paddingLeft: 1,
-                                                      paddingRight: 1,
-                                                      height: 3,
-                                                      justifyContent: "center",
-                                                      marginBottom: 1,
-                                                    }}
-                                                  >
-                                                    <input
-                                                      value={instance.accentColor?.trim() ?? ""}
-                                                      onInput={(value) =>
-                                                        updateProviderInstallInstanceAccentColor(
-                                                          instanceId,
-                                                          value,
-                                                        )
-                                                      }
-                                                      placeholder="#7c3aed"
-                                                      cursorColor={PALETTE.cursor}
-                                                      style={{
-                                                        backgroundColor: PALETTE.input,
-                                                        focusedBackgroundColor: PALETTE.input,
-                                                        textColor: PALETTE.text,
-                                                        focusedTextColor: PALETTE.text,
-                                                        placeholderColor: PALETTE.subtle,
-                                                      }}
-                                                    />
-                                                  </box>
-                                                  <box
-                                                    style={{
-                                                      flexDirection: "column",
-                                                      marginBottom: 1,
-                                                    }}
-                                                  >
-                                                    <box
-                                                      style={{
-                                                        flexDirection: "row",
-                                                        alignItems: "center",
-                                                        justifyContent: "space-between",
-                                                        marginBottom: 1,
-                                                      }}
-                                                    >
-                                                      <text
-                                                        content="Environment variables"
-                                                        style={{ fg: PALETTE.text }}
-                                                      />
-                                                      <ToolbarButton
-                                                        label="Add"
-                                                        onPress={() =>
-                                                          addProviderInstallInstanceEnvironmentVariable(
-                                                            instanceId,
-                                                          )
-                                                        }
-                                                      />
-                                                    </box>
-                                                    {(instance.environment ?? []).length === 0 ? (
-                                                      <text
-                                                        content="Add API keys, base URLs, or other per-instance CLI settings."
-                                                        style={{
-                                                          fg: PALETTE.subtle,
-                                                          marginBottom: 1,
-                                                        }}
-                                                      />
-                                                    ) : (
-                                                      (instance.environment ?? []).map(
-                                                        (variable) => (
-                                                          <box
-                                                            key={`${providerSettings.provider}:instance:${String(instanceId)}:env:${variable.name}`}
-                                                            style={{
-                                                              flexDirection: "row",
-                                                              alignItems: "center",
-                                                              justifyContent: "space-between",
-                                                              backgroundColor: PALETTE.surfaceAlt,
-                                                              paddingLeft: 1,
-                                                              paddingRight: 1,
-                                                              marginBottom: 1,
-                                                            }}
-                                                          >
-                                                            <box
-                                                              style={{
-                                                                flexDirection: "column",
-                                                                flexGrow: 1,
-                                                                flexShrink: 1,
-                                                              }}
-                                                            >
-                                                              <text
-                                                                content={`${variable.name}${variable.sensitive ? " · sensitive" : ""}`}
-                                                                style={{ fg: PALETTE.text }}
-                                                              />
-                                                              <text
-                                                                content={
-                                                                  variable.valueRedacted
-                                                                    ? "stored secret"
-                                                                    : variable.value
-                                                                      ? variable.sensitive
-                                                                        ? "value hidden"
-                                                                        : variable.value
-                                                                      : "empty value"
-                                                                }
-                                                                style={{ fg: PALETTE.subtle }}
-                                                              />
-                                                            </box>
-                                                            <box
-                                                              style={{
-                                                                flexDirection: "row",
-                                                                alignItems: "center",
-                                                              }}
-                                                            >
-                                                              <ToolbarButton
-                                                                label={
-                                                                  variable.sensitive
-                                                                    ? "Public"
-                                                                    : "Sensitive"
-                                                                }
-                                                                onPress={() =>
-                                                                  updateProviderInstallInstanceEnvironmentVariable(
-                                                                    instanceId,
-                                                                    variable.name,
-                                                                    {
-                                                                      sensitive:
-                                                                        !variable.sensitive,
-                                                                    },
-                                                                  )
-                                                                }
-                                                              />
-                                                              <ToolbarButton
-                                                                label="Remove"
-                                                                onPress={() =>
-                                                                  removeProviderInstallInstanceEnvironmentVariable(
-                                                                    instanceId,
-                                                                    variable.name,
-                                                                  )
-                                                                }
-                                                              />
-                                                            </box>
-                                                          </box>
-                                                        ),
-                                                      )
-                                                    )}
-                                                    <box
-                                                      style={{
-                                                        flexDirection: "column",
-                                                        backgroundColor: PALETTE.surfaceAlt,
-                                                        paddingLeft: 1,
-                                                        paddingRight: 1,
-                                                        marginBottom: 1,
-                                                      }}
-                                                    >
-                                                      <box
-                                                        style={{
-                                                          backgroundColor: PALETTE.input,
-                                                          paddingLeft: 1,
-                                                          paddingRight: 1,
-                                                          height: 3,
-                                                          justifyContent: "center",
-                                                          marginBottom: 1,
-                                                        }}
-                                                      >
-                                                        <input
-                                                          value={
-                                                            (
-                                                              providerEnvironmentDraftByInstance[
-                                                                instanceId
-                                                              ] ?? EMPTY_PROVIDER_ENVIRONMENT_DRAFT
-                                                            ).name
-                                                          }
-                                                          onInput={(value) =>
-                                                            setProviderEnvironmentDraftByInstance(
-                                                              (current) => ({
-                                                                ...current,
-                                                                [instanceId]: {
-                                                                  ...(current[instanceId] ??
-                                                                    EMPTY_PROVIDER_ENVIRONMENT_DRAFT),
-                                                                  name: value,
-                                                                },
-                                                              }),
-                                                            )
-                                                          }
-                                                          placeholder="VARIABLE_NAME"
-                                                          cursorColor={PALETTE.cursor}
-                                                          style={{
-                                                            backgroundColor: PALETTE.input,
-                                                            focusedBackgroundColor: PALETTE.input,
-                                                            textColor: PALETTE.text,
-                                                            focusedTextColor: PALETTE.text,
-                                                            placeholderColor: PALETTE.subtle,
-                                                          }}
-                                                        />
-                                                      </box>
-                                                      <box
-                                                        style={{
-                                                          backgroundColor: PALETTE.input,
-                                                          paddingLeft: 1,
-                                                          paddingRight: 1,
-                                                          height: 3,
-                                                          justifyContent: "center",
-                                                          marginBottom: 1,
-                                                        }}
-                                                      >
-                                                        <input
-                                                          value={
-                                                            (
-                                                              providerEnvironmentDraftByInstance[
-                                                                instanceId
-                                                              ] ?? EMPTY_PROVIDER_ENVIRONMENT_DRAFT
-                                                            ).value
-                                                          }
-                                                          onInput={(value) =>
-                                                            setProviderEnvironmentDraftByInstance(
-                                                              (current) => ({
-                                                                ...current,
-                                                                [instanceId]: {
-                                                                  ...(current[instanceId] ??
-                                                                    EMPTY_PROVIDER_ENVIRONMENT_DRAFT),
-                                                                  value,
-                                                                },
-                                                              }),
-                                                            )
-                                                          }
-                                                          placeholder="Value"
-                                                          cursorColor={PALETTE.cursor}
-                                                          style={{
-                                                            backgroundColor: PALETTE.input,
-                                                            focusedBackgroundColor: PALETTE.input,
-                                                            textColor: PALETTE.text,
-                                                            focusedTextColor: PALETTE.text,
-                                                            placeholderColor: PALETTE.subtle,
-                                                          }}
-                                                        />
-                                                      </box>
-                                                      <box
-                                                        style={{
-                                                          flexDirection: "row",
-                                                          alignItems: "center",
-                                                          justifyContent: "space-between",
-                                                        }}
-                                                      >
-                                                        <text
-                                                          content={
-                                                            (
-                                                              providerEnvironmentDraftByInstance[
-                                                                instanceId
-                                                              ] ?? EMPTY_PROVIDER_ENVIRONMENT_DRAFT
-                                                            ).sensitive
-                                                              ? "Sensitive value"
-                                                              : "Public value"
-                                                          }
-                                                          style={{ fg: PALETTE.subtle }}
-                                                        />
-                                                        <TogglePill
-                                                          checked={
-                                                            (
-                                                              providerEnvironmentDraftByInstance[
-                                                                instanceId
-                                                              ] ?? EMPTY_PROVIDER_ENVIRONMENT_DRAFT
-                                                            ).sensitive
-                                                          }
-                                                          onPress={() =>
-                                                            setProviderEnvironmentDraftByInstance(
-                                                              (current) => {
-                                                                const draft =
-                                                                  current[instanceId] ??
-                                                                  EMPTY_PROVIDER_ENVIRONMENT_DRAFT;
-                                                                return {
-                                                                  ...current,
-                                                                  [instanceId]: {
-                                                                    ...draft,
-                                                                    sensitive: !draft.sensitive,
-                                                                  },
-                                                                };
-                                                              },
-                                                            )
-                                                          }
-                                                        />
-                                                      </box>
-                                                    </box>
-                                                  </box>
-                                                  {providerSettings.fields.map((field) => (
-                                                    <box
-                                                      key={`${providerSettings.provider}:instance:${String(instanceId)}:${field.key}`}
-                                                      style={{ flexDirection: "column" }}
-                                                    >
-                                                      <text
-                                                        content={field.label}
-                                                        style={{
-                                                          fg: PALETTE.text,
-                                                          marginBottom: 1,
-                                                        }}
-                                                      />
-                                                      <box
-                                                        style={{
-                                                          backgroundColor: PALETTE.input,
-                                                          paddingLeft: 1,
-                                                          paddingRight: 1,
-                                                          height: 3,
-                                                          justifyContent: "center",
-                                                          marginBottom: 1,
-                                                        }}
-                                                      >
-                                                        <input
-                                                          value={readProviderInstanceConfigValue(
-                                                            instance,
-                                                            field.key,
-                                                          )}
-                                                          onInput={(value) =>
-                                                            updateProviderInstallInstanceField(
-                                                              instanceId,
-                                                              field.key,
-                                                              value,
-                                                            )
-                                                          }
-                                                          placeholder={field.placeholder}
-                                                          cursorColor={PALETTE.cursor}
-                                                          style={{
-                                                            backgroundColor: PALETTE.input,
-                                                            focusedBackgroundColor: PALETTE.input,
-                                                            textColor: PALETTE.text,
-                                                            focusedTextColor: PALETTE.text,
-                                                            placeholderColor: PALETTE.subtle,
-                                                          }}
-                                                        />
-                                                      </box>
-                                                    </box>
-                                                  ))}
-                                                </box>
-                                              </box>
-                                            ),
-                                          )
-                                        )}
-                                      </box>
-                                      <box style={{ flexDirection: "column", marginBottom: 1 }}>
-                                        <box
-                                          style={{
-                                            flexDirection: "row",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            marginBottom: 1,
-                                          }}
-                                        >
-                                          <text
-                                            content="Environment variables"
-                                            style={{ fg: PALETTE.text }}
-                                          />
-                                          <ToolbarButton
-                                            label="Add"
-                                            onPress={() =>
-                                              addProviderEnvironmentVariable(
-                                                providerSettings.provider,
-                                              )
-                                            }
-                                          />
-                                        </box>
-                                        {providerInstanceEnvironment(providerSettings.provider)
-                                          .length === 0 ? (
-                                          <text
-                                            content="Add API keys, base URLs, or other per-instance CLI settings."
-                                            style={{ fg: PALETTE.subtle, marginBottom: 1 }}
-                                          />
-                                        ) : (
-                                          providerInstanceEnvironment(
-                                            providerSettings.provider,
-                                          ).map((variable) => (
-                                            <box
-                                              key={`${providerSettings.provider}:env:${variable.name}`}
-                                              style={{
-                                                flexDirection: "row",
-                                                alignItems: "center",
-                                                justifyContent: "space-between",
-                                                backgroundColor: PALETTE.surfaceAlt,
-                                                paddingLeft: 1,
-                                                paddingRight: 1,
-                                                marginBottom: 1,
-                                              }}
-                                            >
-                                              <box
-                                                style={{
-                                                  flexDirection: "column",
-                                                  flexGrow: 1,
-                                                  flexShrink: 1,
-                                                }}
-                                              >
-                                                <text
-                                                  content={`${variable.name}${variable.sensitive ? " · sensitive" : ""}`}
-                                                  style={{ fg: PALETTE.text }}
-                                                />
-                                                <text
-                                                  content={
-                                                    variable.valueRedacted
-                                                      ? "stored secret"
-                                                      : variable.value
-                                                        ? variable.sensitive
-                                                          ? "value hidden"
-                                                          : variable.value
-                                                        : "empty value"
-                                                  }
-                                                  style={{ fg: PALETTE.subtle }}
-                                                />
-                                              </box>
-                                              <box
-                                                style={{
-                                                  flexDirection: "row",
-                                                  alignItems: "center",
-                                                }}
-                                              >
-                                                <ToolbarButton
-                                                  label={
-                                                    variable.sensitive ? "Public" : "Sensitive"
-                                                  }
-                                                  onPress={() =>
-                                                    updateProviderEnvironmentVariable(
-                                                      providerSettings.provider,
-                                                      variable.name,
-                                                      {
-                                                        sensitive: !variable.sensitive,
-                                                      },
-                                                    )
-                                                  }
-                                                />
-                                                <ToolbarButton
-                                                  label="Remove"
-                                                  onPress={() =>
-                                                    removeProviderEnvironmentVariable(
-                                                      providerSettings.provider,
-                                                      variable.name,
-                                                    )
-                                                  }
-                                                />
-                                              </box>
-                                            </box>
-                                          ))
-                                        )}
-                                        <box
-                                          style={{
-                                            flexDirection: "column",
-                                            backgroundColor: PALETTE.surfaceAlt,
-                                            paddingLeft: 1,
-                                            paddingRight: 1,
-                                            marginBottom: 1,
-                                          }}
-                                        >
-                                          <box
-                                            style={{
-                                              backgroundColor: PALETTE.input,
-                                              paddingLeft: 1,
-                                              paddingRight: 1,
-                                              height: 3,
-                                              justifyContent: "center",
-                                              marginBottom: 1,
-                                            }}
-                                          >
-                                            <input
-                                              value={
-                                                providerEnvironmentDraftByProvider[
-                                                  providerSettings.provider
-                                                ].name
-                                              }
-                                              onInput={(value) =>
-                                                setProviderEnvironmentDraftByProvider(
-                                                  (current) => ({
-                                                    ...current,
-                                                    [providerSettings.provider]: {
-                                                      ...current[providerSettings.provider],
-                                                      name: value,
-                                                    },
-                                                  }),
-                                                )
-                                              }
-                                              placeholder="VARIABLE_NAME"
-                                              cursorColor={PALETTE.cursor}
-                                              style={{
-                                                backgroundColor: PALETTE.input,
-                                                focusedBackgroundColor: PALETTE.input,
-                                                textColor: PALETTE.text,
-                                                focusedTextColor: PALETTE.text,
-                                                placeholderColor: PALETTE.subtle,
-                                              }}
-                                            />
-                                          </box>
-                                          <box
-                                            style={{
-                                              backgroundColor: PALETTE.input,
-                                              paddingLeft: 1,
-                                              paddingRight: 1,
-                                              height: 3,
-                                              justifyContent: "center",
-                                              marginBottom: 1,
-                                            }}
-                                          >
-                                            <input
-                                              value={
-                                                providerEnvironmentDraftByProvider[
-                                                  providerSettings.provider
-                                                ].value
-                                              }
-                                              onInput={(value) =>
-                                                setProviderEnvironmentDraftByProvider(
-                                                  (current) => ({
-                                                    ...current,
-                                                    [providerSettings.provider]: {
-                                                      ...current[providerSettings.provider],
-                                                      value,
-                                                    },
-                                                  }),
-                                                )
-                                              }
-                                              placeholder="Value"
-                                              cursorColor={PALETTE.cursor}
-                                              style={{
-                                                backgroundColor: PALETTE.input,
-                                                focusedBackgroundColor: PALETTE.input,
-                                                textColor: PALETTE.text,
-                                                focusedTextColor: PALETTE.text,
-                                                placeholderColor: PALETTE.subtle,
-                                              }}
-                                            />
-                                          </box>
-                                          <box
-                                            style={{
-                                              flexDirection: "row",
-                                              alignItems: "center",
-                                              justifyContent: "space-between",
-                                            }}
-                                          >
-                                            <text
-                                              content={
-                                                providerEnvironmentDraftByProvider[
-                                                  providerSettings.provider
-                                                ].sensitive
-                                                  ? "Sensitive value"
-                                                  : "Public value"
-                                              }
-                                              style={{ fg: PALETTE.subtle }}
-                                            />
-                                            <TogglePill
-                                              checked={
-                                                providerEnvironmentDraftByProvider[
-                                                  providerSettings.provider
-                                                ].sensitive
-                                              }
-                                              onPress={() =>
-                                                setProviderEnvironmentDraftByProvider(
-                                                  (current) => ({
-                                                    ...current,
-                                                    [providerSettings.provider]: {
-                                                      ...current[providerSettings.provider],
-                                                      sensitive:
-                                                        !current[providerSettings.provider]
-                                                          .sensitive,
-                                                    },
-                                                  }),
-                                                )
-                                              }
-                                            />
-                                          </box>
-                                        </box>
-                                        <text
-                                          content="Sensitive values are stored separately after saving."
-                                          style={{ fg: PALETTE.subtle, marginBottom: 1 }}
-                                        />
-                                      </box>
-                                      {providerSettings.fields.map((field) => (
-                                        <box
-                                          key={`${providerSettings.provider}:${field.key}`}
-                                          style={{ flexDirection: "column" }}
-                                        >
-                                          <text
-                                            content={field.label}
-                                            style={{ fg: PALETTE.text, marginBottom: 1 }}
-                                          />
-                                          <box
-                                            style={{
-                                              backgroundColor: PALETTE.input,
-                                              paddingLeft: 1,
-                                              paddingRight: 1,
-                                              height: 3,
-                                              justifyContent: "center",
-                                              marginBottom: 1,
-                                            }}
-                                          >
-                                            <input
-                                              value={providerInstallValue(
-                                                providerSettings.provider,
-                                                field.key,
-                                              )}
-                                              onInput={(value) =>
-                                                updateProviderInstallSettings(
-                                                  providerSettings.provider,
-                                                  {
-                                                    [field.key]: value,
-                                                  },
-                                                )
-                                              }
-                                              placeholder={field.placeholder}
-                                              cursorColor={PALETTE.cursor}
-                                              style={{
-                                                backgroundColor: PALETTE.input,
-                                                focusedBackgroundColor: PALETTE.input,
-                                                textColor: PALETTE.text,
-                                                focusedTextColor: PALETTE.text,
-                                                placeholderColor: PALETTE.subtle,
-                                              }}
-                                            />
-                                          </box>
-                                          <text
-                                            content={field.description}
-                                            style={{ fg: PALETTE.subtle, marginBottom: 1 }}
-                                          />
-                                        </box>
-                                      ))}
-                                    </box>
-                                  ) : null}
-                                </box>
-                              );
-                            })}
-                            {COMING_SOON_INSTALL_PROVIDER_OPTIONS.map((providerOption) => (
-                              <box
-                                key={`provider-install-soon:${String(providerOption.provider)}`}
-                                style={{
-                                  flexDirection: "row",
-                                  alignItems: "center",
-                                  justifyContent: "space-between",
-                                  backgroundColor: PALETTE.surfaceAlt,
-                                  paddingLeft: 1,
-                                  paddingRight: 1,
-                                  marginBottom: 1,
-                                }}
-                              >
-                                <box style={{ flexDirection: "row", alignItems: "center" }}>
-                                  <text
-                                    content={providerPickerIcon(String(providerOption.provider))}
-                                    style={{ fg: PALETTE.subtle, marginRight: 1 }}
-                                  />
-                                  <text
-                                    content={providerOption.title}
-                                    style={{ fg: PALETTE.subtle, marginRight: 1 }}
-                                  />
-                                </box>
-                                <text content="Soon" style={{ fg: PALETTE.subtle }} />
-                              </box>
-                            ))}
-                          </SettingsRow>
-                        </SettingsSection>
+                        <ProvidersSettingsView
+                          columns={mainPanelColumns}
+                          state={providerSettingsState}
+                          activeSelectKind={
+                            overlayMenu === "settings-select" ? settingsSelectKind : null
+                          }
+                          onOpenSelectMenu={openSettingsSelectMenu}
+                        />
                       ) : null}
 
                       {mainView === "scripts" ? (
