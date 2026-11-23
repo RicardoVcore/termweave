@@ -371,7 +371,10 @@ import {
   type ModelMenuInstanceEntry,
   type ModelMenuOption,
 } from "./settings/providers/providerSettingsModel";
-import { ProvidersSettingsView } from "./settings/providers/ProvidersSettingsView";
+import {
+  ProvidersSettingsView,
+  type ProviderSettingsSelectKind,
+} from "./settings/providers/ProvidersSettingsView";
 import { useProviderSettings } from "./settings/providers/useProviderSettings";
 
 addDefaultParsers(CODE_BLOCK_TREE_SITTER_PARSERS);
@@ -412,9 +415,7 @@ type SettingsSelectKind =
   | "timestamp-format"
   | "thread-env"
   | "git-fetch-interval"
-  | "git-model-provider"
-  | "git-model"
-  | "provider-instance-add";
+  | ProviderSettingsSelectKind;
 type SidebarSortMenuItem = {
   id: string;
   section: "Sort projects" | "Sort threads";

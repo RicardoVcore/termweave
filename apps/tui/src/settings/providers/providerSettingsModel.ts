@@ -169,16 +169,17 @@ export function readProviderInstanceEnabledValue(
   return fallback;
 }
 
-// Short per-row status for the instance list: version, "disabled", or an
-// update marker; full detail text lives in the detail view.
+// Short per-row status for the instance list: version, "disabled", "not
+// checked" (no snapshot yet), or an update marker; full detail text lives in
+// the detail view.
 function providerInstanceListStatusText(
   snapshot: ServerProvider | undefined,
   enabled: boolean,
 ): string {
   if (!enabled) return "disabled";
-  if (snapshot?.versionAdvisory?.status === "behind_latest") return "update";
-  if (snapshot?.version) return snapshot.version;
-  return "not installed";
+  if (!snapshot) return "not checked";
+  if (snapshot.versionAdvisory?.status === "behind_latest") return "update";
+  return snapshot.version || "not installed";
 }
 
 function buildProviderInstanceRow(input: {
@@ -301,21 +302,11 @@ export function readProviderInstallEnabled(
   settings: ServerSettings,
   provider: InstallProviderKey,
 ): boolean {
-  const instance = settings.providerInstances[defaultProviderInstanceIdForSettingsKey(provider)];
-  if (typeof instance?.enabled === "boolean") {
-    return instance.enabled;
-  }
-  if (
-    instance?.config &&
-    typeof instance.config === "object" &&
-    !globalThis.Array.isArray(instance.config)
-  ) {
-    const enabled = (instance.config as Record<string, unknown>).enabled;
-    if (typeof enabled === "boolean") {
-      return enabled;
-    }
-  }
-  return settings.providers[provider].enabled;
+  return readProviderInstanceEnabledValue(
+    settings,
+    defaultProviderInstanceIdForSettingsKey(provider),
+    settings.providers[provider].enabled,
+  );
 }
 
 export function isProviderInstallSettingsDirtyForSettings(

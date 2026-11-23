@@ -86,6 +86,7 @@ export type UseProviderSettingsInput = {
 export type ProviderSettingsState = {
   instanceRows: ReadonlyArray<ProviderInstanceRow>;
   selectedInstanceId: ProviderInstanceId;
+  selectedRow: ProviderInstanceRow;
   selectInstance: (instanceId: ProviderInstanceId) => void;
   addInstance: (driver: InstallProviderKey) => void;
   removeInstance: (instanceId: ProviderInstanceId) => void;
@@ -547,6 +548,11 @@ export function useProviderSettings(input: UseProviderSettingsInput): ProviderSe
       );
       updateServerSettings(patch);
       setSelectedInstanceIdState(instanceId);
+      // Instance-scoped view state resets on switch so the new instance's
+      // content starts unfiltered and collapsed (same as selectInstance).
+      setModelPreferencesQuery("");
+      setShowAllModelPreferenceRows(false);
+      setShowAllCustomModels(false);
       setStatus(`Added ${String(instanceId)}`);
     },
     [serverSettings, setServerSettings, setStatus, updateServerSettings],
@@ -907,6 +913,7 @@ export function useProviderSettings(input: UseProviderSettingsInput): ProviderSe
   return {
     instanceRows,
     selectedInstanceId,
+    selectedRow,
     selectInstance,
     addInstance,
     removeInstance,

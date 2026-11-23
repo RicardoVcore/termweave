@@ -31,8 +31,7 @@ export function ProvidersSettingsView(props: {
 }) {
   const { state } = props;
   const sideBySide = props.columns >= PROVIDERS_SIDE_BY_SIDE_MIN_COLUMNS;
-  const selectedRow =
-    state.instanceRows.find((row) => row.id === state.selectedInstanceId) ?? state.instanceRows[0]!;
+  const selectedRow = state.selectedRow;
   return (
     <box style={{ flexDirection: "column" }}>
       <box
@@ -97,7 +96,10 @@ export function ProvidersSettingsView(props: {
 function TextGenerationModelRow(props: {
   state: ProviderSettingsState;
   activeSelectKind: string | null;
-  onOpenSelectMenu: (kind: "git-model-provider" | "git-model", event?: SidebarMouseEvent) => void;
+  onOpenSelectMenu: (
+    kind: Exclude<ProviderSettingsSelectKind, "provider-instance-add">,
+    event?: SidebarMouseEvent,
+  ) => void;
 }) {
   const { state } = props;
   return (
