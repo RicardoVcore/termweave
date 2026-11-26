@@ -49,7 +49,6 @@ const serverConfigLayer = Layer.succeed(ServerConfig, {
   providerLogsDir: "/tmp/termweave-test/logs/provider",
   providerEventLogPath: "/tmp/termweave-test/logs/provider/events.ndjson",
   terminalLogsDir: "/tmp/termweave-test/logs/terminal",
-  anonymousIdPath: "/tmp/termweave-test/anonymous-id",
   environmentIdPath: "/tmp/termweave-test/environment-id",
   secretsDir: "/tmp/termweave-test/secrets",
   authToken: undefined,

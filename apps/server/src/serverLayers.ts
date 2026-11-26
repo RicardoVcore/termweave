@@ -34,7 +34,6 @@ import { GitHubCliLive } from "./git/Layers/GitHubCli";
 import { GitLabCliLive } from "./git/Layers/GitLabCli";
 import { CodexTextGenerationLive } from "./git/Layers/CodexTextGeneration";
 import { PtyAdapter } from "./terminal/Services/PTY";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime";
 
 type RuntimePtyAdapterLoader = {
@@ -77,7 +76,6 @@ export function makeServerProviderLayer(): Layer.Layer<
   | ProviderInstanceRegistry
   | FileSystem.FileSystem
   | Path.Path
-  | AnalyticsService
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner
 > {

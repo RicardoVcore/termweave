@@ -30,7 +30,6 @@ import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { ServerConfig, deriveServerPaths, type ServerConfigShape } from "./config";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
@@ -343,7 +342,6 @@ describe("orchestration reconnect and interrupted sessions", () => {
       Layer.provideMerge(ServerSettingsLive),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
-      Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(NodeServices.layer),
     );

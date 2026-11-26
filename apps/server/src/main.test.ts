@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import type { OrchestrationReadModel } from "@termweave/contracts";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
@@ -14,11 +13,9 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach } from "vitest";
 import { NetService } from "@termweave/shared/Net";
 
-import { CliConfig, recordStartupHeartbeat, termweaveCli, type CliConfigShape } from "./main";
+import { CliConfig, termweaveCli, type CliConfigShape } from "./main";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
 
 const start = vi.fn(() => undefined);
@@ -48,7 +45,6 @@ const testLayer = Layer.mergeAll(
   }),
   Layer.succeed(Server, { start: serverStart, stopSignal: Effect.void } satisfies ServerShape),
   Layer.succeed(Open, { openInEditor: () => Effect.void } satisfies OpenShape),
-  AnalyticsService.layerTest,
   FetchHttpClient.layer,
   NodeServices.layer,
 );
@@ -58,7 +54,7 @@ const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
-          env: { T3CODE_HOME: testHomeDir, T3CODE_TELEMETRY_ENABLED: "false", ...env },
+          env: { T3CODE_HOME: testHomeDir, ...env },
         }),
       ),
     ),
@@ -154,32 +150,6 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(findAvailablePort.mock.calls.length, 0);
       assert.equal(resolvedConfig?.port, 3773);
       assert.equal(resolvedConfig?.host, "127.0.0.1");
-    }),
-  );
-
-  it.effect("records startup heartbeat counts", () =>
-    Effect.gen(function* () {
-      const record = vi.fn(() => Effect.void);
-      const getSnapshot = vi.fn(() =>
-        Effect.succeed({
-          snapshotSequence: 2,
-          projects: [{} as OrchestrationReadModel["projects"][number]],
-          threads: [
-            {} as OrchestrationReadModel["threads"][number],
-            {} as OrchestrationReadModel["threads"][number],
-          ],
-          updatedAt: new Date(1).toISOString(),
-        } satisfies OrchestrationReadModel),
-      );
-
-      yield* recordStartupHeartbeat.pipe(
-        Effect.provideService(ProjectionSnapshotQuery, { getSnapshot }),
-        Effect.provideService(AnalyticsService, { record, flush: Effect.void }),
-      );
-      assert.deepEqual(record.mock.calls[0], [
-        "server.boot.heartbeat",
-        { threadCount: 2, projectCount: 1 },
-      ]);
     }),
   );
 
