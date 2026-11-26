@@ -83,7 +83,6 @@ import {
   resolveAttachmentPathById,
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
@@ -247,8 +246,7 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
-  | Open
-  | AnalyticsService;
+  | Open;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",

@@ -84,7 +84,6 @@ import type { GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
-import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
@@ -689,7 +688,6 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(ServerSettingsLive),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
-      Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(NodeServices.layer),
     );

@@ -38,7 +38,6 @@ import {
   type ProviderRuntimeBinding,
 } from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
-import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 import { defaultProviderContinuationIdentity } from "../ProviderDriver.ts";
 
 export interface ProviderServiceLiveOptions {
@@ -195,7 +194,6 @@ function makeLegacyInstanceInfo(
 
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
-    const analytics = yield* Effect.service(AnalyticsService);
     const canonicalEventLogger =
       options?.canonicalEventLogger ??
       (options?.canonicalEventLogPath !== undefined
@@ -296,11 +294,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             yield* upsertSessionBinding(existing, input.binding.threadId, {
               providerInstanceId: instanceId,
             });
-            yield* analytics.record("provider.session.recovered", {
-              provider: existing.provider,
-              strategy: "adopt-existing",
-              hasResumeCursor: existing.resumeCursor !== undefined,
-            });
             return { adapter, session: existing } as const;
           }
         }
@@ -335,11 +328,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
         yield* upsertSessionBinding(resumed, input.binding.threadId, {
           providerInstanceId: instanceId,
-        });
-        yield* analytics.record("provider.session.recovered", {
-          provider: resumed.provider,
-          strategy: "resume-thread",
-          hasResumeCursor: resumed.resumeCursor !== undefined,
         });
         return { adapter, session: resumed } as const;
       });
@@ -473,13 +461,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           modelOptions: input.modelOptions,
           providerOptions: input.providerOptions,
         });
-        yield* analytics.record("provider.session.started", {
-          provider: sessionWithInstance.provider,
-          runtimeMode: input.runtimeMode,
-          hasResumeCursor: sessionWithInstance.resumeCursor !== undefined,
-          hasCwd: typeof effectiveCwd === "string" && effectiveCwd.trim().length > 0,
-          hasModel: typeof input.model === "string" && input.model.trim().length > 0,
-        });
 
         return sessionWithInstance;
       });
@@ -520,13 +501,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             lastRuntimeEventAt: new Date().toISOString(),
           },
         });
-        yield* analytics.record("provider.turn.sent", {
-          provider: routed.adapter.provider,
-          model: input.model,
-          interactionMode: input.interactionMode,
-          attachmentCount: input.attachments.length,
-          hasInput: typeof input.input === "string" && input.input.trim().length > 0,
-        });
         return turn;
       });
 
@@ -543,9 +517,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           allowRecovery: true,
         });
         yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
-        yield* analytics.record("provider.turn.interrupted", {
-          provider: routed.adapter.provider,
-        });
       });
 
     const respondToRequest: ProviderServiceShape["respondToRequest"] = (rawInput) =>
@@ -561,10 +532,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           allowRecovery: true,
         });
         yield* routed.adapter.respondToRequest(routed.threadId, input.requestId, input.decision);
-        yield* analytics.record("provider.request.responded", {
-          provider: routed.adapter.provider,
-          decision: input.decision,
-        });
       });
 
     const respondToUserInput: ProviderServiceShape["respondToUserInput"] = (rawInput) =>
@@ -598,9 +565,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           yield* routed.adapter.stopSession(routed.threadId);
         }
         yield* directory.remove(input.threadId);
-        yield* analytics.record("provider.session.stopped", {
-          provider: routed.adapter.provider,
-        });
       });
 
     const listSessions: ProviderServiceShape["listSessions"] = () =>
@@ -685,10 +649,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             lastRuntimeEventAt: new Date().toISOString(),
           });
         }
-        yield* analytics.record("provider.conversation.rolled_back", {
-          provider: routed.adapter.provider,
-          turns: input.numTurns,
-        });
       });
 
     const runStopAll = () =>
@@ -722,10 +682,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             ),
           ),
         ).pipe(Effect.asVoid);
-        yield* analytics.record("provider.sessions.stopped_all", {
-          sessionCount: threadIds.length,
-        });
-        yield* analytics.flush;
       });
 
     yield* Effect.addFinalizer(() =>

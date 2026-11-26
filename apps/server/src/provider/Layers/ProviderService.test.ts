@@ -44,7 +44,6 @@ import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
-import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
 
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
@@ -254,7 +253,6 @@ function makeProviderServiceLayer() {
       makeProviderServiceLive().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provideMerge(AnalyticsService.layerTest),
       ),
       directoryLayer,
 
@@ -302,7 +300,6 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     const providerLayer = makeProviderServiceLive().pipe(
       Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
-      Layer.provide(AnalyticsService.layerTest),
     );
 
     yield* Effect.gen(function* () {
@@ -361,7 +358,6 @@ it.effect(
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
-        Layer.provide(AnalyticsService.layerTest),
       );
       const updatedResumeCursor = {
         threadId: asThreadId("thread-1"),
@@ -412,7 +408,6 @@ it.effect(
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
-        Layer.provide(AnalyticsService.layerTest),
       );
 
       secondCodex.startSession.mockClear();
@@ -779,7 +774,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
-        Layer.provide(AnalyticsService.layerTest),
       );
 
       const initial = yield* Effect.gen(function* () {
@@ -811,7 +805,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
-        Layer.provide(AnalyticsService.layerTest),
       );
 
       secondClaude.startSession.mockClear();
@@ -869,7 +862,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
-        Layer.provide(AnalyticsService.layerTest),
       );
 
       const initial = yield* Effect.gen(function* () {
@@ -896,7 +888,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
-        Layer.provide(AnalyticsService.layerTest),
       );
 
       secondClaude.startSession.mockClear();
@@ -1144,7 +1135,6 @@ validation.layer("ProviderServiceLive validation", (it) => {
       const testLayer = makeProviderServiceLive().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provideMerge(AnalyticsService.layerTest),
       );
 
       const threadId = asThreadId("thread-custom-instance");
